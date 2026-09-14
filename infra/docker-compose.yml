@@ -1,0 +1,52 @@
+name: ditsala
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ditsala
+      POSTGRES_PASSWORD: ditsala
+      POSTGRES_DB: ditsala
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ditsala"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP, for the sandbox EmailProvider
+      - "8025:8025" # web UI
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--listening-port=3478"
+      - "--realm=ditsala.local"
+      - "--user=ditsala:ditsala"
+      - "--no-tls"
+      - "--no-dtls"
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"

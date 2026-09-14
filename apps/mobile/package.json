@@ -1,0 +1,10 @@
+{
+  "name": "@ditsala/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "lint": "echo 'Expo app not yet scaffolded — see Phase 2 in docs/DITSALA_MASTER_SPEC.md' && exit 0",
+    "typecheck": "echo 'Expo app not yet scaffolded — see Phase 2 in docs/DITSALA_MASTER_SPEC.md' && exit 0",
+    "test": "echo 'Expo app not yet scaffolded — see Phase 2 in docs/DITSALA_MASTER_SPEC.md' && exit 0"
+  }
+}

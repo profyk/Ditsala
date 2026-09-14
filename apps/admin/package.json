@@ -1,0 +1,10 @@
+{
+  "name": "@ditsala/admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "lint": "echo 'Next.js app not yet scaffolded — see Phase 7 in docs/DITSALA_MASTER_SPEC.md' && exit 0",
+    "typecheck": "echo 'Next.js app not yet scaffolded — see Phase 7 in docs/DITSALA_MASTER_SPEC.md' && exit 0",
+    "test": "echo 'Next.js app not yet scaffolded — see Phase 7 in docs/DITSALA_MASTER_SPEC.md' && exit 0"
+  }
+}

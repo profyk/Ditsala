@@ -1,0 +1,17 @@
+{
+  "name": "@ditsala/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API types generated from the backend OpenAPI schema. Do not hand-edit src/generated — regenerate via `pnpm --filter @ditsala/shared-types generate` once the backend exposes /openapi.json.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "generate": "echo 'Wire up once backend/app/main.py exposes a stable OpenAPI schema (Phase 1+).' && exit 0",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet' && exit 0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
