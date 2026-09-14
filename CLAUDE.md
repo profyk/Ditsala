@@ -6,7 +6,9 @@ Working notes for whoever (human or Claude) picks up this repo next. Full detail
 
 **Phase 0 — Foundation: complete.** Monorepo tooling (pnpm + Turborepo, uv for the backend), `docker-compose.yml` (Postgres/Redis/coturn/Mailpit), CI (GitHub Actions: lint/type-check/test for both the TS workspace and the backend), `packages/ui-tokens` (Ditsala palette + type scale), backend skeleton with a working `/api/v1/health` endpoint, and the first Alembic migration (`pgcrypto` extension) are in place.
 
-Not yet started: everything in Phase 1 onward (data model, onboarding/KYC, auth, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
+**Phase 1 — Data model: complete.** All 34 tables from spec §4 as Alembic migrations (`631a559a0977` core schema + `1bcfa1c65e5e` classification/RLS), SQLAlchemy models for every table (`backend/app/models/`), the §5 data-classification registry as its own module (`backend/app/domain/classification.py`), four Postgres DB roles (`app_backend`, `app_admin_readonly`, `app_admin_kyc_reviewer`, `app_maintenance`) with column-level grants matching P0-P3 classification, and RLS policies on `messages`/`conversation_members`/`location_shares`/`location_pings` — all proven against a real Postgres via integration tests, not just declared. A full repository layer (`backend/app/repositories/`) covers every aggregate.
+
+Not yet started: everything in Phase 2 onward (onboarding/KYC, auth, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
 
 `apps/mobile` and `apps/admin` are intentionally stub packages right now (just enough `package.json` for the workspace and CI to resolve) — they get real content in Phase 2 and Phase 7 respectively, not before.
 
@@ -74,4 +76,8 @@ uvicorn app.main:app --reload
 pnpm install                             # from repo root, for ui-tokens/shared-types
 ```
 
-Note: this environment could install `uv`/`pnpm` and run the Python test suite (`pytest` passes against the health endpoint), but has no Docker available, so `docker-compose up` and a live `alembic upgrade head` against a real Postgres have **not** been run end-to-end here — verify that in an environment with Docker before trusting it blindly.
+Verified: `alembic upgrade head` has been run end-to-end against a real PostgreSQL 18.6 (not just SQLite/mocked) — `pgcrypto`, all 34 tables from spec §4, the classification DB roles + column grants, and RLS on `messages`/`conversation_members`/`location_shares`/`location_pings` are all confirmed working via real integration tests (`app/tests/test_rls.py`, `app/tests/test_repositories.py`), including a genuine infinite-recursion bug in one policy (fixed with a `SECURITY DEFINER` helper function) and a NOT-NULL bug from several columns having only a Python-side ORM default with no `server_default` (also fixed). Docker itself is not installed on the machine this was built on, so verification used a portable native PostgreSQL binary (`theseus-rs/postgresql-binaries` release, since EnterpriseDB's own installer CDN blocked this environment's IP) running on `127.0.0.1:5432`, with a **hand-created, non-superuser** `ditsala` role (unlike the official Postgres Docker image, whose `POSTGRES_USER` bootstraps as a superuser automatically) — so this environment needed one-time manual bootstrapping that `docker-compose.yml` and CI do **not** need:
+```
+ALTER ROLE ditsala WITH CREATEROLE BYPASSRLS;   -- only for a hand-rolled non-superuser role
+```
+`docker compose up` itself (the actual compose file, with Redis/coturn/Mailpit alongside Postgres) has not been run — worth doing once on a machine with Docker to confirm it's typo-free, but the migrations/RLS/repository logic itself is already proven against real Postgres, not just assumed to work under Docker.

@@ -23,11 +23,9 @@ if config.config_file_name is not None:
 sync_url = get_settings().database_url.replace("+asyncpg", "+psycopg")
 config.set_main_option("sqlalchemy.url", sync_url)
 
-# SQLAlchemy models (and therefore autogenerate support) land in Phase 1 —
-# see docs/DITSALA_MASTER_SPEC.md §4. Until then, migrations are hand-written.
-# from app.models import Base
-# target_metadata = Base.metadata
-target_metadata = None
+from app.models import Base  # noqa: E402
+
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
