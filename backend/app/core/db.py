@@ -11,9 +11,11 @@ _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency — one session per request."""
+    """FastAPI dependency — one session per request, committed if the
+    request handler completes without raising, rolled back otherwise."""
     async with _session_factory() as session:
         yield session
+        await session.commit()
 
 
 async def set_current_user(session: AsyncSession, user_id: UUID) -> None:

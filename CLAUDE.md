@@ -8,7 +8,13 @@ Working notes for whoever (human or Claude) picks up this repo next. Full detail
 
 **Phase 1 — Data model: complete.** All 34 tables from spec §4 as Alembic migrations (`631a559a0977` core schema + `1bcfa1c65e5e` classification/RLS), SQLAlchemy models for every table (`backend/app/models/`), the §5 data-classification registry as its own module (`backend/app/domain/classification.py`), four Postgres DB roles (`app_backend`, `app_admin_readonly`, `app_admin_kyc_reviewer`, `app_maintenance`) with column-level grants matching P0-P3 classification, and RLS policies on `messages`/`conversation_members`/`location_shares`/`location_pings` — all proven against a real Postgres via integration tests, not just declared. A full repository layer (`backend/app/repositories/`) covers every aggregate.
 
-Not yet started: everything in Phase 2 onward (onboarding/KYC, auth, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
+**Phase 2 — Onboarding & identity: backend complete, mobile screens not yet started.** `EmailProvider` (Resend real + `SandboxEmailProvider` over local SMTP), `OtpProvider` (Twilio Verify real + sandbox-credential variant), `KycProvider` (Smile ID real + sandbox-host variant) — all behind `domain/onboarding/interfaces.py`, selected only via `services/factory.py` reading env vars. `domain/onboarding/service.py` implements the full §14 state machine up to `pending_code` (device+key registration to reach `active` is Phase 3's job, deliberately not built here). API routes under `/api/v1/onboarding/*` plus a Smile ID webhook endpoint, gated by a short-lived onboarding JWT rather than a raw user id in the URL (see ADR 0002 — avoids an IDOR in the pre-auth part of the flow). Argon2id for the DITSALA Code and email codes, a separate deterministic HMAC hash for `national_id_hash` (see ADR 0002 for why Argon2id would silently break the uniqueness constraint there).
+
+31 backend tests pass, including a real one: `SandboxEmailProvider` was verified against an actual running Mailpit instance (SMTP delivery + API-confirmed receipt), not just code review. Twilio Verify and Smile ID adapters are code-complete but **not live-verified** — no vendor account exists in this environment; see `docs/SECURITY_GAPS.md` for the Smile ID field-accuracy caveat specifically.
+
+Not yet built in Phase 2: the mobile onboarding screens (`apps/mobile` is still a stub — see below) and the breach-corpus check for the DITSALA Code (`docs/SECURITY_GAPS.md`).
+
+Not yet started: Phase 3 onward (auth/sessions, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
 
 `apps/mobile` and `apps/admin` are intentionally stub packages right now (just enough `package.json` for the workspace and CI to resolve) — they get real content in Phase 2 and Phase 7 respectively, not before.
 
@@ -80,4 +86,4 @@ Verified: `alembic upgrade head` has been run end-to-end against a real PostgreS
 ```
 ALTER ROLE ditsala WITH CREATEROLE BYPASSRLS;   -- only for a hand-rolled non-superuser role
 ```
-`docker compose up` itself (the actual compose file, with Redis/coturn/Mailpit alongside Postgres) has not been run — worth doing once on a machine with Docker to confirm it's typo-free, but the migrations/RLS/repository logic itself is already proven against real Postgres, not just assumed to work under Docker.
+`docker compose up` itself (the actual compose file, with Redis/coturn/Mailpit alongside Postgres) has not been run — worth doing once on a machine with Docker to confirm it's typo-free, but the migrations/RLS/repository logic itself is already proven against real Postgres, not just assumed to work under Docker. Mailpit was similarly run as a standalone binary (`axllent/mailpit` GitHub release, SMTP on 1025 / API+UI on 8025) rather than via Docker, and `SandboxEmailProvider` was verified against it for real.
