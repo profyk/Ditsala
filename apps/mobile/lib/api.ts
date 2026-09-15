@@ -33,6 +33,9 @@ async function request<T>(
     const detail = typeof body?.detail === "string" ? body.detail : "Something went wrong.";
     throw new ApiError(detail, response.status);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
@@ -106,4 +109,66 @@ export const onboardingApi = {
 
   setDitsalaCode: (token: string, code: string) =>
     request<AccountStateResponse>("/onboarding/code", { token, body: { code } }),
+};
+
+// --- §16-17: authentication & sessions ---
+
+export interface DeviceRegistration {
+  device_name: string;
+  platform: "ios" | "android";
+  push_token: string | null;
+}
+
+export interface SessionResult {
+  access_token: string;
+  refresh_token: string;
+  device_id: string;
+}
+
+export interface LoginStartResult {
+  login_token: string;
+  kyc_token: string;
+  job_id: string;
+}
+
+export interface Device {
+  id: string;
+  device_name: string;
+  platform: string;
+  is_trusted: boolean;
+  last_seen_at: string;
+  revoked_at: string | null;
+}
+
+export const authApi = {
+  completeOnboarding: (onboardingToken: string, device: DeviceRegistration) =>
+    request<SessionResult>("/auth/complete-onboarding", {
+      token: onboardingToken,
+      body: device,
+    }),
+
+  loginStart: (identifier: string, ditsalaCode: string, device: DeviceRegistration) =>
+    request<LoginStartResult>("/auth/login/start", {
+      body: { identifier, ditsala_code: ditsalaCode, ...device },
+    }),
+
+  loginComplete: (loginToken: string) =>
+    request<SessionResult>("/auth/login/complete", { body: { login_token: loginToken } }),
+
+  refresh: (refreshToken: string) =>
+    request<{ access_token: string; refresh_token: string }>("/auth/refresh", {
+      body: { refresh_token: refreshToken },
+    }),
+
+  logout: (refreshToken: string) =>
+    request<void>("/auth/logout", { body: { refresh_token: refreshToken } }),
+
+  logoutAll: (accessToken: string) =>
+    request<void>("/auth/logout-all", { token: accessToken, body: {} }),
+
+  listDevices: (accessToken: string) =>
+    request<Device[]>("/auth/devices", { method: "GET", token: accessToken }),
+
+  revokeDevice: (accessToken: string, deviceId: string) =>
+    request<void>(`/auth/devices/${deviceId}`, { method: "DELETE", token: accessToken }),
 };

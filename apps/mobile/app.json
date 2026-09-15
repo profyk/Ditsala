@@ -15,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.ditsala.mobile"
+      "bundleIdentifier": "app.ditsala.mobile",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "DITSALA uses Face ID to unlock the app quickly on this trusted device."
+      }
     },
     "android": {
       "package": "app.ditsala.mobile",
@@ -37,7 +40,8 @@
         {
           "cameraPermission": "DITSALA needs camera access to verify your identity and capture your ID document — captures are never taken from your photo library."
         }
-      ]
+      ],
+      "expo-secure-store"
     ]
   }
 }
