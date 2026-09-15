@@ -18,6 +18,8 @@ dependencies = [
     "structlog>=24.4",
     "httpx>=0.27",
     "aiosmtplib>=3.0",
+    "boto3>=1.35",
+    "websockets>=13.0",
 ]
 
 [dependency-groups]
@@ -50,6 +52,12 @@ plugins = ["pydantic.mypy"]
 # app code — full annotation on every fixture is noise, not safety.
 module = "app.tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# No official type stubs; boto3-stubs is a large, separate install not
+# worth the weight for the two presigned-URL calls we make.
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]

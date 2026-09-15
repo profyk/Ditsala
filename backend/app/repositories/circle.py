@@ -46,13 +46,18 @@ class BlockRepository(Repository[Block]):
     model = Block
 
     async def exists(self, blocker_user_id: uuid.UUID, blocked_user_id: uuid.UUID) -> bool:
+        return await self.get_by_pair(blocker_user_id, blocked_user_id) is not None
+
+    async def get_by_pair(
+        self, blocker_user_id: uuid.UUID, blocked_user_id: uuid.UUID
+    ) -> Block | None:
         result = await self.session.execute(
             self._select().where(
                 Block.blocker_user_id == blocker_user_id,
                 Block.blocked_user_id == blocked_user_id,
             )
         )
-        return result.scalar_one_or_none() is not None
+        return result.scalar_one_or_none()
 
 
 class ReportRepository(Repository[Report]):

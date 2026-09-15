@@ -58,6 +58,11 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         )
     )
     client_message_id: Mapped[str] = mapped_column(String(128), unique=True)
+    # Added in Phase 4 (spec's messaging feature list includes replies,
+    # which §4's original table list didn't carry a column for).
+    reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL")
+    )
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

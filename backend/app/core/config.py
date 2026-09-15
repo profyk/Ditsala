@@ -56,6 +56,30 @@ class Settings(BaseSettings):
     smile_id_sandbox_api_base_url: str = "https://testapi.smileidentity.com/v1"
     smile_id_callback_url: str = ""
 
+    # --- Media storage (StorageProvider). §6: media is client-side
+    # encrypted before upload — the bucket and this backend only ever see
+    # ciphertext bytes. storage_provider: real | sandbox. ---
+    storage_provider: str = "sandbox"
+    presigned_url_ttl_minutes: int = 15
+
+    s3_bucket: str = ""
+    s3_region: str = "af-south-1"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    # Empty = real AWS S3; set = Supabase Storage or another S3-compatible
+    # endpoint (§3: "Supabase Storage or AWS S3").
+    s3_endpoint_url: str = ""
+
+    # Sandbox: a local S3-compatible endpoint (e.g. MinIO) — same client
+    # code, different credentials/host, per §3.4's sandbox pattern. Not
+    # live-tested in this environment (no local MinIO run — see
+    # docs/SECURITY_GAPS.md).
+    sandbox_s3_bucket: str = "ditsala-dev"
+    sandbox_s3_region: str = "us-east-1"
+    sandbox_s3_access_key_id: str = "minioadmin"
+    sandbox_s3_secret_access_key: str = "minioadmin"
+    sandbox_s3_endpoint_url: str = "http://127.0.0.1:9000"
+
 
 @lru_cache
 def get_settings() -> Settings:
