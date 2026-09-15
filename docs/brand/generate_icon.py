@@ -45,4 +45,26 @@ dfg = ImageDraw.Draw(fg)
 draw_d(dfg, CX, CY, height=224, spine=80, stroke=34, cut=(0, 0, 0, 0))
 fg.save(r"C:\Users\profy\ditsala\docs\brand\adaptive-icon-foreground.png")
 
+# --- Android adaptive icon background: flat brand background, no mark ---
+bg_only = Image.new("RGB", (SIZE, SIZE), BG)
+bg_only.save(r"C:\Users\profy\ditsala\docs\brand\adaptive-icon-background.png")
+
+# --- Android monochrome (themed) icon: mark only, single tone, transparent ---
+mono = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+dmono = ImageDraw.Draw(mono)
+draw_d(dmono, CX, CY, height=224, spine=80, stroke=34, fill=(255, 255, 255, 255), cut=(0, 0, 0, 0))
+mono.save(r"C:\Users\profy\ditsala\docs\brand\adaptive-icon-monochrome.png")
+
+# --- Favicon: small square, background + mark (web) ---
+favicon = Image.new("RGB", (196, 196), BG)
+dfav = ImageDraw.Draw(favicon)
+draw_d(dfav, 98, 98, height=80, spine=28, stroke=13)
+favicon.save(r"C:\Users\profy\ditsala\docs\brand\favicon.png")
+
+# --- Splash icon: same as the universal icon, no ring (cleaner at launch) ---
+splash = Image.new("RGB", (SIZE, SIZE), BG)
+dsplash = ImageDraw.Draw(splash)
+draw_d(dsplash, CX, CY, height=416, spine=150, stroke=64)
+splash.save(r"C:\Users\profy\ditsala\docs\brand\splash-icon.png")
+
 print("done")

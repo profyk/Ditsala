@@ -118,6 +118,17 @@ async def test_signup_rejects_duplicate_email(client: AsyncClient) -> None:
     assert second.status_code == 400
 
 
+async def test_status_reflects_current_account_state(client: AsyncClient) -> None:
+    signup = await client.post("/api/v1/onboarding/signup", json=_signup_payload())
+    token = signup.json()["onboarding_token"]
+
+    response = await client.get(
+        "/api/v1/onboarding/status", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["account_state"] == "pending_email"
+
+
 async def test_missing_token_is_rejected(client: AsyncClient) -> None:
     response = await client.post("/api/v1/onboarding/email/confirm", json={"code": "123456"})
     assert response.status_code == 401

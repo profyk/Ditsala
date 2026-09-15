@@ -12,7 +12,13 @@ Working notes for whoever (human or Claude) picks up this repo next. Full detail
 
 31 backend tests pass, including a real one: `SandboxEmailProvider` was verified against an actual running Mailpit instance (SMTP delivery + API-confirmed receipt), not just code review. Twilio Verify and Smile ID adapters are code-complete but **not live-verified** — no vendor account exists in this environment; see `docs/SECURITY_GAPS.md` for the Smile ID field-accuracy caveat specifically.
 
-Not yet built in Phase 2: the mobile onboarding screens (`apps/mobile` is still a stub — see below) and the breach-corpus check for the DITSALA Code (`docs/SECURITY_GAPS.md`).
+**Mobile**: `apps/mobile` is a real Expo Router + NativeWind app (Expo SDK 57), not a stub — scaffolded via `create-expo-app`, joined into the pnpm workspace (see ADR 0003 for the `node-linker=hoisted` + Metro symlink config that took to make that work with React Native), consuming `@ditsala/ui-tokens` for its dark/gold palette. Full onboarding screen flow wired to the real backend API: welcome → signup → verify-email → verify-phone → kyc-document → kyc-liveness → next-of-kin → set-code → complete. The DITSALA app icon (`docs/brand/`) is wired in for iOS, Android (adaptive + monochrome), and web favicon.
+
+**Known mobile gap** (ADR 0003): the KYC screens request real backend jobs/tokens but have no native capture UI — the Smile ID mobile SDK needs a config plugin and native iOS/Android build tooling (Xcode, Android Studio, EAS) this environment doesn't have. A user cannot progress past `pending_kyc_document` through the app UI alone yet. Not a security gap (no control is weakened) — a feature-completeness one, for whoever picks up the native SDK integration next.
+
+**Not runtime-verified**: no simulator, physical device, or EAS build was available to actually launch the app. Verified: `tsc --noEmit`, ESLint, and Jest (16 tests: validation logic, the onboarding context, `Button`/`TextField`) all pass — including `Button`/`TextField` importing colors from `@ditsala/ui-tokens` directly, which confirms the pnpm workspace symlink + `node-linker=hoisted` + Metro `unstable_enableSymlinks` setup (ADR 0003) resolves correctly through the type-checker, linter, and Jest's module resolution. What's still unverified is Metro's own bundler at actual `expo start`/EAS-build time — smoke-test that on a machine with Xcode/Android Studio before trusting this further.
+
+Not yet built in Phase 2: the breach-corpus check for the DITSALA Code (`docs/SECURITY_GAPS.md`).
 
 Not yet started: Phase 3 onward (auth/sessions, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
 

@@ -27,6 +27,16 @@ def _as_http_error(exc: OnboardingError) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.get("/status", response_model=AccountStateResponse)
+async def get_onboarding_status(user: OnboardingUserDep) -> AccountStateResponse:
+    """
+    Lets a client re-check state after an async step — chiefly, a Smile ID
+    KYC webhook that lands after the mobile SDK capture completes but
+    before the app has any other way to know the result arrived.
+    """
+    return AccountStateResponse(account_state=user.account_state)
+
+
 @router.post("/signup", response_model=OnboardingSessionResponse, status_code=201)
 async def signup(
     body: SignupRequest, service: OnboardingServiceDep, settings: SettingsDep
