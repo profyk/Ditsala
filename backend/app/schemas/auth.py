@@ -52,3 +52,13 @@ class DeviceResponse(BaseModel):
     revoked_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class CurrentUserResponse(BaseModel):
+    """Minimal 'who am I' — e.g. so the client can render its own QR code
+    for Circle's add-contact flow (§22) without decoding its own JWT."""
+
+    id: uuid.UUID
+    display_name: str
+
+    model_config = {"from_attributes": True}

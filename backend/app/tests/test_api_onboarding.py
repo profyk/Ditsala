@@ -27,6 +27,8 @@ from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.domain.onboarding.service import OnboardingService
 from app.main import app
+from app.repositories.admin import SystemConfigRepository
+from app.repositories.circle import InvitationRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import (
     EmailVerificationRepository,
@@ -74,6 +76,8 @@ async def client(
             next_of_kin=NextOfKinRepository(db_session),
             kyc_documents=KycDocumentRepository(db_session),
             kyc_face_verifications=KycFaceVerificationRepository(db_session),
+            invitations=InvitationRepository(db_session),
+            system_config=SystemConfigRepository(db_session),
             email_provider=email_provider,
             otp_provider=StubOtpProvider(),
             kyc_provider=StubKycProvider(),

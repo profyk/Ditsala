@@ -19,8 +19,9 @@ from app.core.config import get_settings
 from app.domain.messaging.interfaces import StorageProvider
 from app.domain.messaging.service import MessagingError, MessagingService
 from app.models.accounts import User
+from app.models.circle import Block, Contact
 from app.models.devices import Device
-from app.repositories.circle import BlockRepository
+from app.repositories.circle import BlockRepository, ContactRepository
 from app.repositories.conversations import ConversationMemberRepository, ConversationRepository
 from app.repositories.crypto import (
     IdentityKeyRepository,
@@ -52,6 +53,8 @@ class Harness:
     users: UserRepository
     devices: DeviceRepository
     messages: MessageRepository
+    contacts: ContactRepository
+    blocks: BlockRepository
 
 
 @pytest.fixture
@@ -69,6 +72,8 @@ def harness(session: AsyncSession) -> Harness:
     users = UserRepository(session)
     devices = DeviceRepository(session)
     messages = MessageRepository(session)
+    contacts = ContactRepository(session)
+    blocks = BlockRepository(session)
     service = MessagingService(
         identity_keys=IdentityKeyRepository(session),
         signed_prekeys=SignedPrekeyRepository(session),
@@ -80,11 +85,28 @@ def harness(session: AsyncSession) -> Harness:
         message_receipts=MessageReceiptRepository(session),
         media_objects=MediaObjectRepository(session),
         devices=devices,
-        blocks=BlockRepository(session),
+        blocks=blocks,
+        contacts=contacts,
         storage_provider=StubStorageProvider(),
         connection_manager=ConnectionManager(),
     )
-    return Harness(service=service, users=users, devices=devices, messages=messages)
+    return Harness(
+        service=service, users=users, devices=devices, messages=messages,
+        contacts=contacts, blocks=blocks,
+    )
+
+
+async def _connect(harness: Harness, user_a_id: uuid.UUID, user_b_id: uuid.UUID) -> None:
+    """Mutual 'verified'-tier Circle contact — the precondition
+    start_direct_conversation requires (§22); CircleService owns the real
+    request/accept flow, this is just the resulting DB state for tests
+    that only care about messaging, not Circle, behavior."""
+    await harness.contacts.add(
+        Contact(owner_user_id=user_a_id, contact_user_id=user_b_id, tier="verified")
+    )
+    await harness.contacts.add(
+        Contact(owner_user_id=user_b_id, contact_user_id=user_a_id, tier="verified")
+    )
 
 
 async def _make_user_with_device(harness: Harness) -> tuple[User, Device]:
@@ -163,6 +185,7 @@ async def test_prekey_bundle_requires_registered_device(harness: Harness) -> Non
 async def test_start_direct_conversation_is_idempotent(harness: Harness) -> None:
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
 
     first = await harness.service.start_direct_conversation(alice.id, bob.id)
     second = await harness.service.start_direct_conversation(alice.id, bob.id)
@@ -182,7 +205,7 @@ async def test_blocked_users_cannot_start_a_conversation(harness: Harness) -> No
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
 
-    await harness.service.block_user(user_id=alice.id, target_user_id=bob.id)
+    await harness.blocks.add(Block(blocker_user_id=alice.id, blocked_user_id=bob.id))
 
     with pytest.raises(MessagingError, match="blocked"):
         await harness.service.start_direct_conversation(alice.id, bob.id)
@@ -210,6 +233,7 @@ async def test_group_conversation_creator_is_admin(harness: Harness) -> None:
 async def test_send_and_list_messages(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     message = await harness.service.send_message(
@@ -230,6 +254,7 @@ async def test_send_message_rejects_non_members(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
     outsider, _o_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     with pytest.raises(MessagingError, match="Not a member"):
@@ -249,6 +274,7 @@ async def test_send_message_rejects_non_members(harness: Harness) -> None:
 async def test_send_message_is_idempotent(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
     client_message_id = uuid.uuid4().hex
 
@@ -275,6 +301,7 @@ async def test_send_message_is_idempotent(harness: Harness) -> None:
 async def test_disappearing_timer_sets_message_expiry(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     await harness.service.set_disappearing_timer(
@@ -294,6 +321,7 @@ async def test_disappearing_timer_sets_message_expiry(harness: Harness) -> None:
 async def test_only_sender_can_edit_or_delete(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
     message = await harness.service.send_message(
         sender_user_id=alice.id,
@@ -326,6 +354,7 @@ async def test_only_sender_can_edit_or_delete(harness: Harness) -> None:
 async def test_mark_receipt_is_idempotent(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
     message = await harness.service.send_message(
         sender_user_id=alice.id,
@@ -351,6 +380,7 @@ async def test_mark_receipt_is_idempotent(harness: Harness) -> None:
 async def test_mute_archive_pin_flags(harness: Harness) -> None:
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     muted_until = datetime.now(UTC) + timedelta(hours=1)
@@ -395,6 +425,7 @@ async def test_sender_key_upload_and_list(harness: Harness) -> None:
 async def test_media_upload_and_download_url(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     media_object, upload_url = await harness.service.request_media_upload(
@@ -432,28 +463,13 @@ async def test_media_upload_rejects_oversized_files(harness: Harness) -> None:
         )
 
 
-# --- block ---
-
-
-async def test_block_and_unblock(harness: Harness) -> None:
-    alice, _d1 = await _make_user_with_device(harness)
-    bob, _d2 = await _make_user_with_device(harness)
-
-    await harness.service.block_user(user_id=alice.id, target_user_id=bob.id)
-    with pytest.raises(MessagingError, match="blocked"):
-        await harness.service.start_direct_conversation(alice.id, bob.id)
-
-    await harness.service.unblock_user(user_id=alice.id, target_user_id=bob.id)
-    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
-    assert conversation is not None
-
-
 # --- retention sweep ---
 
 
 async def test_purge_expired_messages(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
 
     message = await harness.service.send_message(
@@ -470,3 +486,44 @@ async def test_purge_expired_messages(harness: Harness) -> None:
     assert purged_count == 1
     assert message.deleted_at is not None
     assert message.ciphertext == b""
+
+
+# --- §22-23 integration: Circle tier gates direct messaging ---
+
+
+async def test_direct_conversation_requires_an_accepted_contact(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+
+    with pytest.raises(MessagingError, match="Circle contact request"):
+        await harness.service.start_direct_conversation(alice.id, bob.id)
+
+
+async def test_unverified_tier_contact_cannot_message_yet(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    await harness.contacts.add(
+        Contact(owner_user_id=alice.id, contact_user_id=bob.id, tier="unverified")
+    )
+
+    with pytest.raises(MessagingError, match="Circle contact request"):
+        await harness.service.start_direct_conversation(alice.id, bob.id)
+
+
+async def test_identity_key_change_demotes_trusted_contacts(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, bob_device = await _make_user_with_device(harness)
+    trusted_contact = await harness.contacts.add(
+        Contact(owner_user_id=alice.id, contact_user_id=bob.id, tier="trusted")
+    )
+
+    await harness.service.register_identity_key(
+        bob_device, public_identity_key=b"bobs-first-key", registration_id=1
+    )
+    await harness.service.register_identity_key(
+        bob_device, public_identity_key=b"bobs-reinstalled-key", registration_id=2
+    )
+
+    await harness.contacts.session.refresh(trusted_contact)
+    assert trusted_contact.tier == "verified"
+    assert trusted_contact.safety_number_verified_at is None

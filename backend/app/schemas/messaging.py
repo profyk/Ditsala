@@ -155,10 +155,3 @@ class MediaUploadResponse(BaseModel):
 
 class MediaDownloadResponse(BaseModel):
     download_url: str
-
-
-# --- block ---
-
-
-class BlockUserRequest(BaseModel):
-    reason: str | None = None

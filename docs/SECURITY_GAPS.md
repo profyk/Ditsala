@@ -38,6 +38,22 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Before Phase 2 goes live against production or sandbox credentials — re-verify every field/endpoint against Smile ID's current partner API docs, then remove this section.
 
+### Circle QR code generation (spec §22-23)
+
+**What's missing:** `app/circle/add.tsx` can *scan* a QR code (via `expo-camera`'s barcode scanner, real and working) and can *share* the user's own add-contact link (`ditsala://circle/add?userId=<id>`, via React Native's built-in `Share` sheet — also real and working), but cannot *render* its own link as a scannable QR code image. A second DITSALA user has no on-screen QR code to point their camera at yet.
+
+**Why:** Deliberate, not a capability gap. Rendering a QR image needs a QR-generation library (e.g. `react-native-qrcode-svg`), which isn't in the dependency tree — this session already flagged the host machine's real memory constraints (3.84GB RAM) mid-Phase-4 and has been conservative about new native dependencies since. Link-sharing covers the same flow end to end without one.
+
+**Tracked for:** Add a QR-generation library and render the link from `handleShare` (already computed there via `Linking.createURL`) as an image, then remove this section. Low risk, no architecture change — `extractContactUserId` (`lib/circle-link.ts`) already parses whatever a camera scans, so the scanning half needs no changes.
+
+### Safety-number display is not rendered (spec §23)
+
+**What's missing:** §23's safety number is "a human-readable fingerprint derived from both parties' Signal identity keys" — a real cryptographic value the Signal Protocol produces from real `IdentityKey` material. `app/circle/index.tsx`'s "Verify in person" action calls the real `POST /circle/safety-number/verify` endpoint and really does promote a contact to `trusted` server-side, but the screen never displays the two-sided fingerprint string a user is supposed to compare — because there's no real value to show.
+
+**Why:** Same root cause and same principle as ADR 0005 (the libsignal native module isn't built in this environment). Fabricating a fingerprint-looking string from non-cryptographic data would be indistinguishable from real E2EE verification in the UI while providing none of its guarantees — exactly the "weaker fallback shipped silently" Working Rule 6 forbids. The backend-state half of trust-tier promotion is real and safe to ship; the display half isn't, so it was left out rather than faked.
+
+**Tracked for:** Once the native libsignal module exists (see ADR 0005) and mobile holds real `IdentityKey` material, compute and display the actual safety number (Signal's standard 60-digit/12-group fingerprint format) on this screen before calling `verifySafetyNumber` — the API call itself needs no changes.
+
 ### Smile ID webhook HTTP endpoint not exercised by any test with a real payload (spec §12, §17)
 
 **What's missing:** `POST /webhooks/smile-id` (`api/v1/routers/onboarding.py`) — the signature-verification step and the request/response shape at the actual HTTP boundary — has no test coverage. Everything *behind* a valid webhook (job lookup, state transitions, `AuthService.record_login_liveness_result`) is fully tested by calling those methods directly with a constructed `KycWebhookResult`, which is fine for that logic but never exercises `SmileIdProvider.verify_and_parse_webhook`'s actual HMAC check against a realistic payload.

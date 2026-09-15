@@ -9,11 +9,19 @@ from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.security import decode_access_token, decode_onboarding_token
 from app.domain.auth.service import AuthService
+from app.domain.circle.service import CircleService
 from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
 from app.models.accounts import User
 from app.models.devices import Device
-from app.repositories.circle import BlockRepository
+from app.repositories.admin import SystemConfigRepository
+from app.repositories.circle import (
+    BlockRepository,
+    ContactRepository,
+    ContactRequestRepository,
+    InvitationRepository,
+    ReportRepository,
+)
 from app.repositories.conversations import ConversationMemberRepository, ConversationRepository
 from app.repositories.crypto import (
     IdentityKeyRepository,
@@ -60,6 +68,8 @@ async def get_onboarding_service(
         next_of_kin=NextOfKinRepository(session),
         kyc_documents=KycDocumentRepository(session),
         kyc_face_verifications=KycFaceVerificationRepository(session),
+        invitations=InvitationRepository(session),
+        system_config=SystemConfigRepository(session),
         email_provider=get_email_provider(settings),
         otp_provider=get_otp_provider(settings),
         kyc_provider=get_kyc_provider(settings),
@@ -197,9 +207,25 @@ async def get_messaging_service(session: SessionDep, settings: SettingsDep) -> M
         media_objects=MediaObjectRepository(session),
         devices=DeviceRepository(session),
         blocks=BlockRepository(session),
+        contacts=ContactRepository(session),
         storage_provider=get_storage_provider(settings),
         connection_manager=connection_manager,
     )
 
 
 MessagingServiceDep = Annotated[MessagingService, Depends(get_messaging_service)]
+
+
+async def get_circle_service(session: SessionDep) -> CircleService:
+    return CircleService(
+        contacts=ContactRepository(session),
+        contact_requests=ContactRequestRepository(session),
+        invitations=InvitationRepository(session),
+        blocks=BlockRepository(session),
+        reports=ReportRepository(session),
+        users=UserRepository(session),
+        system_config=SystemConfigRepository(session),
+    )
+
+
+CircleServiceDep = Annotated[CircleService, Depends(get_circle_service)]

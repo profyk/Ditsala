@@ -17,7 +17,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.domain.messaging.interfaces import StorageProvider
-from app.models.circle import Block
 from app.models.crypto import IdentityKey, OneTimePrekey, SenderKey, SignedPrekey
 from app.models.devices import Device
 from app.models.messaging import (
@@ -27,7 +26,7 @@ from app.models.messaging import (
     Message,
     MessageReceipt,
 )
-from app.repositories.circle import BlockRepository
+from app.repositories.circle import BlockRepository, ContactRepository
 from app.repositories.conversations import ConversationMemberRepository, ConversationRepository
 from app.repositories.crypto import (
     IdentityKeyRepository,
@@ -76,6 +75,7 @@ class MessagingService:
         media_objects: MediaObjectRepository,
         devices: DeviceRepository,
         blocks: BlockRepository,
+        contacts: ContactRepository,
         storage_provider: StorageProvider,
         connection_manager: ConnectionManager,
     ) -> None:
@@ -90,6 +90,7 @@ class MessagingService:
         self._media_objects = media_objects
         self._devices = devices
         self._blocks = blocks
+        self._contacts = contacts
         self._storage = storage_provider
         self._connections = connection_manager
 
@@ -100,6 +101,10 @@ class MessagingService:
     ) -> IdentityKey:
         existing = await self._identity_keys.get_for_device(device.id)
         if existing is not None:
+            if existing.public_identity_key != public_identity_key:
+                # A genuine re-key (reinstall, new device), not an idempotent
+                # resend — §23 requires re-verification, never silent trust.
+                await self._contacts.demote_trusted_contacts_of(device.user_id)
             existing.public_identity_key = public_identity_key
             existing.registration_id = registration_id
             return existing
@@ -177,6 +182,12 @@ class MessagingService:
             existing = await self._conversations.get(existing_id)
             assert existing is not None
             return existing
+
+        contact = await self._contacts.get_by_pair(current_user_id, other_user_id)
+        if contact is None or contact.tier not in ("verified", "trusted"):
+            raise MessagingError(
+                "Direct messaging requires an accepted Circle contact request first."
+            )
 
         conversation = await self._conversations.add(
             Conversation(type="direct", created_by=current_user_id)
@@ -431,22 +442,9 @@ class MessagingService:
                 await self._require_membership(message.conversation_id, user_id)
         return await self._storage.create_download_url(key=media_object.s3_key)
 
-    # --- block (§24 — messaging-capability effect of a Circle-level action) ---
-
-    async def block_user(
-        self, *, user_id: uuid.UUID, target_user_id: uuid.UUID, reason: str | None = None
-    ) -> Block:
-        existing = await self._blocks.get_by_pair(user_id, target_user_id)
-        if existing is not None:
-            return existing
-        return await self._blocks.add(
-            Block(blocker_user_id=user_id, blocked_user_id=target_user_id, reason=reason)
-        )
-
-    async def unblock_user(self, *, user_id: uuid.UUID, target_user_id: uuid.UUID) -> None:
-        existing = await self._blocks.get_by_pair(user_id, target_user_id)
-        if existing is not None:
-            await self._blocks.delete(existing)
+    # Block mutation (block_user/unblock_user) lives in CircleService — §24
+    # is a Circle-level action with its own side effects; this service only
+    # reads BlockRepository to enforce the messaging-capability effect above.
 
     # --- retention: disappearing messages (§21, §34.2) ---
 

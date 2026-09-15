@@ -140,7 +140,15 @@ export interface Device {
   revoked_at: string | null;
 }
 
+export interface CurrentUser {
+  id: string;
+  display_name: string;
+}
+
 export const authApi = {
+  getMe: (accessToken: string) =>
+    request<CurrentUser>("/auth/me", { method: "GET", token: accessToken }),
+
   completeOnboarding: (onboardingToken: string, device: DeviceRegistration) =>
     request<SessionResult>("/auth/complete-onboarding", {
       token: onboardingToken,

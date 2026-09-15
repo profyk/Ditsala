@@ -62,6 +62,14 @@ export default function Home() {
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
+      <Button
+        testID="circle-nav-button"
+        label="Circle"
+        onPress={() => router.push("/circle")}
+        variant="secondary"
+      />
+      <View className="h-3" />
+
       <FlatList
         data={devices}
         keyExtractor={(item) => item.id}

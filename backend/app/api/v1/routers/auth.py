@@ -13,6 +13,7 @@ from app.api.v1.deps import (
 from app.core.security import decode_login_token
 from app.domain.auth.service import AuthError
 from app.schemas.auth import (
+    CurrentUserResponse,
     DeviceRegistrationRequest,
     DeviceResponse,
     LoginCompleteRequest,
@@ -108,6 +109,11 @@ async def logout(body: RefreshRequest, service: AuthServiceDep) -> None:
 @router.post("/logout-all", status_code=204)
 async def logout_all(user: CurrentUserDep, service: AuthServiceDep) -> None:
     await service.revoke_all_sessions(user)
+
+
+@router.get("/me", response_model=CurrentUserResponse)
+async def get_current_user_info(user: CurrentUserDep) -> CurrentUserResponse:
+    return CurrentUserResponse.model_validate(user)
 
 
 @router.get("/devices", response_model=list[DeviceResponse])

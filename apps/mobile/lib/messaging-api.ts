@@ -269,15 +269,4 @@ export const messagingApi = {
       method: "GET",
       token: accessToken,
     }),
-
-  // --- block ---
-
-  blockUser: (accessToken: string, targetUserId: string, reason?: string) =>
-    request<void>(`/messaging/block/${targetUserId}`, {
-      token: accessToken,
-      body: { reason: reason ?? null },
-    }),
-
-  unblockUser: (accessToken: string, targetUserId: string) =>
-    request<void>(`/messaging/block/${targetUserId}`, { method: "DELETE", token: accessToken }),
 };

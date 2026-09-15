@@ -34,6 +34,9 @@ from app.models.accounts import (
     PhoneVerification,
     User,
 )
+from app.models.circle import Invitation
+from app.repositories.admin import SystemConfigRepository
+from app.repositories.circle import InvitationRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import (
     EmailVerificationRepository,
@@ -61,6 +64,8 @@ class OnboardingService:
         next_of_kin: NextOfKinRepository,
         kyc_documents: KycDocumentRepository,
         kyc_face_verifications: KycFaceVerificationRepository,
+        invitations: InvitationRepository,
+        system_config: SystemConfigRepository,
         email_provider: EmailProvider,
         otp_provider: OtpProvider,
         kyc_provider: KycProvider,
@@ -71,6 +76,8 @@ class OnboardingService:
         self._next_of_kin = next_of_kin
         self._kyc_documents = kyc_documents
         self._kyc_face_verifications = kyc_face_verifications
+        self._invitations = invitations
+        self._system_config = system_config
         self._email_provider = email_provider
         self._otp_provider = otp_provider
         self._kyc_provider = kyc_provider
@@ -85,7 +92,9 @@ class OnboardingService:
         display_name: str,
         date_of_birth: datetime,
         national_id_hash: str,
+        invite_code: str | None = None,
     ) -> User:
+        invitation = await self._check_invite_only_mode(invite_code)
         if await self._users.get_by_email(email) is not None:
             raise OnboardingError("An account with this email already exists.")
         if await self._users.get_by_phone(phone) is not None:
@@ -99,8 +108,32 @@ class OnboardingService:
                 national_id_hash=national_id_hash,
             )
         )
+        if invitation is not None:
+            invitation.status = "redeemed"
+            invitation.redeemed_by_user_id = user.id
         await self.request_email_verification(user)
         return user
+
+    async def _check_invite_only_mode(self, invite_code: str | None) -> Invitation | None:
+        """
+        §22/§28: `system_config.invite_only_mode` gates *who can start
+        onboarding*, never whether KYC is required — that stays mandatory
+        regardless. Returns the invitation to redeem once signup actually
+        succeeds (not redeemed here, so a failed signup below doesn't burn
+        a single-use code).
+        """
+        config = await self._system_config.get_by_key("invite_only_mode")
+        if config is None or not config.value.get("enabled"):
+            return None
+        if invite_code is None:
+            raise OnboardingError("An invitation code is required to sign up at this time.")
+        invitation = await self._invitations.get_by_code(invite_code)
+        if invitation is None or invitation.status != "sent":
+            raise OnboardingError("Invalid or already-used invitation code.")
+        if invitation.expires_at < datetime.now(UTC):
+            invitation.status = "expired"
+            raise OnboardingError("This invitation code has expired.")
+        return invitation
 
     async def request_email_verification(self, user: User) -> None:
         code = generate_numeric_code()

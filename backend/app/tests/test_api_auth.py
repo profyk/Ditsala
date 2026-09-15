@@ -27,6 +27,8 @@ from app.domain.onboarding.interfaces import KycJobType, KycOutcome, KycWebhookR
 from app.domain.onboarding.service import OnboardingService
 from app.main import app
 from app.models.accounts import User
+from app.repositories.admin import SystemConfigRepository
+from app.repositories.circle import InvitationRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import (
@@ -63,6 +65,8 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             next_of_kin=NextOfKinRepository(db_session),
             kyc_documents=KycDocumentRepository(db_session),
             kyc_face_verifications=KycFaceVerificationRepository(db_session),
+            invitations=InvitationRepository(db_session),
+            system_config=SystemConfigRepository(db_session),
             email_provider=StubEmailProvider(),
             otp_provider=StubOtpProvider(),
             kyc_provider=StubKycProvider(),
@@ -219,6 +223,12 @@ async def test_refresh_and_device_management_via_api(
     # The old, now-rotated-away refresh token is rejected.
     reuse = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert reuse.status_code == 401
+
+    me = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert me.status_code == 200, me.text
+    assert me.json()["id"] == str(user.id)
 
     devices = await client.get(
         "/api/v1/auth/devices", headers={"Authorization": f"Bearer {access_token}"}

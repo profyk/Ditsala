@@ -68,6 +68,9 @@ class Invitation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     redeemed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    # "time-bounded" per §22 — checked application-side; a Postgres CHECK
+    # can't reference now() at insert time in a portable way.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Block(Base, UUIDPrimaryKeyMixin, TimestampMixin):

@@ -54,6 +54,15 @@ def generate_numeric_code(length: int = 6) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length))
 
 
+_INVITE_CODE_ALPHABET = string.ascii_uppercase + string.digits
+
+
+def generate_invite_code(length: int = 10) -> str:
+    """§22 invitation codes — single-use, time-bounded. Uppercase+digits
+    only (no lowercase) so it reads unambiguously off a shared screen."""
+    return "".join(secrets.choice(_INVITE_CODE_ALPHABET) for _ in range(length))
+
+
 ONBOARDING_TOKEN_TTL_HOURS = 2
 _ONBOARDING_TOKEN_TYPE = "onboarding"
 

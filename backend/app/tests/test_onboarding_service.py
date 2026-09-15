@@ -9,7 +9,7 @@ are verified for real.
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -27,6 +27,10 @@ from app.domain.onboarding.interfaces import (
 )
 from app.domain.onboarding.service import OnboardingError, OnboardingService
 from app.models.accounts import User
+from app.models.admin import SystemConfig
+from app.models.circle import Invitation
+from app.repositories.admin import SystemConfigRepository
+from app.repositories.circle import InvitationRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import (
     EmailVerificationRepository,
@@ -73,6 +77,8 @@ class Harness:
     service: OnboardingService
     email: StubEmailProvider
     kyc_documents: KycDocumentRepository
+    invitations: InvitationRepository
+    system_config: SystemConfigRepository
 
 
 @pytest.fixture
@@ -89,6 +95,8 @@ async def session():
 def harness(session: AsyncSession) -> Harness:
     email = StubEmailProvider()
     kyc_documents = KycDocumentRepository(session)
+    invitations = InvitationRepository(session)
+    system_config = SystemConfigRepository(session)
     service = OnboardingService(
         users=UserRepository(session),
         email_verifications=EmailVerificationRepository(session),
@@ -96,11 +104,19 @@ def harness(session: AsyncSession) -> Harness:
         next_of_kin=NextOfKinRepository(session),
         kyc_documents=kyc_documents,
         kyc_face_verifications=KycFaceVerificationRepository(session),
+        invitations=invitations,
+        system_config=system_config,
         email_provider=email,
         otp_provider=StubOtpProvider(),
         kyc_provider=StubKycProvider(),
     )
-    return Harness(service=service, email=email, kyc_documents=kyc_documents)
+    return Harness(
+        service=service,
+        email=email,
+        kyc_documents=kyc_documents,
+        invitations=invitations,
+        system_config=system_config,
+    )
 
 
 def _unique_signup_kwargs() -> dict[str, Any]:
@@ -213,3 +229,92 @@ async def test_set_ditsala_code_rejects_weak_code(harness: Harness) -> None:
 
     with pytest.raises(OnboardingError, match="DITSALA Code"):
         await harness.service.set_ditsala_code(user, "short1")
+
+
+# --- §22/§28: invite-only mode ---
+
+
+async def test_signup_open_by_default_without_invite_code(harness: Harness) -> None:
+    user = await harness.service.start_signup(**_unique_signup_kwargs())
+    assert user.account_state == "pending_email"
+
+
+async def test_signup_requires_invite_code_when_invite_only_enabled(harness: Harness) -> None:
+    await harness.system_config.add(
+        SystemConfig(
+            key="invite_only_mode", value={"enabled": True}, updated_at=datetime.now(UTC)
+        )
+    )
+
+    with pytest.raises(OnboardingError, match="invitation code is required"):
+        await harness.service.start_signup(**_unique_signup_kwargs())
+
+
+async def test_signup_redeems_a_valid_invitation(harness: Harness) -> None:
+    inviter = await harness.service.start_signup(**_unique_signup_kwargs())
+    await harness.system_config.add(
+        SystemConfig(
+            key="invite_only_mode", value={"enabled": True}, updated_at=datetime.now(UTC)
+        )
+    )
+    invitation = await harness.invitations.add(
+        Invitation(
+            inviter_user_id=inviter.id,
+            invite_code="ABCD123456",
+            channel="link",
+            expires_at=datetime.now(UTC) + timedelta(days=7),
+        )
+    )
+
+    user = await harness.service.start_signup(
+        **_unique_signup_kwargs(), invite_code=invitation.invite_code
+    )
+    assert user.account_state == "pending_email"
+    assert invitation.status == "redeemed"
+    assert invitation.redeemed_by_user_id == user.id
+
+
+async def test_signup_rejects_an_already_redeemed_invitation(harness: Harness) -> None:
+    inviter = await harness.service.start_signup(**_unique_signup_kwargs())
+    await harness.system_config.add(
+        SystemConfig(
+            key="invite_only_mode", value={"enabled": True}, updated_at=datetime.now(UTC)
+        )
+    )
+    invitation = await harness.invitations.add(
+        Invitation(
+            inviter_user_id=inviter.id,
+            invite_code="ABCD654321",
+            channel="link",
+            status="redeemed",
+            expires_at=datetime.now(UTC) + timedelta(days=7),
+        )
+    )
+
+    with pytest.raises(OnboardingError, match="Invalid or already-used"):
+        await harness.service.start_signup(
+            **_unique_signup_kwargs(), invite_code=invitation.invite_code
+        )
+
+
+async def test_signup_rejects_an_expired_invitation(harness: Harness) -> None:
+    inviter = await harness.service.start_signup(**_unique_signup_kwargs())
+    await harness.system_config.add(
+        SystemConfig(
+            key="invite_only_mode", value={"enabled": True}, updated_at=datetime.now(UTC)
+        )
+    )
+    invitation = await harness.invitations.add(
+        Invitation(
+            inviter_user_id=inviter.id,
+            invite_code="ABCD999999",
+            channel="link",
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
+
+    with pytest.raises(OnboardingError, match="expired"):
+        await harness.service.start_signup(
+            **_unique_signup_kwargs(), invite_code=invitation.invite_code
+        )
+    assert invitation.status == "expired"

@@ -23,8 +23,9 @@ from app.core.security import create_access_token
 from app.domain.messaging.service import MessagingService
 from app.main import app
 from app.models.accounts import User
+from app.models.circle import Contact
 from app.models.devices import Device
-from app.repositories.circle import BlockRepository
+from app.repositories.circle import BlockRepository, ContactRepository
 from app.repositories.conversations import ConversationMemberRepository, ConversationRepository
 from app.repositories.crypto import (
     IdentityKeyRepository,
@@ -74,6 +75,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             media_objects=MediaObjectRepository(db_session),
             devices=DeviceRepository(db_session),
             blocks=BlockRepository(db_session),
+            contacts=ContactRepository(db_session),
             storage_provider=StubStorageProvider(),
             connection_manager=ConnectionManager(),
         )
@@ -117,6 +119,15 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _connect(session: AsyncSession, user_a_id: uuid.UUID, user_b_id: uuid.UUID) -> None:
+    """Mutual 'verified'-tier Circle contact — the precondition
+    /messaging/conversations/direct requires (§22); see test_api_circle.py
+    for the real request/accept flow that produces this state."""
+    session.add(Contact(owner_user_id=user_a_id, contact_user_id=user_b_id, tier="verified"))
+    session.add(Contact(owner_user_id=user_b_id, contact_user_id=user_a_id, tier="verified"))
+    await session.flush()
+
+
 async def test_key_registration_and_prekey_bundle(
     client: AsyncClient, session: AsyncSession
 ) -> None:
@@ -157,6 +168,7 @@ async def test_direct_conversation_and_messaging_flow(
 ) -> None:
     alice, _alice_device, alice_token = await _make_user_with_device(session)
     bob, _bob_device, bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
 
     r = await client.post(
         "/api/v1/messaging/conversations/direct",
@@ -211,6 +223,7 @@ async def test_outsider_cannot_read_conversation(
     alice, _d1, alice_token = await _make_user_with_device(session)
     bob, _d2, _bob_token = await _make_user_with_device(session)
     _outsider, _d3, outsider_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
 
     r = await client.post(
         "/api/v1/messaging/conversations/direct",
@@ -229,6 +242,7 @@ async def test_outsider_cannot_read_conversation(
 async def test_conversation_flags(client: AsyncClient, session: AsyncSession) -> None:
     alice, _d1, alice_token = await _make_user_with_device(session)
     bob, _d2, _bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
 
     r = await client.post(
         "/api/v1/messaging/conversations/direct",
@@ -299,33 +313,6 @@ async def test_media_upload_flow(client: AsyncClient, session: AsyncSession) -> 
     )
     assert r.status_code == 200, r.text
     assert r.json()["download_url"].startswith("https://stub-download.test/")
-
-
-async def test_block_prevents_new_conversation(
-    client: AsyncClient, session: AsyncSession
-) -> None:
-    alice, _d1, alice_token = await _make_user_with_device(session)
-    bob, _d2, _bob_token = await _make_user_with_device(session)
-
-    r = await client.post(f"/api/v1/messaging/block/{bob.id}", json={}, headers=_auth(alice_token))
-    assert r.status_code == 204, r.text
-
-    r = await client.post(
-        "/api/v1/messaging/conversations/direct",
-        json={"other_user_id": str(bob.id)},
-        headers=_auth(alice_token),
-    )
-    assert r.status_code == 400
-
-    r = await client.delete(f"/api/v1/messaging/block/{bob.id}", headers=_auth(alice_token))
-    assert r.status_code == 204, r.text
-
-    r = await client.post(
-        "/api/v1/messaging/conversations/direct",
-        json={"other_user_id": str(bob.id)},
-        headers=_auth(alice_token),
-    )
-    assert r.status_code == 200, r.text
 
 
 async def test_messaging_requires_authentication(client: AsyncClient) -> None:

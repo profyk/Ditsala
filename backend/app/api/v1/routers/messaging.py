@@ -15,7 +15,6 @@ from app.api.v1.deps import (
 )
 from app.domain.messaging.service import MessagingError
 from app.schemas.messaging import (
-    BlockUserRequest,
     ConversationResponse,
     CreateGroupConversationRequest,
     EditMessageRequest,
@@ -350,26 +349,6 @@ async def get_media_download_url(
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
     return MediaDownloadResponse(download_url=url)
-
-
-# --- block (§24) ---
-
-
-@router.post("/block/{target_user_id}", status_code=204)
-async def block_user(
-    target_user_id: uuid.UUID,
-    body: BlockUserRequest,
-    user: CurrentUserDep,
-    service: MessagingServiceDep,
-) -> None:
-    await service.block_user(user_id=user.id, target_user_id=target_user_id, reason=body.reason)
-
-
-@router.delete("/block/{target_user_id}", status_code=204)
-async def unblock_user(
-    target_user_id: uuid.UUID, user: CurrentUserDep, service: MessagingServiceDep
-) -> None:
-    await service.unblock_user(user_id=user.id, target_user_id=target_user_id)
 
 
 # --- WebSocket transport ---
