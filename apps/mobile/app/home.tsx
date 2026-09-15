@@ -5,13 +5,17 @@ import { FlatList, Text, View } from "react-native";
 import { Button } from "../components/Button";
 import { Screen } from "../components/Screen";
 import { authApi, type Device } from "../lib/api";
+import { messagingSocket } from "../lib/messaging-ws";
 import { clearSession, getAccessToken, getRefreshToken } from "../lib/session";
 
 /**
  * Placeholder authenticated home — Phase 4+ builds the real app (Circle,
  * conversations, etc.). This exists to prove the session/device-registry
  * plumbing works end to end: it lists the signed-in devices and can log
- * out (this device) or everywhere.
+ * out (this device) or everywhere. Also the single choke point every
+ * authenticated flow (login, unlock, onboarding completion) routes
+ * through, so it's where the realtime socket connects — call signaling
+ * and (once built) messaging both need it live from here on.
  */
 export default function Home() {
   const router = useRouter();
@@ -26,6 +30,7 @@ export default function Home() {
     }
     try {
       setDevices(await authApi.listDevices(accessToken));
+      messagingSocket.connect(accessToken);
     } catch {
       setError("Could not load your devices.");
     }
@@ -33,6 +38,7 @@ export default function Home() {
 
   useEffect(() => {
     loadDevices();
+    return () => messagingSocket.disconnect();
   }, [loadDevices]);
 
   async function handleLogout() {
@@ -40,6 +46,7 @@ export default function Home() {
     if (refreshToken) {
       await authApi.logout(refreshToken).catch(() => undefined);
     }
+    messagingSocket.disconnect();
     await clearSession();
     router.replace("/");
   }
@@ -49,6 +56,7 @@ export default function Home() {
     if (accessToken) {
       await authApi.logoutAll(accessToken).catch(() => undefined);
     }
+    messagingSocket.disconnect();
     await clearSession();
     router.replace("/");
   }
@@ -62,6 +70,12 @@ export default function Home() {
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
+      <Button
+        testID="sos-nav-button"
+        label="SOS"
+        onPress={() => router.push("/sos")}
+      />
+      <View className="h-3" />
       <Button
         testID="circle-nav-button"
         label="Circle"

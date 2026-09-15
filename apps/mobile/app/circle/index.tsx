@@ -5,7 +5,9 @@ import { FlatList, Text, View } from "react-native";
 import { Button } from "../../components/Button";
 import { Screen } from "../../components/Screen";
 import { ApiError } from "../../lib/api";
+import { useCall } from "../../lib/call-context";
 import { circleApi, type Contact } from "../../lib/circle-api";
+import { messagingApi } from "../../lib/messaging-api";
 import { getAccessToken } from "../../lib/session";
 
 const TIER_LABEL: Record<Contact["tier"], string> = {
@@ -26,10 +28,12 @@ const TIER_LABEL: Record<Contact["tier"], string> = {
  */
 export default function Circle() {
   const router = useRouter();
+  const { startCall } = useCall();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [incomingCount, setIncomingCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [callingId, setCallingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -70,6 +74,23 @@ export default function Circle() {
     }
   }
 
+  async function handleCall(contactUserId: string, callType: "voice" | "video") {
+    const token = await getAccessToken();
+    if (!token) return;
+    setCallingId(contactUserId);
+    try {
+      // §27 calls are 1:1 over a `direct` conversation — this reuses the
+      // real §18-21 conversation the two are already messaging-eligible
+      // through (idempotent: returns the existing one if there is one).
+      const conversation = await messagingApi.startDirectConversation(token, contactUserId);
+      await startCall(conversation.id, callType);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start the call.");
+    } finally {
+      setCallingId(null);
+    }
+  }
+
   return (
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Circle</Text>
@@ -83,6 +104,13 @@ export default function Circle() {
         testID="circle-requests-button"
         label={incomingCount > 0 ? `Requests (${incomingCount})` : "Requests"}
         onPress={() => router.push("/circle/requests")}
+        variant="secondary"
+      />
+      <View className="h-3" />
+      <Button
+        testID="circle-location-button"
+        label="Location"
+        onPress={() => router.push("/location")}
         variant="secondary"
       />
       <View className="h-3" />
@@ -108,6 +136,28 @@ export default function Circle() {
                 loading={verifyingId === item.contact_user_id}
                 onPress={() => handleVerify(item.contact_user_id)}
               />
+            ) : null}
+            {item.tier === "trusted" ? (
+              <View className="flex-row gap-3">
+                <View className="flex-1">
+                  <Button
+                    testID={`voice-call-button-${item.contact_user_id}`}
+                    label="Voice call"
+                    variant="secondary"
+                    loading={callingId === item.contact_user_id}
+                    onPress={() => handleCall(item.contact_user_id, "voice")}
+                  />
+                </View>
+                <View className="flex-1">
+                  <Button
+                    testID={`video-call-button-${item.contact_user_id}`}
+                    label="Video call"
+                    variant="secondary"
+                    loading={callingId === item.contact_user_id}
+                    onPress={() => handleCall(item.contact_user_id, "video")}
+                  />
+                </View>
+              </View>
             ) : null}
           </View>
         )}

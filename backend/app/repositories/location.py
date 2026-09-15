@@ -32,3 +32,9 @@ class LocationPingRepository(Repository[LocationPing]):
 
 class LocationAccessLogRepository(Repository[LocationAccessLog]):
     model = LocationAccessLog
+
+    async def list_for_share(self, location_share_id: uuid.UUID) -> list[LocationAccessLog]:
+        result = await self.session.execute(
+            self._select().where(LocationAccessLog.location_share_id == location_share_id)
+        )
+        return list(result.scalars().all())

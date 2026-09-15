@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.2",
     "@ditsala/ui-tokens": "workspace:*",
     "expo": "~57.0.22",
     "expo-camera": "~57.0.5",
     "expo-constants": "~57.0.18",
     "expo-linking": "~57.0.10",
     "expo-local-authentication": "~57.0.3",
+    "expo-location": "~57.0.17",
     "expo-router": "~57.0.21",
     "expo-secure-store": "~57.0.4",
     "expo-status-bar": "~57.0.1",
@@ -19,6 +21,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "^0.20.0",
+    "react-native-webrtc": "^124.0.8",
     "tailwindcss": "^3.4.19"
   },
   "devDependencies": {

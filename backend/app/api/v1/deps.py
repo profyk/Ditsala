@@ -9,12 +9,16 @@ from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.security import decode_access_token, decode_onboarding_token
 from app.domain.auth.service import AuthService
+from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
+from app.domain.location.service import LocationService
 from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
+from app.domain.sos.service import SosService
 from app.models.accounts import User
 from app.models.devices import Device
 from app.repositories.admin import SystemConfigRepository
+from app.repositories.calls import CallParticipantRepository, CallRepository
 from app.repositories.circle import (
     BlockRepository,
     ContactRepository,
@@ -35,11 +39,17 @@ from app.repositories.devices import (
     SessionRepository,
 )
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
+from app.repositories.location import (
+    LocationAccessLogRepository,
+    LocationPingRepository,
+    LocationShareRepository,
+)
 from app.repositories.messages import (
     MediaObjectRepository,
     MessageReceiptRepository,
     MessageRepository,
 )
+from app.repositories.sos import SosEventRepository, SosNotificationRepository
 from app.repositories.users import (
     EmailVerificationRepository,
     NextOfKinRepository,
@@ -50,6 +60,8 @@ from app.services.factory import (
     get_email_provider,
     get_kyc_provider,
     get_otp_provider,
+    get_push_provider,
+    get_sms_provider,
     get_storage_provider,
 )
 from app.services.realtime.websocket_manager import connection_manager
@@ -229,3 +241,46 @@ async def get_circle_service(session: SessionDep) -> CircleService:
 
 
 CircleServiceDep = Annotated[CircleService, Depends(get_circle_service)]
+
+
+async def get_location_service(session: SessionDep) -> LocationService:
+    return LocationService(
+        shares=LocationShareRepository(session),
+        pings=LocationPingRepository(session),
+        access_log=LocationAccessLogRepository(session),
+        contacts=ContactRepository(session),
+    )
+
+
+LocationServiceDep = Annotated[LocationService, Depends(get_location_service)]
+
+
+async def get_sos_service(session: SessionDep, settings: SettingsDep) -> SosService:
+    return SosService(
+        sos_events=SosEventRepository(session),
+        sos_notifications=SosNotificationRepository(session),
+        contacts=ContactRepository(session),
+        next_of_kin=NextOfKinRepository(session),
+        devices=DeviceRepository(session),
+        users=UserRepository(session),
+        system_config=SystemConfigRepository(session),
+        push_provider=get_push_provider(settings),
+        sms_provider=get_sms_provider(settings),
+    )
+
+
+SosServiceDep = Annotated[SosService, Depends(get_sos_service)]
+
+
+async def get_call_service(session: SessionDep) -> CallService:
+    return CallService(
+        calls=CallRepository(session),
+        participants=CallParticipantRepository(session),
+        conversations=ConversationRepository(session),
+        conversation_members=ConversationMemberRepository(session),
+        devices=DeviceRepository(session),
+        connection_manager=connection_manager,
+    )
+
+
+CallServiceDep = Annotated[CallService, Depends(get_call_service)]

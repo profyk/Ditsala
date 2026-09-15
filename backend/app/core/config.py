@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     kyc_provider: str = "sandbox"
     otp_provider: str = "sandbox"
     email_provider: str = "sandbox"
+    push_provider: str = "sandbox"
+    sms_provider: str = "sandbox"
 
     # 32+ bytes even as a placeholder — HS256 warns below that length, and
     # a real deployment must override this via env var regardless.
@@ -45,6 +47,23 @@ class Settings(BaseSettings):
     twilio_test_account_sid: str = ""
     twilio_test_auth_token: str = ""
     twilio_test_verify_service_sid: str = ""
+
+    # --- Twilio Programmable Messaging (SmsProvider) — §26 SOS SMS
+    # fallback. Distinct API from Verify above, same account. ---
+    twilio_sms_from_number: str = ""
+    twilio_test_sms_from_number: str = ""
+
+    # --- Expo push (PushProvider) — §26, §31. No distinct sandbox
+    # environment exists for Expo push; see services/push/sandbox.py. ---
+    expo_push_access_token: str = ""
+
+    # --- WebRTC (§27): STUN is Google's public server (no credentials
+    # needed); TURN is the self-hosted coturn from infra/docker-compose.yml
+    # — coturn is TURN relay only, media itself is peer-to-peer DTLS-SRTP. ---
+    stun_url: str = "stun:stun.l.google.com:19302"
+    turn_url: str = "turn:127.0.0.1:3478"
+    turn_username: str = "ditsala"
+    turn_credential: str = "ditsala"
 
     # --- Smile ID (KycProvider). Sandbox uses a distinct API host, per
     # Smile ID's own documented test environment. ---

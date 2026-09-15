@@ -1,10 +1,21 @@
 /**
- * Backend API client for onboarding (docs/DITSALA_MASTER_SPEC.md §9-15).
- * Deliberately thin — no retry/caching logic yet, that's a Phase 3+
- * concern once the full session model exists.
+ * Backend API client for onboarding (docs/DITSALA_MASTER_SPEC.md §9-15)
+ * and the shared HTTP transport every other `lib/*-api.ts` client is
+ * built on. Retries transient failures (no response at all, or a 502/503/
+ * 504 from something in front of the backend) with backoff — real
+ * connectivity on this network is often patchy, and a single dropped
+ * packet shouldn't surface as an error the user has to manually retry.
+ * Never retries a 4xx (that's a real rejection, not a blip) or a bare 500
+ * (the request may have already been processed server-side — retrying a
+ * non-idempotent POST blind risks a duplicate side effect).
  */
 
 export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [500, 1500];
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
 export class ApiError extends Error {
   constructor(
@@ -15,28 +26,67 @@ export class ApiError extends Error {
   }
 }
 
+/** Thrown when a request never got a response at all (offline, timeout,
+ * DNS failure) — distinct from `ApiError` so callers can show "check your
+ * connection" instead of a server-rejection message. */
+export class NetworkError extends Error {
+  constructor(message = "No connection. Check your network and try again.") {
+    super(message);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; token?: string } = {}
 ): Promise<T> {
-  const response = await fetch(`${BASE_URL}/api/v1${path}`, {
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  let lastNetworkError: unknown;
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const detail = typeof body?.detail === "string" ? body.detail : "Something went wrong.";
-    throw new ApiError(detail, response.status);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}/api/v1${path}`, {
+        method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      lastNetworkError = err;
+      continue; // no response at all — worth a retry
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      if (RETRYABLE_STATUSES.has(response.status) && attempt < MAX_ATTEMPTS - 1) {
+        continue;
+      }
+      const body = await response.json().catch(() => ({}));
+      const detail = typeof body?.detail === "string" ? body.detail : "Something went wrong.";
+      throw new ApiError(detail, response.status);
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+
+  throw new NetworkError(
+    lastNetworkError instanceof Error && lastNetworkError.name === "AbortError"
+      ? "The request timed out. Check your network and try again."
+      : undefined
+  );
 }
 
 export type AccountState =

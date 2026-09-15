@@ -14,6 +14,30 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** This is the single highest-priority item for whoever picks up this codebase next with native build tooling available. See `docs/adr/0005-e2ee-native-module-gap.md` for the full architectural reasoning.
 
+### WebRTC calling not runtime-verified on a device (spec §27)
+
+**What's missing:** `react-native-webrtc` (real dependency, real API usage — see `lib/call-session.ts`) has never actually run: no `expo prebuild` + native compile, no simulator/device, no EAS build. This is a different kind of gap than the libsignal one above — see `docs/adr/0007-calls-native-module-verification-gap.md` for why the full stack (backend signaling, `CallSession`, `call-context.tsx`, the incoming/active-call screens) was built for real rather than left as plumbing-only, and exactly what "unverified" means here (the code is complete and correct against the library's documented API; it just hasn't been proven to actually carry audio/video on a real device yet).
+
+**Why:** Same environment constraint as libsignal — no Xcode/Android Studio/EAS credentials — but `react-native-webrtc` itself needed no code this session had to get cryptographically right, unlike libsignal.
+
+**Also not run:** the self-hosted coturn TURN server (`infra/docker-compose.yml`, scaffolded since Phase 0) — same Docker-not-installed constraint as the rest of local dev. Without it running, only same-network (STUN-reachable) calls would actually connect if this were tested today.
+
+**Also not implemented:** W3C "Perfect Negotiation" glare resolution for two simultaneous renegotiation offers colliding (`lib/call-session.ts`). With exactly two participants and `switch_media` as the only renegotiation trigger, this only matters if both sides hit "switch" in the same round trip.
+
+**Tracked for:** Whoever next has EAS/Xcode/Android Studio access — run a real device build and place a call between two devices before trusting this beyond "code review passed." See the ADR for the full reasoning.
+
+### Circle QR code generation and safety-number display gaps carried over from Phase 5
+
+See the two entries below this one for the pre-existing Circle gaps (QR rendering, safety-number fingerprint display) — unchanged by Phase 6.
+
+### Location sharing is foreground-only (spec §25)
+
+**What's missing:** `app/location/index.tsx` acquires real GPS via `expo-location` and posts real pings while the screen is open, but no background location task is registered — closing or backgrounding the app stops the pings, even though the `location_shares` grant is still active server-side until it expires or is revoked.
+
+**Why:** Registering a background location task (`expo-location`'s `startLocationUpdatesAsync` + a defined task via `expo-task-manager`) is a larger platform-permissions surface (Android's background-location rationale flow, iOS's "Always" authorization) that wasn't in scope to add sight-unseen in this pass.
+
+**Tracked for:** Add `expo-task-manager` + a registered background location task once this is being verified on a real device anyway (see the WebRTC gap above — that verification pass is the natural place to also confirm background location permissions prompts render correctly).
+
 ### Local S3-compatible storage (e.g. MinIO) not run in this environment (spec §3)
 
 **What's missing:** `services/storage/sandbox.py` (`SandboxStorageProvider`) is code-complete and shares the exact same client code as the real S3 adapter, differing only in endpoint/credentials — but no local MinIO instance was run here to actually exercise a presigned upload/download round-trip. `domain/messaging/service.py`'s media methods are tested against a stub `StorageProvider` instead (see `app/tests/test_messaging_service.py`).

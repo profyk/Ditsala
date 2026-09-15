@@ -38,10 +38,18 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "DITSALA needs camera access to verify your identity and capture your ID document — captures are never taken from your photo library."
+          "cameraPermission": "DITSALA needs camera access to verify your identity, capture your ID document, and scan Circle QR codes — captures are never taken from your photo library.",
+          "microphonePermission": "DITSALA needs microphone access for voice and video calls."
         }
       ],
-      "expo-secure-store"
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "DITSALA only accesses your location when you explicitly share it with a trusted Circle contact, or trigger SOS."
+        }
+      ],
+      "expo-secure-store",
+      "@config-plugins/react-native-webrtc"
     ]
   }
 }
