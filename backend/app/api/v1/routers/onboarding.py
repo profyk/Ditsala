@@ -2,8 +2,15 @@ from datetime import datetime, time
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from app.api.v1.deps import OnboardingServiceDep, OnboardingUserDep, SessionDep, SettingsDep
+from app.api.v1.deps import (
+    AuthServiceDep,
+    OnboardingServiceDep,
+    OnboardingUserDep,
+    SessionDep,
+    SettingsDep,
+)
 from app.core.security import create_onboarding_token, hash_national_id
+from app.domain.auth.service import AuthError
 from app.domain.onboarding.interfaces import KycJobType
 from app.domain.onboarding.service import OnboardingError
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
@@ -155,7 +162,11 @@ webhook_router = APIRouter(tags=["webhooks"])
 
 @webhook_router.post("/webhooks/smile-id", include_in_schema=False)
 async def smile_id_webhook(
-    request: Request, session: SessionDep, service: OnboardingServiceDep, settings: SettingsDep
+    request: Request,
+    session: SessionDep,
+    service: OnboardingServiceDep,
+    auth_service: AuthServiceDep,
+    settings: SettingsDep,
 ) -> dict[str, str]:
     payload = await request.body()
     signature = request.headers.get("X-Smile-Signature", "")
@@ -171,13 +182,26 @@ async def smile_id_webhook(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown job.")
         user = await UserRepository(session).get(document.user_id)
         assert user is not None
-        await service.handle_kyc_document_result(user, result)
-    else:
+        try:
+            await service.handle_kyc_document_result(user, result)
+        except OnboardingError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    elif result.job_type == KycJobType.SMARTSELFIE:
         face = await KycFaceVerificationRepository(session).get_by_smile_id_job(result.job_id)
         if face is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown job.")
         user = await UserRepository(session).get(face.user_id)
         assert user is not None
-        await service.handle_kyc_liveness_result(user, result)
+        try:
+            await service.handle_kyc_liveness_result(user, result)
+        except OnboardingError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    else:  # LOGIN_LIVENESS (§17) — records the result only; the account
+        # is already active, and completing the login happens
+        # synchronously when the client calls /auth/login/complete.
+        try:
+            await auth_service.record_login_liveness_result(result)
+        except AuthError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     return {"status": "ok"}

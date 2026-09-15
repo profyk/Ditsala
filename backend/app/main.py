@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1.routers import health, onboarding
+from app.api.v1.routers import auth, health, onboarding
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -21,3 +21,4 @@ app = FastAPI(title="DITSALA API", version="0.1.0", lifespan=lifespan)
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(onboarding.router, prefix="/api/v1")
 app.include_router(onboarding.webhook_router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")

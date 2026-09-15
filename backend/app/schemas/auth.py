@@ -1,0 +1,54 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class DeviceRegistrationRequest(BaseModel):
+    device_name: str = Field(min_length=1, max_length=120)
+    platform: str = Field(pattern="^(ios|android)$")
+    push_token: str | None = None
+
+
+class SessionResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    device_id: uuid.UUID
+
+
+class LoginStartRequest(BaseModel):
+    identifier: str = Field(min_length=3, max_length=320)  # email or phone
+    ditsala_code: str = Field(min_length=1, max_length=128)
+    device_name: str = Field(min_length=1, max_length=120)
+    platform: str = Field(pattern="^(ios|android)$")
+    push_token: str | None = None
+
+
+class LoginStartResponse(BaseModel):
+    login_token: str
+    kyc_token: str
+    job_id: str
+
+
+class LoginCompleteRequest(BaseModel):
+    login_token: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+
+
+class DeviceResponse(BaseModel):
+    id: uuid.UUID
+    device_name: str
+    platform: str
+    is_trusted: bool
+    last_seen_at: datetime
+    revoked_at: datetime | None
+
+    model_config = {"from_attributes": True}

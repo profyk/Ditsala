@@ -3,6 +3,7 @@ import hmac
 import secrets
 import string
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -81,3 +82,94 @@ def decode_onboarding_token(token: str, *, jwt_secret: str) -> uuid.UUID:
     if payload.get("type") != _ONBOARDING_TOKEN_TYPE:
         raise jwt.InvalidTokenError("Not an onboarding token.")
     return uuid.UUID(payload["sub"])
+
+
+# --- §16-17: sessions, devices, two-factor login ---
+
+ACCESS_TOKEN_TYPE = "access"
+_LOGIN_TOKEN_TYPE = "login"
+LOGIN_TOKEN_TTL_MINUTES = 15
+
+
+def generate_refresh_token() -> str:
+    """High-entropy opaque token — not a JWT. Hashed before storage
+    (below); the plaintext exists only in this response and on the
+    device's SecureStore."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_refresh_token(token: str) -> str:
+    """Deterministic (SHA-256, no salt/pepper needed) — this is a lookup
+    key for a 256-bit random value, not a low-entropy secret a human
+    chose, so it doesn't need Argon2id's slow-hash properties. Unlike
+    `hash_national_id`, there's no PII here worth extra key separation."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_access_token(
+    user_id: uuid.UUID, device_id: uuid.UUID, *, jwt_secret: str, ttl_minutes: int
+) -> str:
+    payload = {
+        "sub": str(user_id),
+        "device_id": str(device_id),
+        "type": ACCESS_TOKEN_TYPE,
+        "exp": datetime.now(UTC) + timedelta(minutes=ttl_minutes),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+@dataclass(frozen=True)
+class AccessTokenPayload:
+    user_id: uuid.UUID
+    device_id: uuid.UUID
+
+
+def decode_access_token(token: str, *, jwt_secret: str) -> AccessTokenPayload:
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != ACCESS_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not an access token.")
+    return AccessTokenPayload(
+        user_id=uuid.UUID(payload["sub"]), device_id=uuid.UUID(payload["device_id"])
+    )
+
+
+@dataclass(frozen=True)
+class LoginTokenPayload:
+    """
+    Carries the device details from /auth/login/start through to
+    /auth/login/complete — the device row isn't created until the liveness
+    check actually passes, so there's nowhere else to hold them between
+    the two calls except this token's claims.
+    """
+
+    user_id: uuid.UUID
+    job_id: str
+    device_name: str
+    platform: str
+    push_token: str | None
+
+
+def create_login_token(payload: LoginTokenPayload, *, jwt_secret: str) -> str:
+    claims = {
+        "sub": str(payload.user_id),
+        "type": _LOGIN_TOKEN_TYPE,
+        "job_id": payload.job_id,
+        "device_name": payload.device_name,
+        "platform": payload.platform,
+        "push_token": payload.push_token,
+        "exp": datetime.now(UTC) + timedelta(minutes=LOGIN_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(claims, jwt_secret, algorithm="HS256")
+
+
+def decode_login_token(token: str, *, jwt_secret: str) -> LoginTokenPayload:
+    claims = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if claims.get("type") != _LOGIN_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not a login token.")
+    return LoginTokenPayload(
+        user_id=uuid.UUID(claims["sub"]),
+        job_id=claims["job_id"],
+        device_name=claims["device_name"],
+        platform=claims["platform"],
+        push_token=claims["push_token"],
+    )

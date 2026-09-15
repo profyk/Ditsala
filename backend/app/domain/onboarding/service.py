@@ -205,17 +205,26 @@ class OnboardingService:
     async def start_kyc_liveness(self, user: User) -> KycSdkToken:
         if user.account_state not in ("pending_kyc_liveness", "manual_review"):
             raise OnboardingError(f"Cannot start KYC liveness in state {user.account_state!r}.")
-        return await self._kyc_provider.create_sdk_token(
+        sdk_token = await self._kyc_provider.create_sdk_token(
             user_id=user.id, job_type=KycJobType.SMARTSELFIE
         )
+        # Pre-created here, not lazily in handle_kyc_liveness_result: the
+        # webhook router looks a job up by id to find *which user* it
+        # belongs to before it can call that method at all, so the row
+        # must already exist by the time the webhook arrives. (This
+        # mirrors start_kyc_document_capture, which already did this
+        # correctly — this one was a real bug, caught while building
+        # Phase 3's analogous login-liveness flow.)
+        await self._kyc_face_verifications.add(
+            KycFaceVerification(user_id=user.id, smile_id_job_id=sdk_token.job_id)
+        )
+        return sdk_token
 
     async def handle_kyc_liveness_result(self, user: User, result: KycWebhookResult) -> None:
         face = await self._kyc_face_verifications.get_by_smile_id_job(result.job_id)
         if face is None:
-            face = await self._kyc_face_verifications.add(
-                KycFaceVerification(user_id=user.id, smile_id_job_id=result.job_id)
-            )
-        elif face.user_id != user.id:
+            raise OnboardingError("Unknown KYC liveness job.")
+        if face.user_id != user.id:
             raise OnboardingError("Mismatched KYC liveness job.")
 
         face.selfie_liveness_score = result.result_summary.get("confidence_value")

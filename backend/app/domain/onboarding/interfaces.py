@@ -30,6 +30,11 @@ class OtpProvider(Protocol):
 class KycJobType(StrEnum):
     DOCUMENT_VERIFICATION = "document_verification"
     SMARTSELFIE = "smartselfie"
+    # Re-verification liveness for full server-side authentication — new
+    # device, after logout, or recovery (docs/DITSALA_MASTER_SPEC.md §17).
+    # Reuses the same SmartSelfie job mechanics and the kyc_face_verifications
+    # table as onboarding's SMARTSELFIE step; see domain/auth/service.py.
+    LOGIN_LIVENESS = "login_liveness"
 
 
 class KycOutcome(StrEnum):

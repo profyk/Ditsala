@@ -20,9 +20,15 @@ Working notes for whoever (human or Claude) picks up this repo next. Full detail
 
 Not yet built in Phase 2: the breach-corpus check for the DITSALA Code (`docs/SECURITY_GAPS.md`).
 
-Not yet started: Phase 3 onward (auth/sessions, E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
+**Phase 3 — Authentication & Sessions: backend complete, mobile not yet started.** `domain/auth/service.py` (`AuthService`) owns the `pending_code` → `active` transition (device registration completes onboarding — Signal key upload itself is Phase 4's job) and two-factor login (§17): `POST /auth/login/start` (DITSALA Code) → Smile ID SmartSelfie liveness job → webhook lands the result → `POST /auth/login/complete` (checked within a 15-minute validity window). One uniform login flow handles every full-auth event (new device, after logout, recovery-adjacent) — there is no "trusted device, code only" server path, per §17.
 
-`apps/mobile` and `apps/admin` are intentionally stub packages right now (just enough `package.json` for the workspace and CI to resolve) — they get real content in Phase 2 and Phase 7 respectively, not before.
+Stateless short-lived access JWTs (`ACCESS_TOKEN_TTL_MINUTES`) + stateful rotating refresh tokens (`POST /auth/refresh`) with reuse detection — replaying an already-rotated-away refresh token revokes the entire session family, not just that token (see ADR 0004 for the full session model and the deliberate access-token revocation-latency tradeoff this implies). Device registry (`GET /auth/devices`, `DELETE /auth/devices/{id}`), `POST /auth/logout` (one session) and `/auth/logout-all` (every session), code-attempt lockout with escalating duration, and login-attempt logging are all in place.
+
+A real Phase 2 bug was found and fixed while building this: `OnboardingService.start_kyc_liveness` never pre-created the `KycFaceVerification` row the webhook router's user-lookup depends on — see ADR 0004. 48 backend tests pass total (11 new domain tests, 5 new API tests for Phase 3). The Smile ID webhook HTTP endpoint's signature verification still has no test with a real payload (`docs/SECURITY_GAPS.md`) — same vendor-account limitation as Phase 2.
+
+Not yet started: the mobile side of Phase 3 (SecureStore token storage, biometric routine-unlock, login screen — `apps/mobile`'s `complete.tsx` still just displays state rather than calling `/auth/complete-onboarding`), and Phase 4 onward (E2EE messaging, Circle, location/SOS/calls, admin panel, recovery/hardening). See "Execution order" in the spec — build in order, don't skip ahead.
+
+`apps/admin` is intentionally still a stub package (just enough `package.json` for the workspace and CI to resolve) — it gets real content in Phase 7, not before.
 
 ## Brand (non-negotiable in all UI/copy work)
 
