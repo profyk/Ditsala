@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.security import (
     generate_numeric_code,
     hash_secret,
+    is_breached_code,
     validate_ditsala_code_strength,
     verify_secret,
 )
@@ -321,6 +322,10 @@ class OnboardingService:
         if not validate_ditsala_code_strength(code):
             raise OnboardingError(
                 f"The DITSALA Code must be at least {8} characters and include a number."
+            )
+        if await is_breached_code(code):
+            raise OnboardingError(
+                "This code has appeared in a known data breach — choose a different one."
             )
         user.ditsala_code_hash = hash_secret(code)
         user.code_set_at = datetime.now(UTC)

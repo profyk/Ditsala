@@ -6,17 +6,20 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import jwt
 import pyotp
+import structlog
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 _hasher = PasswordHasher()
+_logger = structlog.get_logger()
 
-# DITSALA Code rules — docs/DITSALA_MASTER_SPEC.md §15. The breach-corpus
-# check called for there isn't implemented (needs a real dataset/service —
-# see docs/SECURITY_GAPS.md); this covers structural validation only.
+# DITSALA Code rules — docs/DITSALA_MASTER_SPEC.md §15.
 MIN_CODE_LENGTH = 8
+
+HIBP_PWNED_PASSWORDS_URL = "https://api.pwnedpasswords.com/range/"
 
 
 def hash_secret(secret: str) -> str:
@@ -47,6 +50,33 @@ def hash_national_id(national_id: str, *, pepper: str) -> str:
 
 def validate_ditsala_code_strength(code: str) -> bool:
     return len(code) >= MIN_CODE_LENGTH and any(char.isdigit() for char in code)
+
+
+async def is_breached_code(code: str) -> bool:
+    """
+    §15 breach-corpus check, via Have I Been Pwned's Pwned Passwords
+    k-anonymity API — the only acceptable approach for checking a
+    not-yet-hashed secret against a third party: only a 5-character SHA-1
+    prefix ever leaves this process, never the code itself, and HIBP
+    can't feasibly reverse the remaining suffix space back to it.
+
+    Fails open (returns False) on any network/API problem — signup and
+    account recovery must not become unavailable because a third-party
+    lookup timed out. The structural check
+    (`validate_ditsala_code_strength`) is enforced unconditionally
+    either way; this is an additional check layered on top of it, not a
+    replacement.
+    """
+    digest = hashlib.sha1(code.encode()).hexdigest().upper()
+    prefix, suffix = digest[:5], digest[5:]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{HIBP_PWNED_PASSWORDS_URL}{prefix}")
+            response.raise_for_status()
+    except httpx.HTTPError:
+        await _logger.awarning("hibp_breach_check_unavailable")
+        return False
+    return any(line.split(":")[0] == suffix for line in response.text.splitlines())
 
 
 def generate_numeric_code(length: int = 6) -> str:

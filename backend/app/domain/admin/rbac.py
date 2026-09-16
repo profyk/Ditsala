@@ -1,15 +1,11 @@
 """
-Admin RBAC — docs/DITSALA_MASTER_SPEC.md §29. The launch role set is
-fixed here as a Python mapping rather than driven by the
-`admin_role_permissions` join table Phase 1 already modeled: §29 does
-say roles are "extensible via admin_roles/admin_permissions," which
-would need that table populated and a management UI over it, but no
-such UI exists yet and the 4 launch roles are fixed by spec text, not by
-what an admin configures at runtime. Tracked as a simplification in
-docs/SECURITY_GAPS.md, not a silent gap — `admin_roles.name` (a real
-column, real FK target from `admin_users.role_id`) is still the source
-of truth for *which* role an admin has; only the role -> permission
-mapping is hardcoded rather than DB-driven.
+Admin RBAC — docs/DITSALA_MASTER_SPEC.md §29. `Permission` is the
+canonical set of permission names — every route's `require_permission()`
+call references one of these. The role -> permission mapping itself is
+DB-driven (`admin_role_permissions`, checked via
+`AdminRoleRepository.role_has_permission`) as of ADR 0011 — this module
+no longer hardcodes it; migration `7a3f2e9c1b4d` seeds the launch set's
+initial mapping as a one-time data snapshot, not a live source of truth.
 """
 
 from enum import StrEnum
@@ -31,28 +27,3 @@ class Permission(StrEnum):
     SYSTEM_CONFIG_ACTION = "system_config:action"
     DATA_SUBJECT_REQUESTS_VIEW = "data_subject_requests:view"
     DATA_SUBJECT_REQUESTS_ACTION = "data_subject_requests:action"
-
-
-ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
-    "super_admin": frozenset(Permission),
-    "kyc_reviewer": frozenset(
-        {Permission.DASHBOARD_VIEW, Permission.KYC_QUEUE_VIEW, Permission.KYC_QUEUE_ACTION}
-    ),
-    "trust_safety": frozenset(
-        {
-            Permission.DASHBOARD_VIEW,
-            Permission.REPORTS_VIEW,
-            Permission.REPORTS_ACTION,
-            Permission.USERS_VIEW,
-            Permission.USERS_ACTION,
-            Permission.SECURITY_VIEW,
-            Permission.DATA_SUBJECT_REQUESTS_VIEW,
-            Permission.DATA_SUBJECT_REQUESTS_ACTION,
-        }
-    ),
-    "support_readonly": frozenset({Permission.DASHBOARD_VIEW, Permission.USERS_VIEW}),
-}
-
-
-def role_has_permission(role_name: str, permission: Permission) -> bool:
-    return permission in ROLE_PERMISSIONS.get(role_name, frozenset())

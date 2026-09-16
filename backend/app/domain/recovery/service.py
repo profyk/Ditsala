@@ -20,6 +20,7 @@ from app.core.security import (
     decode_recovery_flag_token,
     generate_numeric_code,
     hash_secret,
+    is_breached_code,
     validate_ditsala_code_strength,
     verify_secret,
 )
@@ -225,6 +226,10 @@ class RecoveryService:
             )
         if not validate_ditsala_code_strength(new_ditsala_code):
             raise RecoveryError("DITSALA Code does not meet strength requirements.")
+        if await is_breached_code(new_ditsala_code):
+            raise RecoveryError(
+                "This code has appeared in a known data breach — choose a different one."
+            )
 
         user = await self._users.get(request.user_id)
         assert user is not None

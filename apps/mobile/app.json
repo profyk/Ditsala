@@ -50,6 +50,12 @@
       ],
       "expo-secure-store",
       "@config-plugins/react-native-webrtc"
-    ]
+    ],
+    "owner": "profy",
+    "extra": {
+      "eas": {
+        "projectId": "ba51b7f4-c7b7-413e-bed3-acb83243c583"
+      }
+    }
   }
 }

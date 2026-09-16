@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import desc
+from sqlalchemy import desc, select
 
 from app.models.admin import (
     AdminPermission,
@@ -29,6 +29,21 @@ class AdminRoleRepository(Repository[AdminRole]):
     async def get_by_name(self, name: str) -> AdminRole | None:
         result = await self.session.execute(self._select().where(AdminRole.name == name))
         return result.scalar_one_or_none()
+
+    async def role_has_permission(self, role_id: uuid.UUID, permission_name: str) -> bool:
+        """§29 RBAC — DB-driven per ADR 0011: a role has a permission iff a
+        row exists joining it to that permission by name through
+        `admin_role_permissions`."""
+        result = await self.session.execute(
+            select(AdminRolePermission.id)
+            .join(AdminPermission, AdminPermission.id == AdminRolePermission.permission_id)
+            .where(
+                AdminRolePermission.role_id == role_id,
+                AdminPermission.name == permission_name,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
 
 class AdminPermissionRepository(Repository[AdminPermission]):

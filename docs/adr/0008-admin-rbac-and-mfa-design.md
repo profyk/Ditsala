@@ -8,6 +8,8 @@ docs/DITSALA_MASTER_SPEC.md §29 defines 4 launch admin roles (`super_admin`, `k
 
 ## Decision 1: role -> permission mapping is a Python constant, not the join table
 
+**Superseded by ADR 0011 (Phase 8)** — the mapping is now DB-driven, per this decision's own "consequence" note below. Left in place as the historical record of why it started this way.
+
 `domain/admin/rbac.py` hardcodes `ROLE_PERMISSIONS: dict[str, frozenset[Permission]]` for the 4 launch roles, checked via `role_has_permission(role_name, permission)`. The `admin_role_permissions`/`admin_permissions` tables are **not populated or read** — only `admin_roles.name` (a real column, the real FK target of `admin_users.role_id`) is used, to know *which* role an admin has.
 
 **Why:** §29's role set is fixed by spec text for launch, not something an admin configures at runtime — there is no "RBAC management" UI in this phase (§29's own text scopes that to `super_admin`, but no such screen was built). Making the mapping DB-driven now would mean building CRUD + a management UI for a table nothing else reads yet, for a set of 4 roles unlikely to change before that UI exists anyway.

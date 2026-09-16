@@ -12,14 +12,6 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Before a real admin population exists at scale — envelope-encrypt `mfa_secret`, decrypted only inside `AdminAuthService`.
 
-### Admin RBAC is a hardcoded Python mapping, not DB-driven (spec §29)
-
-**What's missing:** `admin_role_permissions`/`admin_permissions` (modeled in Phase 1, anticipating full RBAC extensibility) are never populated or read — `domain/admin/rbac.py` hardcodes the 4 launch roles' permissions as a Python constant instead.
-
-**Why:** No RBAC-management UI exists yet to actually configure that join table, and the 4 launch roles are fixed by spec text for v1. See ADR 0008 for the full reasoning — this is real enforcement (every route checks it), just not database-driven yet.
-
-**Tracked for:** Whoever builds a `super_admin`-only RBAC management screen — populate the join table and switch `role_has_permission` to query it.
-
 ### Admin panel not verified in a real browser (spec §28)
 
 **What's missing:** The Next.js admin panel (`apps/admin`) was verified via `tsc`, ESLint, Vitest (all passing), and a real `next dev` server that successfully compiled and served the login page (HTTP 200) against the real FastAPI backend — but no visual/interactive verification happened in an actual browser, since this session's Chrome extension bridge wasn't connected. Playwright E2E (per the kickoff prompt's "Admin: Vitest + Playwright" working rule) was not attempted at all, for the same reason plus this host's tight memory/disk margins.
@@ -69,14 +61,6 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 **Why:** Deliberate, not a capability gap — this session already runs a portable Postgres and Mailpit, and adding a third local service risked the same low-memory conditions flagged mid-session (see `CLAUDE.md`).
 
 **Tracked for:** Add a MinIO service (or point `SANDBOX_S3_*` at any other local S3-compatible endpoint) and exercise one real presigned upload before trusting the media flow beyond stub-level testing. `infra/docker-compose.yml` doesn't include one yet — the original Phase 0 scope only called for Postgres/Redis/coturn/Mailpit.
-
-### DITSALA Code breach-corpus check (spec §15)
-
-**What's missing:** §15 calls for rejecting DITSALA Codes found in a common-password/breach-corpus dataset at signup. `core/security.py::validate_ditsala_code_strength` currently only checks structural rules (length ≥ 8, contains a digit) — it does not check against any breach corpus.
-
-**Why:** No such dataset or service is wired up. A real implementation needs either a local breach-corpus wordlist (e.g., a filtered subset of Have I Been Pwned's Pwned Passwords list) or a k-anonymity API call to a service like HIBP — both require infrastructure/vendor decisions not yet made, and using a live third-party API to check a value derived from a not-yet-hashed secret needs care (HIBP's k-anonymity model, sending only a truncated hash prefix, is the only acceptable approach — never send or log the plaintext code to a third party).
-
-**Tracked for:** Phase 2 follow-up or Phase 8 hardening, whichever lands first. Close this entry by wiring `validate_ditsala_code_strength` to a real breach-corpus check and removing this section.
 
 ### Smile ID adapter field/endpoint accuracy (spec §12)
 
@@ -128,12 +112,18 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 ### CI/CD deploy infrastructure is written but not provisioned or build-tested (spec §35)
 
-**What's missing:** `backend/Dockerfile`, `backend/railway.json`, `infra/aws/ecs-task-definition.json`, and all six `.github/workflows/*.yml` files (`ci.yml` pre-existing, five deploy workflows added this pass) are real, syntactically-valid configuration — but none of it has been exercised end to end. Specifically: `docker build` has never been run against `backend/Dockerfile` (no Docker in this environment); no Railway/AWS/Vercel/Expo account exists to actually deploy to; the AWS ECS task definition's placeholders (`<ACCOUNT_ID>`, `<REGION>`) are literal placeholders, not real values.
+**What's actually verified now:** the backend Dockerfile builds and runs for real — a manual Railway deploy (via the dashboard, not the GitHub Actions workflow) is live at `https://ditsala-production.up.railway.app` and `GET /api/v1/health` returns 200, proving `entrypoint.sh`'s `alembic upgrade head` succeeded against the real Supabase database and uvicorn is serving. That's a genuine, running deployment, not just reviewed config.
 
-**Why:** This environment has no cloud account access or Docker — see `docs/CI_CD.md`'s own "Not verified" note. Writing the pipeline shape and getting every config file's syntax right is the part achievable without that access; provisioning and a real first deploy needs whoever has the actual Railway/AWS/Vercel/Expo accounts.
+**What's still missing:** the automated `backend-deploy-railway.yml` GitHub Actions path is not yet authorized (`RAILWAY_TOKEN`/`RAILWAY_SERVICE_ID` secrets not set — see ADR-worthy incident: the workflow originally targeted a service by guessed name, causing a silent deploy to an unconfigured service; fixed to target by ID, see `docs/CI_CD.md` §3's revised setup steps). AWS ECS, Vercel, and EAS submit are all still unexercised — no accounts/credentials wired for those in this environment.
 
-**Tracked for:** Follow `docs/CI_CD.md` section by section (one-time setup for each target), then trigger each workflow once manually and confirm it succeeds before relying on the automatic ones (`backend-deploy-railway`, `admin-deploy`) firing on every `main` push.
+**Tracked for:** Add `RAILWAY_SERVICE_ID` + a Project (not personal) `RAILWAY_TOKEN` so future pushes auto-deploy. Follow `docs/CI_CD.md` section by section for AWS/Vercel/EAS's remaining one-time setup.
 
 ## Resolved
 
-_(none yet)_
+### Admin RBAC is a hardcoded Python mapping, not DB-driven (spec §29)
+
+Resolved in Phase 8 — see `docs/adr/0011-admin-rbac-db-driven.md`. `require_permission()` now queries `admin_role_permissions` directly; migration `7a3f2e9c1b4d` seeds it with the prior hardcoded mapping so behavior is unchanged (verified: all 11 `test_api_admin.py` RBAC tests pass unmodified).
+
+### DITSALA Code breach-corpus check (spec §15)
+
+Resolved in Phase 8 — `core/security.py::is_breached_code` calls Have I Been Pwned's Pwned Passwords k-anonymity API (only a 5-character SHA-1 prefix ever leaves the process, never the code itself), wired into both onboarding's `set_ditsala_code` and recovery's `complete`. Fails open on any network/API problem so signup/recovery availability never depends on a third party's uptime. Verified with real calls to the live HIBP API in tests (a known-breached password correctly flagged, a random string correctly allowed) — not mocked.

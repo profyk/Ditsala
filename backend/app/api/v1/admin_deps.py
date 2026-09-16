@@ -12,7 +12,7 @@ from app.api.v1.deps import SessionDep, SettingsDep
 from app.core.security import decode_admin_access_token
 from app.domain.admin.auth_service import AdminAuthService
 from app.domain.admin.kyc_review_service import KycReviewService
-from app.domain.admin.rbac import Permission, role_has_permission
+from app.domain.admin.rbac import Permission
 from app.domain.admin.service import AdminService
 from app.models.admin import AdminUser
 from app.repositories.admin import (
@@ -93,14 +93,16 @@ CurrentAdminDep = Annotated[AdminUser, Depends(get_current_admin)]
 def require_permission(permission: Permission) -> Any:
     """
     §29 RBAC — usage: `_: Annotated[None, Depends(require_permission(Permission.KYC_QUEUE_VIEW))]`.
-    Loads the admin's role by name (real DB column) and checks it against
-    the hardcoded launch role -> permission mapping (`domain/admin/rbac.py`
-    explains why that mapping isn't DB-driven yet).
+    DB-driven per ADR 0011: checks `admin_role_permissions` directly
+    rather than a hardcoded Python mapping — a `super_admin`-only RBAC
+    management screen can now change what a role can do by writing rows,
+    no deploy required.
     """
 
     async def _check(admin: CurrentAdminDep, session: SessionDep) -> None:
-        role = await AdminRoleRepository(session).get(admin.role_id)
-        if role is None or not role_has_permission(role.name, permission):
+        if not await AdminRoleRepository(session).role_has_permission(
+            admin.role_id, permission.value
+        ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions.")
 
     return Depends(_check)
