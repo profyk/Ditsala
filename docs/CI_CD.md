@@ -62,15 +62,17 @@ This is the backup/replica path behind an Application Load Balancer, deployed ma
 
 **Deploy**: automatic, via `.github/workflows/admin-deploy.yml`, after every successful `CI` run on `main`.
 
-## 6. Mobile — EAS (build + submit)
+## 6. Mobile — EAS (build + submit + web hosting)
 
-`apps/mobile/eas.json` defines three build profiles (`development`, `preview`, `production`) — see that file for the API base URL each targets.
+`apps/mobile/eas.json` defines three build profiles (`development`, `preview`, `production`) — see that file for the API base URL each targets. The project is already linked (`@profy/ditsala`, ID in `app.json`'s `extra.eas.projectId`).
 
 **One-time setup:**
-1. Create an Expo account/organization, run `eas init` once locally from `apps/mobile` to link the project (writes `extra.eas.projectId` into `app.json`).
-2. Generate an Expo access token (expo.dev → Account Settings → Access Tokens) and add it as the `EXPO_TOKEN` secret.
+1. ~~Create an Expo account/organization, run `eas init`~~ — already done; project is `@profy/ditsala`.
+2. Generate an Expo access token (expo.dev → Account Settings → Access Tokens) and add it as the `EXPO_TOKEN` secret — needed by all three mobile workflows below.
 3. **iOS submission**: add `EXPO_APPLE_ID` and `EXPO_APPLE_APP_SPECIFIC_PASSWORD` (an [app-specific password](https://support.apple.com/en-us/102654), not your real Apple ID password) as secrets. EAS also needs your Apple Team ID and an App Store Connect app already created — `eas submit` prompts for these interactively the first time; run it once locally to cache the answers, or supply them via `eas.json`'s `submit.production.ios` block once you know the exact values.
 4. **Android submission**: create a Google Play service account with release-manager permissions, download its JSON key, base64-encode it (`base64 -w0 service-account.json`), and store the result as the `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` secret — the submit workflow decodes it to a file at runtime and deletes it afterward.
+
+**Web hosting** (`mobile-web-deploy.yml`): the same Expo Router app exports to a real static web build (`expo export --platform web`) and deploys to EAS Hosting at `https://ditsala.expo.app` — verified working end to end, including a real manual deploy. Triggers automatically on every push to `main` touching `apps/mobile/**`, no separate one-time setup beyond `EXPO_TOKEN` above.
 
 **Build**: `gh workflow run mobile-eas-build.yml -f platform=all -f profile=preview` (or from the Actions tab).
 
@@ -84,7 +86,7 @@ This is the backup/replica path behind an Application Load Balancer, deployed ma
 | `RAILWAY_SERVICE_ID` | backend-deploy-railway | Targets the exact service by ID, not by a guessed name |
 | `AWS_DEPLOY_ROLE_ARN` | backend-deploy-aws | OIDC role assumed for ECR push + ECS deploy |
 | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + project targeting |
-| `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit | EAS CLI auth |
+| `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit, mobile-web-deploy | EAS CLI auth |
 | `EXPO_APPLE_ID`, `EXPO_APPLE_APP_SPECIFIC_PASSWORD` | mobile-eas-submit | App Store Connect submission |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` | mobile-eas-submit | Google Play submission |
 
