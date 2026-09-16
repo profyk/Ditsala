@@ -18,11 +18,12 @@ backend-deploy-railway  admin-deploy          (backend-deploy-aws:
   (automatic)             (automatic,           manual only — see §4)
                            Vercel)
 
+mobile-vercel-deploy.yml (automatic, push to apps/mobile/**)
 mobile-eas-build.yml   ─── manual dispatch (platform + profile)
 mobile-eas-submit.yml  ─── manual dispatch (separate from build, on purpose)
 ```
 
-`backend-deploy-railway.yml` and `admin-deploy.yml` both trigger on `workflow_run` of `CI` completing successfully on `main` — a broken build/lint/test never reaches a deploy step. `backend-deploy-aws.yml` and both mobile workflows are `workflow_dispatch`-only (manually triggered from the Actions tab or `gh workflow run`), since they're either backup infrastructure, or actions with real-world consequences (an EAS submit can trigger app store review) that shouldn't fire automatically.
+`backend-deploy-railway.yml`, `admin-deploy.yml`, and `mobile-vercel-deploy.yml` all trigger automatically (the first two on `workflow_run` of `CI` completing successfully on `main`; the mobile one on a plain `push` touching `apps/mobile/**`, since it has no backend-specific CI job of its own to gate on) — a broken build/lint/test never reaches the two `workflow_run`-gated deploy steps. `backend-deploy-aws.yml` and the two EAS mobile workflows are `workflow_dispatch`-only (manually triggered from the Actions tab or `gh workflow run`), since they're either backup infrastructure, or actions with real-world consequences (an EAS submit can trigger app store review) that shouldn't fire automatically.
 
 ## 2. Database migrations
 
@@ -72,7 +73,13 @@ This is the backup/replica path behind an Application Load Balancer, deployed ma
 3. **iOS submission**: add `EXPO_APPLE_ID` and `EXPO_APPLE_APP_SPECIFIC_PASSWORD` (an [app-specific password](https://support.apple.com/en-us/102654), not your real Apple ID password) as secrets. EAS also needs your Apple Team ID and an App Store Connect app already created — `eas submit` prompts for these interactively the first time; run it once locally to cache the answers, or supply them via `eas.json`'s `submit.production.ios` block once you know the exact values.
 4. **Android submission**: create a Google Play service account with release-manager permissions, download its JSON key, base64-encode it (`base64 -w0 service-account.json`), and store the result as the `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` secret — the submit workflow decodes it to a file at runtime and deletes it afterward.
 
-**Web hosting** (`mobile-web-deploy.yml`): the same Expo Router app exports to a real static web build (`expo export --platform web`) and deploys to EAS Hosting at `https://ditsala.expo.app` — verified working end to end, including a real manual deploy. Triggers automatically on every push to `main` touching `apps/mobile/**`, no separate one-time setup beyond `EXPO_TOKEN` above.
+**Web hosting — Vercel, not EAS Hosting** (`mobile-vercel-deploy.yml`): the same Expo Router app exports to a real static web build (`expo export --platform web`, verified locally — 924 modules bundled, Expo's web platform resolution swaps out native-only deps like `react-native-webrtc` rather than failing) and deploys to Vercel via `apps/mobile/vercel.json` (`outputDirectory: "dist"`, `buildCommand` runs the export). This is a **separate Vercel project from `apps/admin`** — one-time setup:
+1. Create a second Vercel project pointed at this repo with root directory `apps/mobile` (or `vercel link` locally from `apps/mobile`).
+2. Add its project ID as the `VERCEL_MOBILE_PROJECT_ID` secret (reuses the same `VERCEL_TOKEN`/`VERCEL_ORG_ID` as the admin deploy).
+
+Triggers automatically on every push to `main` touching `apps/mobile/**`.
+
+(An earlier pass deployed this same web export to EAS Hosting at `ditsala.expo.app` — that path is removed in favor of Vercel.)
 
 **Build**: `gh workflow run mobile-eas-build.yml -f platform=all -f profile=preview` (or from the Actions tab).
 
@@ -85,8 +92,9 @@ This is the backup/replica path behind an Application Load Balancer, deployed ma
 | `RAILWAY_TOKEN` | backend-deploy-railway | Railway CLI auth |
 | `RAILWAY_SERVICE_ID` | backend-deploy-railway | Targets the exact service by ID, not by a guessed name |
 | `AWS_DEPLOY_ROLE_ARN` | backend-deploy-aws | OIDC role assumed for ECR push + ECS deploy |
-| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + project targeting |
-| `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit, mobile-web-deploy | EAS CLI auth |
+| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + admin project targeting |
+| `VERCEL_MOBILE_PROJECT_ID` | mobile-vercel-deploy | Same token/org, different (mobile web) Vercel project |
+| `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit | EAS CLI auth |
 | `EXPO_APPLE_ID`, `EXPO_APPLE_APP_SPECIFIC_PASSWORD` | mobile-eas-submit | App Store Connect submission |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` | mobile-eas-submit | Google Play submission |
 
