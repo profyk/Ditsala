@@ -1,0 +1,50 @@
+name: Deploy mobile as web (EAS Hosting)
+
+# The DITSALA mobile app (Expo Router) exports to a real, working web
+# build — verified locally (`npx expo export --platform web` succeeds,
+# 924 modules bundled) despite native-only dependencies like
+# react-native-webrtc in the tree; Expo's web platform resolution swaps
+# those out rather than failing the build. Triggers on every push to
+# main that touches the mobile app, so "via git" — no manual step.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.9
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Export web build
+        run: npx expo export --platform web
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ vars.RAILWAY_API_BASE_URL || 'https://ditsala-production.up.railway.app' }}
+
+      - name: Deploy to EAS Hosting
+        run: npx eas-cli deploy --non-interactive --prod
