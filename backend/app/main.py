@@ -14,6 +14,7 @@ from app.api.v1.routers import (
     circle,
     health,
     location,
+    meetings,
     messaging,
     onboarding,
     recovery,
@@ -66,3 +67,4 @@ app.include_router(admin.router, prefix="/api/v1")
 app.include_router(admin_kyc.router, prefix="/api/v1")
 app.include_router(recovery.router, prefix="/api/v1")
 app.include_router(account.router, prefix="/api/v1")
+app.include_router(meetings.router, prefix="/api/v1")

@@ -22,6 +22,7 @@ dependencies = [
     "websockets>=13.0",
     "pyotp>=2.10",
     "apscheduler>=3.11.3",
+    "livekit-api>=1.2.1",
 ]
 
 [dependency-groups]

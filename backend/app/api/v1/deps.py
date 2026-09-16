@@ -14,6 +14,7 @@ from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
 from app.domain.compliance.service import ComplianceService
 from app.domain.location.service import LocationService
+from app.domain.meetings.service import MeetingService
 from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
 from app.domain.recovery.service import RecoveryService
@@ -48,6 +49,7 @@ from app.repositories.location import (
     LocationPingRepository,
     LocationShareRepository,
 )
+from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
 from app.repositories.messages import (
     MediaObjectRepository,
     MessageReceiptRepository,
@@ -69,6 +71,7 @@ from app.services.factory import (
     get_sms_provider,
     get_storage_provider,
 )
+from app.services.meet.livekit import LiveKitRoomProvider
 from app.services.ratelimit.memory import rate_limiter
 from app.services.realtime.websocket_manager import connection_manager
 
@@ -339,3 +342,18 @@ async def get_compliance_service(
 
 
 ComplianceServiceDep = Annotated[ComplianceService, Depends(get_compliance_service)]
+
+
+async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> MeetingService:
+    return MeetingService(
+        meetings=MeetingRepository(session),
+        participants=MeetingParticipantRepository(session),
+        room_provider=LiveKitRoomProvider(
+            api_key=settings.livekit_api_key,
+            api_secret=settings.livekit_api_secret,
+            livekit_url=settings.livekit_url,
+        ),
+    )
+
+
+MeetingServiceDep = Annotated[MeetingService, Depends(get_meeting_service)]

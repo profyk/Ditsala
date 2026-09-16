@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     sandbox_s3_secret_access_key: str = "minioadmin"
     sandbox_s3_endpoint_url: str = "http://127.0.0.1:9000"
 
+    # --- Ditsala Meet: LiveKit (RoomProvider) — docs/DITSALA_MEET_SPEC.md
+    # §5, §10. No sandbox/real split needed here (see
+    # domain/meetings/interfaces.py's docstring) — a LiveKit Cloud project
+    # has its own separate dev/prod projects with their own key pairs
+    # instead, same as any other environment-specific credential. ---
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+    livekit_url: str = "wss://localhost:7880"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -41,6 +41,7 @@ from app.models.location import (  # noqa: F401
     SosEvent,
     SosNotification,
 )
+from app.models.meetings import Meeting, MeetingParticipant  # noqa: F401
 from app.models.messaging import (  # noqa: F401
     Conversation,
     ConversationMember,
