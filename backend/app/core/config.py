@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://ditsala:ditsala@localhost:5432/ditsala"
     redis_url: str = "redis://localhost:6379/0"
 
+    # Where this process can reach itself over HTTP — only used by
+    # BypassKycProvider (services/kyc/bypass.py) to call its own webhook
+    # endpoint back. Set to the real deployed URL (e.g. the Railway
+    # domain) if KYC_PROVIDER=bypass is ever used against a deployed
+    # instance rather than localhost.
+    self_base_url: str = "http://localhost:8000"
+
     # Browser-based clients only (apps/admin, apps/meet) — the mobile app
     # and any server-to-server call are unaffected, CORS is purely a
     # browser enforcement mechanism. Comma-separated; no wildcard default

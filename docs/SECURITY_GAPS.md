@@ -2,6 +2,14 @@
 
 Living document of features shipped behind an interface because they couldn't yet be built to the docs/DITSALA_MASTER_SPEC.md §7 standard, per the kickoff prompt's Working Rule 6. Not a bug tracker — an explicit register of known, deliberate gaps, closed out as they're resolved.
 
+## Dev-only KYC bypass (test tooling, not a gap)
+
+`KYC_PROVIDER=bypass` (`services/kyc/bypass.py`, selected via `services/factory.py`) auto-passes any KYC/liveness job instead of calling a real vendor — added explicitly to let signup/login/recovery be exercised end to end without a live Smile ID account, since the real blocker (no native Smile ID SDK wired into the mobile app — see the libsignal-style gap below) means no amount of real vendor credentials gets you past the actual document-capture screen anyway.
+
+**This is not a weaker version of KYC shipped silently.** `get_kyc_provider()` raises immediately if `KYC_PROVIDER=bypass` is combined with `ENVIRONMENT=production` — that combination cannot start. Every activation logs a `kyc_bypass_used` warning with the user id and job type, so it's never silently indistinguishable from a real pass in server logs. It exists purely so the rest of the account lifecycle (email/phone verification, next-of-kin, DITSALA Code, two-factor login, logout, session revocation) can be verified for real on a live deployment while the native KYC capture piece remains genuinely unbuildable in this environment.
+
+**Never set `KYC_PROVIDER=bypass` on anything a real user's data could reach.**
+
 ## Open
 
 ### Admin TOTP secret stored plaintext (spec §29)

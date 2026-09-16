@@ -11,6 +11,7 @@ from app.domain.notifications.interfaces import PushProvider, SmsProvider
 from app.domain.onboarding.interfaces import EmailProvider, KycProvider, OtpProvider
 from app.services.email.resend import ResendEmailProvider
 from app.services.email.sandbox import SandboxEmailProvider
+from app.services.kyc.bypass import BypassKycProvider
 from app.services.kyc.sandbox import SandboxSmileIdProvider
 from app.services.kyc.smile_id import SmileIdProvider
 from app.services.otp.sandbox import SandboxTwilioProvider
@@ -44,6 +45,13 @@ def get_kyc_provider(settings: Settings) -> KycProvider:
         return SmileIdProvider.from_settings(settings)
     if settings.kyc_provider == "sandbox":
         return SandboxSmileIdProvider.from_settings(settings)
+    if settings.kyc_provider == "bypass":
+        # Test-only escape hatch (docs/SECURITY_GAPS.md) for exercising
+        # signup/login without a real Smile ID account or native SDK —
+        # refused outright in production, no matter how it got configured.
+        if settings.environment == "production":
+            raise ValueError("KYC_PROVIDER=bypass must never be used with ENVIRONMENT=production.")
+        return BypassKycProvider.from_settings(settings)
     raise ValueError(f"Unrecognized KYC_PROVIDER: {settings.kyc_provider!r}")
 
 
