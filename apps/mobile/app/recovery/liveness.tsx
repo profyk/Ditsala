@@ -37,11 +37,11 @@ export default function RecoveryLiveness() {
   return (
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">
-        Confirm it's really you
+        Confirm it&apos;s really you
       </Text>
       <Text className="mb-8 text-base text-text-secondary">
-        A SmartSelfie check matched against your original verification confirms you're the same
-        person who set up this account.
+        A SmartSelfie check matched against your original verification confirms you&apos;re the
+        same person who set up this account.
       </Text>
 
       {!started ? (

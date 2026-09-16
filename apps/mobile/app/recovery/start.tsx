@@ -42,8 +42,8 @@ export default function RecoveryStart() {
         Recover your account
       </Text>
       <Text className="mb-8 text-base text-text-secondary">
-        Enter the email and phone number on your account. We'll re-verify both, then confirm it's
-        really you with a liveness check.
+        Enter the email and phone number on your account. We&apos;ll re-verify both, then confirm
+        it&apos;s really you with a liveness check.
       </Text>
 
       <TextField
