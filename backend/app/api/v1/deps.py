@@ -51,7 +51,17 @@ from app.repositories.location import (
     LocationPingRepository,
     LocationShareRepository,
 )
-from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
+from app.repositories.meetings import (
+    BreakoutRoomParticipantRepository,
+    BreakoutRoomRepository,
+    MeetingMessageRepository,
+    MeetingParticipantRepository,
+    MeetingPollRepository,
+    MeetingPollVoteRepository,
+    MeetingQuestionRepository,
+    MeetingRecordingRepository,
+    MeetingRepository,
+)
 from app.repositories.messages import (
     MediaObjectRepository,
     MessageReceiptRepository,
@@ -351,11 +361,14 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
     return MeetingService(
         meetings=MeetingRepository(session),
         participants=MeetingParticipantRepository(session),
-        room_provider=LiveKitRoomProvider(
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret,
-            livekit_url=settings.livekit_url,
-        ),
+        recordings=MeetingRecordingRepository(session),
+        messages=MeetingMessageRepository(session),
+        polls=MeetingPollRepository(session),
+        poll_votes=MeetingPollVoteRepository(session),
+        questions=MeetingQuestionRepository(session),
+        breakout_rooms=BreakoutRoomRepository(session),
+        breakout_room_participants=BreakoutRoomParticipantRepository(session),
+        room_provider=LiveKitRoomProvider.from_settings(settings),
     )
 
 

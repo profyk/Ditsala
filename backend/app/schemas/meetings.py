@@ -52,4 +52,124 @@ class JoinMeetingResponse(BaseModel):
     meeting: MeetingResponse
     participant_id: uuid.UUID
     role: str
-    access: RoomAccessTokenResponse
+    admission_status: str
+    access: RoomAccessTokenResponse | None
+
+
+class ParticipantResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    user_id: uuid.UUID | None
+    guest_display_name: str | None
+    role: str
+    admission_status: str
+    joined_at: datetime | None
+    left_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class MuteParticipantRequest(BaseModel):
+    muted: bool
+
+
+class LockMeetingRequest(BaseModel):
+    locked: bool
+
+
+class ReactionRequest(BaseModel):
+    reaction: str = Field(min_length=1, max_length=32)
+
+
+class RaiseHandRequest(BaseModel):
+    raised: bool
+
+
+class RecordingResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    egress_id: str
+    storage_key: str | None
+    duration_seconds: int | None
+    status: str
+    started_at: datetime | None
+    ended_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class SendMessageRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    recipient_participant_id: uuid.UUID | None = None
+
+
+class MessageResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    sender_participant_id: uuid.UUID
+    recipient_participant_id: uuid.UUID | None
+    body: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CreatePollRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(min_length=2, max_length=10)
+
+
+class VotePollRequest(BaseModel):
+    option_index: int = Field(ge=0)
+
+
+class PollResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    created_by_participant_id: uuid.UUID
+    question: str
+    options: list[str]
+    closed_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PollResultsResponse(BaseModel):
+    poll: PollResponse
+    counts: dict[int, int]
+
+
+class AskQuestionRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class CreateBreakoutRoomsRequest(BaseModel):
+    names: list[str] = Field(min_length=1, max_length=50)
+
+
+class BreakoutRoomResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    name: str
+    closed_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AssignBreakoutRoomRequest(BaseModel):
+    participant_id: uuid.UUID
+
+
+class QuestionResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    asked_by_participant_id: uuid.UUID
+    body: str
+    upvote_count: int
+    status: str
+    answered_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

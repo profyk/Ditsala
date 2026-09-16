@@ -20,6 +20,14 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Before going live — get real Stitch sandbox credentials, re-verify `initiate_payment`'s mutation shape and `verify_and_parse_webhook`'s signature header/algorithm against Stitch's current API reference, then remove this section. `VipUpgradeService` itself (payment → KYC → tier flip) is real and fully tested against a stub `PaymentProvider` — see `app/tests/test_vip_upgrade_service.py`.
 
+### LiveKit RoomService/Egress calls unverified against a live LiveKit server (DITSALA_MEET_SPEC.md §9 Phase 2)
+
+**What's missing:** `services/meet/livekit.py`'s `LiveKitRoomProvider.remove_participant`/`set_participant_can_publish`/`broadcast_data`/`start_recording`/`stop_recording` all make real HTTP calls to LiveKit's RoomService/EgressService, using method signatures and protobuf field names confirmed via live Python introspection of the installed `livekit-api` package — but never exercised against an actual running LiveKit server (no Docker in this environment, no LiveKit Cloud project provisioned). `create_access_token` (pure local JWT signing, no network call) is real and fully verified — see `app/tests/test_meeting_service.py`. `MeetingService`'s own logic (waiting-room admission, host/co-host authorization, recording bookkeeping, chat/poll/Q&A/breakout-room state) is tested against real Postgres with a `StubRoomProvider` standing in for the network-calling methods only.
+
+**Why:** No LiveKit account or self-hosted `livekit-server` instance exists in this environment to test against — same class of gap as the Stitch/Smile ID adapters above.
+
+**Tracked for:** Before going live — provision a real LiveKit Cloud project (or self-hosted instance), re-verify each RoomService/EgressService call against it, and remove this section. Also worth adding then: LiveKit's egress-completion webhook, so a recording's `status` moves from `processing` to a confirmed terminal state asynchronously rather than only being known from `stop_recording`'s own synchronous response.
+
 ### VIP privacy/messaging perks not yet built (ADR 0012)
 
 **What's missing:** the tier split, `VipUpgradeService`, and Stitch adapter are all real (see above and `docs/adr/0012-normal-vip-tier-split.md`). Still not built: hiding a VIP's phone number from non-Circle contacts, and VIP-to-VIP automatic trusted messaging ("private space").

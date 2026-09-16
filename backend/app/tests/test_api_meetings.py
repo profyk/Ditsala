@@ -15,8 +15,18 @@ from app.core.security import create_access_token
 from app.domain.meetings.service import MeetingService
 from app.main import app
 from app.models.accounts import User
-from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
-from app.services.meet.livekit import LiveKitRoomProvider
+from app.repositories.meetings import (
+    BreakoutRoomParticipantRepository,
+    BreakoutRoomRepository,
+    MeetingMessageRepository,
+    MeetingParticipantRepository,
+    MeetingPollRepository,
+    MeetingPollVoteRepository,
+    MeetingQuestionRepository,
+    MeetingRecordingRepository,
+    MeetingRepository,
+)
+from app.tests.test_meeting_service import StubRoomProvider
 
 
 @pytest.fixture
@@ -38,11 +48,14 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
         return MeetingService(
             meetings=MeetingRepository(db_session),
             participants=MeetingParticipantRepository(db_session),
-            room_provider=LiveKitRoomProvider(
-                api_key="test-key-0123456789",
-                api_secret="test-secret-0123456789-0123456789",
-                livekit_url="wss://test",
-            ),
+            room_provider=StubRoomProvider(),
+            recordings=MeetingRecordingRepository(db_session),
+            messages=MeetingMessageRepository(db_session),
+            polls=MeetingPollRepository(db_session),
+            poll_votes=MeetingPollVoteRepository(db_session),
+            questions=MeetingQuestionRepository(db_session),
+            breakout_rooms=BreakoutRoomRepository(db_session),
+            breakout_room_participants=BreakoutRoomParticipantRepository(db_session),
         )
 
     app.dependency_overrides[get_db_session] = _override_db_session
@@ -129,3 +142,191 @@ async def test_end_meeting_forbidden_for_non_host(
 async def test_meetings_require_authentication(client: AsyncClient) -> None:
     r = await client.post("/api/v1/meetings", json={"title": "x"})
     assert r.status_code == 401
+
+
+async def test_waiting_room_admit_flow(client: AsyncClient, session: AsyncSession) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": "Gated", "waiting_room_enabled": True},
+        headers=_bearer_for(host),
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "waiting"
+    assert r.json()["access"] is None
+    participant_id = r.json()["participant_id"]
+
+    r = await client.get(f"/api/v1/meetings/{meeting_id}/waiting-room", headers=_bearer_for(host))
+    assert r.status_code == 200, r.text
+    assert [p["id"] for p in r.json()] == [participant_id]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/admit",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "admitted"
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "admitted"
+    assert r.json()["access"]["token"]
+
+
+async def test_host_can_mute_and_remove_a_participant(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Standup"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    participant_id = r.json()["participant_id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/mute",
+        json={"muted": True},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/remove",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    assert r.status_code == 400
+
+
+async def test_chat_poll_and_question_endpoints(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Town hall"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other))
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages",
+        json={"body": "Hello!"},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 201, r.text
+    r = await client.get(f"/api/v1/meetings/{meeting_id}/messages", headers=_bearer_for(other))
+    assert r.status_code == 200, r.text
+    assert [m["body"] for m in r.json()] == ["Hello!"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls",
+        json={"question": "Best time?", "options": ["9am", "2pm"]},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 201, r.text
+    poll_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/vote",
+        json={"option_index": 1},
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 204, r.text
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/results", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["counts"] == {"0": 0, "1": 1}
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/questions",
+        json={"body": "What's next?"},
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 201, r.text
+    question_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/questions/{question_id}/answer",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "answered"
+
+
+async def test_recording_start_and_stop(client: AsyncClient, session: AsyncSession) -> None:
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Recorded"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/recordings/start", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "processing"
+    recording_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/recordings/{recording_id}/stop",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ready"
+
+
+async def test_breakout_rooms_end_to_end(client: AsyncClient, session: AsyncSession) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Workshop"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    participant_id = r.json()["participant_id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms",
+        json={"names": ["Group A", "Group B"]},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 201, r.text
+    breakout_room_id = r.json()[0]["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/assign",
+        json={"participant_id": participant_id},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/join",
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["token"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/close", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert all(room["closed_at"] is not None for room in r.json())

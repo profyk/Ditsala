@@ -1,18 +1,19 @@
 """
-Ditsala Meet — docs/DITSALA_MEET_SPEC.md §3. Phase 1 slice only: enough
-schema for a real, working meeting (create, join, end) via LiveKit.
-Later phases (recording, chat, polls, Q&A, AI notes, breakout rooms,
-organizations/billing) add their own tables when those phases actually
-build them — not modeled speculatively ahead of time, unlike the parent
-DITSALA schema's Phase 1 (which had the luxury of a fully-settled spec
-before any code). See DITSALA_MEET_SPEC.md §9.
+Ditsala Meet — docs/DITSALA_MEET_SPEC.md §3. Phase 1 added enough schema
+for a real, working meeting (create, join, end) via LiveKit. Phase 2
+(this addition) adds waiting-room admission tracking, host-enforced
+recording, in-meeting chat, polls, and Q&A — still not modeling every
+future phase's tables speculatively (breakout rooms, AI notes,
+organizations/billing remain un-modeled until those phases actually
+build them). See DITSALA_MEET_SPEC.md §9.
 """
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -20,6 +21,12 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 MEETING_TYPES = ("standard", "webinar", "classroom", "interview", "town_hall", "conference")
 MEETING_STATUSES = ("scheduled", "live", "ended", "cancelled")
 PARTICIPANT_ROLES = ("host", "co_host", "participant")
+# §9 Phase 2 — a participant on a waiting-room-enabled meeting starts
+# `waiting` and needs the host/co-host to `admit` them before a LiveKit
+# token is ever minted for them; `removed` is a host-enforced kick,
+# distinct from `left` (which is just left_at being set — a participant
+# leaving on their own is not an admission-status change).
+PARTICIPANT_ADMISSION_STATUSES = ("waiting", "admitted", "removed")
 
 
 class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -77,3 +84,124 @@ class MeetingParticipant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     livekit_participant_identity: Mapped[str] = mapped_column(String(128))
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    admission_status: Mapped[str] = mapped_column(
+        Enum(
+            *PARTICIPANT_ADMISSION_STATUSES,
+            name="meeting_participant_admission_status",
+            native_enum=False,
+        ),
+        default="admitted",
+        server_default=text("'admitted'"),
+    )
+
+
+class MeetingRecording(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_recordings"
+
+    RECORDING_STATUSES = ("processing", "ready", "failed")
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    # LiveKit Egress's own id for this recording job — the handle used to
+    # stop it and to correlate the eventual egress-webhook/poll result.
+    egress_id: Mapped[str] = mapped_column(String(128), unique=True)
+    storage_key: Mapped[str | None] = mapped_column(String(512))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        Enum(*RECORDING_STATUSES, name="meeting_recording_status", native_enum=False),
+        default="processing",
+        server_default=text("'processing'"),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MeetingMessage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_messages"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    sender_participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    # Null means "everyone" — a broadcast message; otherwise a private
+    # message to one other participant in the same meeting (§7 chat).
+    recipient_participant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    body: Mapped[str] = mapped_column(String(4000))
+
+
+class MeetingPoll(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_polls"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    created_by_participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    question: Mapped[str] = mapped_column(String(500))
+    # Ordered list of option strings — polls don't need a child table of
+    # their own; votes reference an option by its index into this array.
+    options: Mapped[list[Any]] = mapped_column(JSONB)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MeetingPollVote(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_poll_votes"
+
+    poll_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_polls.id", ondelete="CASCADE"), index=True
+    )
+    voter_participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    option_index: Mapped[int] = mapped_column(Integer)
+
+
+class MeetingQuestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_questions"
+
+    QUESTION_STATUSES = ("open", "answered", "dismissed")
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    asked_by_participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    body: Mapped[str] = mapped_column(String(2000))
+    upvote_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    status: Mapped[str] = mapped_column(
+        Enum(*QUESTION_STATUSES, name="meeting_question_status", native_enum=False),
+        default="open",
+        server_default=text("'open'"),
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BreakoutRoom(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "breakout_rooms"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    # Its own, independent LiveKit room — a breakout is a real second SFU
+    # room, not a sub-state of the parent room's own `livekit_room_name`.
+    livekit_room_name: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BreakoutRoomParticipant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "breakout_room_participants"
+
+    breakout_room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("breakout_rooms.id", ondelete="CASCADE"), index=True
+    )
+    participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
