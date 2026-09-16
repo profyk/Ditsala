@@ -9,9 +9,11 @@ from app.api.v1.deps import (
     RecoveryServiceDep,
     SessionDep,
     SettingsDep,
+    VipUpgradeServiceDep,
 )
 from app.core.security import create_onboarding_token, hash_national_id
 from app.domain.auth.service import AuthError
+from app.domain.billing.service import VipUpgradeError
 from app.domain.onboarding.interfaces import KycJobType
 from app.domain.onboarding.service import OnboardingError
 from app.domain.recovery.service import RecoveryError
@@ -169,6 +171,7 @@ async def smile_id_webhook(
     service: OnboardingServiceDep,
     auth_service: AuthServiceDep,
     recovery_service: RecoveryServiceDep,
+    vip_upgrade_service: VipUpgradeServiceDep,
     settings: SettingsDep,
 ) -> dict[str, str]:
     payload = await request.body()
@@ -183,22 +186,36 @@ async def smile_id_webhook(
         document = await KycDocumentRepository(session).get_by_smile_id_job(result.job_id)
         if document is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown job.")
-        user = await UserRepository(session).get(document.user_id)
-        assert user is not None
-        try:
-            await service.handle_kyc_document_result(user, result)
-        except OnboardingError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        # ADR 0012: the same job type serves onboarding and a VIP upgrade
+        # — `purpose` says which service actually owns this row.
+        if document.purpose == "vip_upgrade":
+            try:
+                await vip_upgrade_service.handle_kyc_document_result(result)
+            except VipUpgradeError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        else:
+            user = await UserRepository(session).get(document.user_id)
+            assert user is not None
+            try:
+                await service.handle_kyc_document_result(user, result)
+            except OnboardingError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     elif result.job_type == KycJobType.SMARTSELFIE:
         face = await KycFaceVerificationRepository(session).get_by_smile_id_job(result.job_id)
         if face is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown job.")
-        user = await UserRepository(session).get(face.user_id)
-        assert user is not None
-        try:
-            await service.handle_kyc_liveness_result(user, result)
-        except OnboardingError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        if face.purpose == "vip_upgrade":
+            try:
+                await vip_upgrade_service.handle_kyc_liveness_result(result)
+            except VipUpgradeError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        else:
+            user = await UserRepository(session).get(face.user_id)
+            assert user is not None
+            try:
+                await service.handle_kyc_liveness_result(user, result)
+            except OnboardingError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     elif result.job_type == KycJobType.RECOVERY_AUTHENTICATION:
         try:
             await recovery_service.handle_liveness_webhook(result)

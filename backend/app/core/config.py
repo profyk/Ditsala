@@ -126,6 +126,21 @@ class Settings(BaseSettings):
     livekit_api_secret: str = ""
     livekit_url: str = "wss://localhost:7880"
 
+    # --- Stitch (PaymentProvider) — docs/adr/0012-normal-vip-tier-split.md.
+    # payment_provider: real | sandbox. ---
+    payment_provider: str = "sandbox"
+    stitch_client_id: str = ""
+    stitch_client_secret: str = ""
+    stitch_webhook_secret: str = ""
+    stitch_auth_url: str = "https://secure.stitch.money/connect/token"
+    stitch_api_base_url: str = "https://api.stitch.money"
+
+    stitch_sandbox_client_id: str = ""
+    stitch_sandbox_client_secret: str = ""
+    stitch_sandbox_webhook_secret: str = ""
+    stitch_sandbox_auth_url: str = "https://secure.stitch.money/connect/token"
+    stitch_sandbox_api_base_url: str = "https://api.stitch.money"
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]

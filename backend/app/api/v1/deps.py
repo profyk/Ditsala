@@ -10,6 +10,7 @@ from app.core.db import get_db_session
 from app.core.security import decode_access_token, decode_onboarding_token
 from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
+from app.domain.billing.service import VipUpgradeService
 from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
 from app.domain.compliance.service import ComplianceService
@@ -22,6 +23,7 @@ from app.domain.sos.service import SosService
 from app.models.accounts import User
 from app.models.devices import Device
 from app.repositories.admin import AuditLogRepository, SystemConfigRepository
+from app.repositories.billing import VipSubscriptionRepository
 from app.repositories.calls import CallParticipantRepository, CallRepository
 from app.repositories.circle import (
     BlockRepository,
@@ -67,6 +69,7 @@ from app.services.factory import (
     get_email_provider,
     get_kyc_provider,
     get_otp_provider,
+    get_payment_provider,
     get_push_provider,
     get_sms_provider,
     get_storage_provider,
@@ -357,3 +360,18 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
 
 
 MeetingServiceDep = Annotated[MeetingService, Depends(get_meeting_service)]
+
+
+async def get_vip_upgrade_service(session: SessionDep, settings: SettingsDep) -> VipUpgradeService:
+    return VipUpgradeService(
+        users=UserRepository(session),
+        vip_subscriptions=VipSubscriptionRepository(session),
+        kyc_documents=KycDocumentRepository(session),
+        kyc_face_verifications=KycFaceVerificationRepository(session),
+        system_config=SystemConfigRepository(session),
+        payment_provider=get_payment_provider(settings),
+        kyc_provider=get_kyc_provider(settings),
+    )
+
+
+VipUpgradeServiceDep = Annotated[VipUpgradeService, Depends(get_vip_upgrade_service)]

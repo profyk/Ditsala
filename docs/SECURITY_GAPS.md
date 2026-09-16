@@ -12,13 +12,21 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
-### VIP upgrade (payment + Stitch + privacy/messaging perks) not yet built (ADR 0012)
+### Stitch payment adapter is unverified against a live account (ADR 0012)
 
-**What's missing:** the normal/VIP tier split itself is real (see `docs/adr/0012-normal-vip-tier-split.md`) — `account_tier`, the onboarding fork, and the login fork are all built and tested. What's not built yet: `VipUpgradeService` (payment initiation → KYC → tier flip), the Stitch payment adapter, the phone-number-hiding privacy feature, and VIP-to-VIP automatic trusted messaging.
+**What's missing:** `services/billing/stitch.py` (`StitchPaymentProvider`) implements OAuth2 client-credentials auth + a GraphQL payment-initiation mutation + HMAC webhook verification, following Stitch's publicly documented API shape — but the exact mutation/field names and the webhook signature header are unverified against a live Stitch account, the same caveat `services/kyc/smile_id.py` already carries for Smile ID.
 
-**Why:** This is a large, separate feature surface layered on top of the tier-split foundation — building it well (especially a real payment integration) deserves its own pass rather than being rushed in alongside the foundational schema/auth changes.
+**Why:** No Stitch account (real or sandbox) exists in this environment to test against.
 
-**Tracked for:** Build `domain/billing/interfaces.py` (`PaymentProvider` Protocol) + a Stitch adapter (real, following this codebase's real-adapter-plus-Sandbox-adapter pattern — no live Stitch account exists in this environment, so the real adapter's exact API shape is unverified, same caveat as the Smile ID field-accuracy gap below) + `VipUpgradeService` reusing `OnboardingService`'s existing KYC methods (tagged `purpose="vip_upgrade"`). Then the privacy (hide phone number) and messaging (VIP-to-VIP auto-trust) perks.
+**Tracked for:** Before going live — get real Stitch sandbox credentials, re-verify `initiate_payment`'s mutation shape and `verify_and_parse_webhook`'s signature header/algorithm against Stitch's current API reference, then remove this section. `VipUpgradeService` itself (payment → KYC → tier flip) is real and fully tested against a stub `PaymentProvider` — see `app/tests/test_vip_upgrade_service.py`.
+
+### VIP privacy/messaging perks not yet built (ADR 0012)
+
+**What's missing:** the tier split, `VipUpgradeService`, and Stitch adapter are all real (see above and `docs/adr/0012-normal-vip-tier-split.md`). Still not built: hiding a VIP's phone number from non-Circle contacts, and VIP-to-VIP automatic trusted messaging ("private space").
+
+**Why:** Scoped out of this pass to land the payment/KYC upgrade path first — these are the next real increment, not a fundamental blocker like the Stitch verification above.
+
+**Tracked for:** Phone-number visibility touches Circle's contact-lookup responses and admin user search (which should keep seeing it, for moderation); VIP-to-VIP auto-trust touches `MessagingService.start_direct_conversation`'s Circle-tier gate.
 
 ### Admin TOTP secret stored plaintext (spec §29)
 

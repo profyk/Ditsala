@@ -29,6 +29,19 @@ class KycDocumentRepository(Repository[KycDocument]):
         )
         return list(result.scalars().all())
 
+    async def get_latest_for_user_and_purpose(
+        self, user_id: uuid.UUID, *, purpose: str
+    ) -> KycDocument | None:
+        """VipUpgradeService (docs/adr/0012) needs the most recent
+        `vip_upgrade`-purposed document specifically — a user may also
+        have `onboarding`-purposed rows that aren't relevant here."""
+        result = await self.session.execute(
+            self._select()
+            .where(KycDocument.user_id == user_id, KycDocument.purpose == purpose)
+            .order_by(KycDocument.created_at.desc())
+        )
+        return result.scalars().first()
+
 
 class KycFaceVerificationRepository(Repository[KycFaceVerification]):
     model = KycFaceVerification

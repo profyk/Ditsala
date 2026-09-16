@@ -1,0 +1,257 @@
+"""
+Unit tests for VipUpgradeService (docs/adr/0012) — real Postgres, stub
+payment/KYC providers (ordinary test doubles for *our own* business
+logic, not the "never mock in a production code path" pattern — see
+test_onboarding_service.py's identical framing for its own stubs).
+"""
+
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import datetime
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.config import get_settings
+from app.core.security import hash_secret
+from app.domain.billing.interfaces import PaymentInitiation, PaymentProvider, PaymentWebhookResult
+from app.domain.billing.service import VIP_PRICING_CONFIG_KEY, VipUpgradeError, VipUpgradeService
+from app.domain.onboarding.interfaces import KycJobType, KycOutcome, KycWebhookResult
+from app.models.accounts import User
+from app.models.admin import AdminUser
+from app.repositories.admin import AdminRoleRepository, AdminUserRepository, SystemConfigRepository
+from app.repositories.billing import VipSubscriptionRepository
+from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
+from app.repositories.users import UserRepository
+from app.tests.test_onboarding_service import StubKycProvider
+
+
+class StubPaymentProvider(PaymentProvider):
+    def __init__(self) -> None:
+        self.initiated: list[dict[str, object]] = []
+
+    async def initiate_payment(
+        self, *, user_id: uuid.UUID, amount_cents: int, currency: str, description: str
+    ) -> PaymentInitiation:
+        reference = f"stub-payment-{uuid.uuid4().hex[:8]}"
+        self.initiated.append(
+            {"user_id": user_id, "amount_cents": amount_cents, "currency": currency}
+        )
+        return PaymentInitiation(
+            payment_url=f"https://pay.example/{reference}", external_reference=reference
+        )
+
+    def verify_and_parse_webhook(
+        self, *, payload: bytes, signature: str
+    ) -> PaymentWebhookResult | None:
+        raise NotImplementedError("not exercised in these tests")
+
+
+@dataclass
+class Harness:
+    service: VipUpgradeService
+    users: UserRepository
+    vip_subscriptions: VipSubscriptionRepository
+    system_config: SystemConfigRepository
+    payment_provider: StubPaymentProvider
+
+
+@pytest.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine(get_settings().database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as s:
+        yield s
+        await s.rollback()
+    await engine.dispose()
+
+
+@pytest.fixture
+def harness(session: AsyncSession) -> Harness:
+    users = UserRepository(session)
+    vip_subscriptions = VipSubscriptionRepository(session)
+    system_config = SystemConfigRepository(session)
+    payment_provider = StubPaymentProvider()
+    service = VipUpgradeService(
+        users=users,
+        vip_subscriptions=vip_subscriptions,
+        kyc_documents=KycDocumentRepository(session),
+        kyc_face_verifications=KycFaceVerificationRepository(session),
+        system_config=system_config,
+        payment_provider=payment_provider,
+        kyc_provider=StubKycProvider(),
+    )
+    return Harness(
+        service=service,
+        users=users,
+        vip_subscriptions=vip_subscriptions,
+        system_config=system_config,
+        payment_provider=payment_provider,
+    )
+
+
+async def _make_user(harness: Harness, **overrides: object) -> User:
+    fields: dict[str, object] = {
+        "email": f"{uuid.uuid4()}@example.com",
+        "phone": f"+27{uuid.uuid4().int % 10**9}",
+        "display_name": "VIP Test User",
+        "date_of_birth": datetime(1990, 1, 1),
+        "national_id_hash": uuid.uuid4().hex,
+        "account_state": "active",
+        **overrides,
+    }
+    return await harness.users.add(User(**fields))
+
+
+@pytest.fixture
+async def admin_id(session: AsyncSession) -> uuid.UUID:
+    """A real `admin_users` row — `system_config.updated_by_admin_id` has
+    a genuine FK constraint to it, so a synthetic UUID won't do."""
+    role = await AdminRoleRepository(session).get_by_name("super_admin")
+    assert role is not None, "expected seeded role 'super_admin' — did migrations run?"
+    admin = await AdminUserRepository(session).add(
+        AdminUser(
+            email=f"{uuid.uuid4()}@example.com",
+            password_hash=hash_secret("irrelevant-for-these-tests"),
+            role_id=role.id,
+        )
+    )
+    return admin.id
+
+
+async def _set_pricing(
+    harness: Harness,
+    admin_id: uuid.UUID,
+    *,
+    amount_cents: int = 9900,
+    currency: str = "ZAR",
+) -> None:
+    await harness.system_config.upsert(
+        key=VIP_PRICING_CONFIG_KEY,
+        value={"amount_cents": amount_cents, "currency": currency},
+        updated_by_admin_id=admin_id,
+    )
+
+
+async def test_start_upgrade_requires_pricing_configured(harness: Harness) -> None:
+    user = await _make_user(harness)
+    with pytest.raises(VipUpgradeError, match="pricing has not been configured"):
+        await harness.service.start_upgrade(user)
+
+
+async def test_start_upgrade_initiates_payment_with_configured_price(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness)
+    await _set_pricing(harness, admin_id, amount_cents=15000, currency="ZAR")
+
+    initiation = await harness.service.start_upgrade(user)
+
+    assert initiation.payment_url
+    assert harness.payment_provider.initiated[0]["amount_cents"] == 15000
+    assert harness.payment_provider.initiated[0]["currency"] == "ZAR"
+
+
+async def test_start_upgrade_rejects_already_vip(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness, account_tier="vip")
+    await _set_pricing(harness, admin_id)
+    with pytest.raises(VipUpgradeError, match="already VIP"):
+        await harness.service.start_upgrade(user)
+
+
+async def test_start_upgrade_rejects_duplicate_in_progress(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness)
+    await _set_pricing(harness, admin_id)
+    await harness.service.start_upgrade(user)
+
+    with pytest.raises(VipUpgradeError, match="already in progress"):
+        await harness.service.start_upgrade(user)
+
+
+async def test_kyc_requires_payment_first(harness: Harness) -> None:
+    user = await _make_user(harness)
+    with pytest.raises(VipUpgradeError, match="Complete VIP payment"):
+        await harness.service.start_kyc_document(user, document_type="sa_id")
+
+
+async def test_full_upgrade_flow_flips_tier_to_vip(
+    harness: Harness, session: AsyncSession, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness)
+    await _set_pricing(harness, admin_id)
+
+    initiation = await harness.service.start_upgrade(user)
+    await harness.service.handle_payment_webhook(
+        PaymentWebhookResult(
+            external_reference=initiation.external_reference, status="paid", raw={}
+        )
+    )
+
+    document_token = await harness.service.start_kyc_document(user, document_type="sa_id")
+    await harness.service.handle_kyc_document_result(
+        KycWebhookResult(
+            job_id=document_token.job_id,
+            job_type=KycJobType.DOCUMENT_VERIFICATION,
+            outcome=KycOutcome.PASSED,
+            result_summary={},
+        )
+    )
+
+    liveness_token = await harness.service.start_kyc_liveness(user)
+    await harness.service.handle_kyc_liveness_result(
+        KycWebhookResult(
+            job_id=liveness_token.job_id,
+            job_type=KycJobType.SMARTSELFIE,
+            outcome=KycOutcome.PASSED,
+            result_summary={"confidence_value": 99.0},
+        )
+    )
+
+    assert user.account_tier == "vip"
+    subscription = await harness.vip_subscriptions.get_by_external_reference(
+        initiation.external_reference
+    )
+    assert subscription is not None
+    assert subscription.status == "active"
+
+
+async def test_failed_payment_marks_subscription_failed(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness)
+    await _set_pricing(harness, admin_id)
+    initiation = await harness.service.start_upgrade(user)
+
+    await harness.service.handle_payment_webhook(
+        PaymentWebhookResult(
+            external_reference=initiation.external_reference, status="failed", raw={}
+        )
+    )
+
+    subscription = await harness.vip_subscriptions.get_by_external_reference(
+        initiation.external_reference
+    )
+    assert subscription is not None
+    assert subscription.status == "failed"
+    assert user.account_tier == "normal"
+
+
+async def test_liveness_before_document_passes_is_rejected(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness)
+    await _set_pricing(harness, admin_id)
+    initiation = await harness.service.start_upgrade(user)
+    await harness.service.handle_payment_webhook(
+        PaymentWebhookResult(
+            external_reference=initiation.external_reference, status="paid", raw={}
+        )
+    )
+
+    with pytest.raises(VipUpgradeError, match="Document verification must pass"):
+        await harness.service.start_kyc_liveness(user)

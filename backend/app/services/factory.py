@@ -6,9 +6,12 @@ typo'd env var fails loudly at startup instead of quietly picking sandbox.
 """
 
 from app.core.config import Settings
+from app.domain.billing.interfaces import PaymentProvider
 from app.domain.messaging.interfaces import StorageProvider
 from app.domain.notifications.interfaces import PushProvider, SmsProvider
 from app.domain.onboarding.interfaces import EmailProvider, KycProvider, OtpProvider
+from app.services.billing.sandbox import SandboxStitchPaymentProvider
+from app.services.billing.stitch import StitchPaymentProvider
 from app.services.email.resend import ResendEmailProvider
 from app.services.email.sandbox import SandboxEmailProvider
 from app.services.kyc.bypass import BypassKycProvider
@@ -77,3 +80,11 @@ def get_sms_provider(settings: Settings) -> SmsProvider:
     if settings.sms_provider == "sandbox":
         return SandboxSmsProvider.from_settings(settings)
     raise ValueError(f"Unrecognized SMS_PROVIDER: {settings.sms_provider!r}")
+
+
+def get_payment_provider(settings: Settings) -> PaymentProvider:
+    if settings.payment_provider == "real":
+        return StitchPaymentProvider.from_settings(settings)
+    if settings.payment_provider == "sandbox":
+        return SandboxStitchPaymentProvider.from_settings(settings)
+    raise ValueError(f"Unrecognized PAYMENT_PROVIDER: {settings.payment_provider!r}")
