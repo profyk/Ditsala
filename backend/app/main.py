@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.routers import (
@@ -38,6 +39,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="DITSALA API", version="0.1.0", lifespan=lifespan)
+
+# apps/admin and apps/meet are browser clients calling this API
+# cross-origin; the mobile app and server-to-server calls never go
+# through a browser and are unaffected by this. See Settings.cors_
+# allowed_origins for the origin list this reads.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_allowed_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(RateLimitExceeded)

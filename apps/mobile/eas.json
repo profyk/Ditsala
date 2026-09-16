@@ -15,14 +15,14 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://staging-api.ditsala.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://ditsala-production.up.railway.app"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://api.ditsala.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://ditsala-production.up.railway.app"
       }
     }
   },

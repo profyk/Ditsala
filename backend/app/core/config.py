@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://ditsala:ditsala@localhost:5432/ditsala"
     redis_url: str = "redis://localhost:6379/0"
 
+    # Browser-based clients only (apps/admin, apps/meet) — the mobile app
+    # and any server-to-server call are unaffected, CORS is purely a
+    # browser enforcement mechanism. Comma-separated; no wildcard default
+    # since these routes carry real auth tokens (a "*" origin plus
+    # credentialed requests is exactly the CORS misconfiguration OWASP
+    # flags). Add each real deployed origin here once it exists.
+    cors_allowed_origins: str = "http://localhost:3000,http://localhost:3001"
+
     # Provider selection — real vs. sandbox, see docs/DITSALA_MASTER_SPEC.md §3.4
     kyc_provider: str = "sandbox"
     otp_provider: str = "sandbox"
@@ -110,6 +118,10 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_url: str = "wss://localhost:7880"
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
 @lru_cache
