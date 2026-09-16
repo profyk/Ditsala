@@ -43,12 +43,18 @@ class RoomProvider(Protocol):
         participant_identity: str,
         participant_name: str,
         is_host: bool,
+        can_publish: bool = True,
     ) -> RoomAccessToken:
         """
         Mints a short-lived, room-and-identity-scoped access token for one
         participant. Never exposes the underlying API key/secret to any
         caller beyond this process — the client only ever receives the
         signed token (§5, §25/§53: no vendor secret in client code).
+
+        `can_publish=False` (§9 Phase 4 — webinar/town_hall/conference
+        audience members) denies the publish grant at token-mint time
+        rather than granting then revoking after join, so a view-only
+        attendee's client never even briefly holds publish rights.
         """
         ...
 

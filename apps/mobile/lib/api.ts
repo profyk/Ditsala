@@ -175,10 +175,22 @@ export interface SessionResult {
   device_id: string;
 }
 
+/**
+ * ADR 0012: `vip` accounts (mandatory KYC) get the two-factor fields
+ * populated (`login_token`/`kyc_token`/`job_id` — the DITSALA Code was
+ * already checked, a fresh liveness check is still needed). `normal`
+ * accounts (the default for every real signup — no KYC at all) get a
+ * session directly, since the code alone is the whole login. Exactly
+ * one group is populated, selected by `requires_liveness`.
+ */
 export interface LoginStartResult {
-  login_token: string;
-  kyc_token: string;
-  job_id: string;
+  requires_liveness: boolean;
+  login_token: string | null;
+  kyc_token: string | null;
+  job_id: string | null;
+  access_token: string | null;
+  refresh_token: string | null;
+  device_id: string | null;
 }
 
 export interface Device {

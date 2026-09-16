@@ -18,6 +18,7 @@ from app.schemas.meetings import (
     EditNoteRequest,
     GeneratedNotesResponse,
     GuestJoinMeetingRequest,
+    JoinInfoResponse,
     JoinMeetingRequest,
     JoinMeetingResponse,
     LockMeetingRequest,
@@ -32,6 +33,8 @@ from app.schemas.meetings import (
     RaiseHandRequest,
     ReactionRequest,
     RecordingResponse,
+    RegisterForMeetingRequest,
+    RegistrationResponse,
     RoomAccessTokenResponse,
     SendMessageRequest,
     TranscriptSegmentResponse,
@@ -88,6 +91,14 @@ async def create_meeting(
     return MeetingResponse.model_validate(meeting)
 
 
+@router.get("", response_model=list[MeetingResponse])
+async def list_my_meetings(
+    user: CurrentUserDep, service: MeetingServiceDep
+) -> list[MeetingResponse]:
+    meetings = await service.list_hosted_meetings(user.id)
+    return [MeetingResponse.model_validate(m) for m in meetings]
+
+
 @router.get("/search", response_model=list[MeetingSearchResultResponse])
 async def search_meetings(
     q: str, user: CurrentUserDep, service: MeetingIntelligenceServiceDep
@@ -107,6 +118,27 @@ async def get_meeting(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return MeetingResponse.model_validate(meeting)
+
+
+@router.get("/{meeting_id}/join-info", response_model=JoinInfoResponse)
+async def get_join_info(meeting_id: uuid.UUID, service: MeetingServiceDep) -> JoinInfoResponse:
+    """Public — deliberately no CurrentUserDep: a shared meeting link's
+    recipient needs to see the scheduled time / whether a password is
+    required before they've authenticated or entered anything (§9
+    Phase 4)."""
+    try:
+        info = await service.get_join_info(meeting_id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return JoinInfoResponse(
+        id=info.meeting.id,
+        title=info.meeting.title,
+        meeting_type=info.meeting.meeting_type,
+        status=info.meeting.status,
+        scheduled_start_at=info.meeting.scheduled_start_at,
+        requires_password=info.requires_password,
+        joinable_now=info.joinable_now,
+    )
 
 
 @router.post("/{meeting_id}/join", response_model=JoinMeetingResponse)
@@ -133,6 +165,25 @@ async def guest_join_meeting(
             meeting_id=meeting_id,
             guest_display_name=body.guest_display_name,
             password=body.password,
+            guest_email=body.guest_email,
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return _join_response(result)
+
+
+@router.get(
+    "/{meeting_id}/participants/{participant_id}/status", response_model=JoinMeetingResponse
+)
+async def get_participant_status(
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
+) -> JoinMeetingResponse:
+    """Public — see `MeetingService.get_participant_status`'s docstring
+    for why this is safe without auth. Lets a waiting-room client poll
+    for admission using the participant id it already has."""
+    try:
+        result = await service.get_participant_status(
+            meeting_id=meeting_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -688,3 +739,78 @@ async def ask_about_meeting(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return AskQuestionAboutMeetingResponse(answer=answer)
+
+
+# ---- Phase 4: webinar stage control --------------------------------------
+
+
+@router.post(
+    "/{meeting_id}/participants/{participant_id}/invite-to-stage",
+    response_model=ParticipantResponse,
+)
+async def invite_to_stage(
+    meeting_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MeetingServiceDep,
+) -> ParticipantResponse:
+    try:
+        participant = await service.invite_to_stage(
+            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return ParticipantResponse.model_validate(participant)
+
+
+@router.post(
+    "/{meeting_id}/participants/{participant_id}/move-to-audience",
+    response_model=ParticipantResponse,
+)
+async def move_to_audience(
+    meeting_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MeetingServiceDep,
+) -> ParticipantResponse:
+    try:
+        participant = await service.move_to_audience(
+            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return ParticipantResponse.model_validate(participant)
+
+
+# ---- Phase 4: webinar registration -----------------------------------------
+
+
+@router.post(
+    "/{meeting_id}/register", response_model=RegistrationResponse, status_code=201
+)
+async def register_for_meeting(
+    meeting_id: uuid.UUID, body: RegisterForMeetingRequest, service: MeetingServiceDep
+) -> RegistrationResponse:
+    """Public — deliberately no CurrentUserDep, same reasoning as
+    guest-join (§35): RSVP-ing to a webinar shouldn't require a DITSALA
+    account."""
+    try:
+        registration = await service.register_for_meeting(
+            meeting_id=meeting_id, email=body.email, display_name=body.display_name
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return RegistrationResponse.model_validate(registration)
+
+
+@router.get("/{meeting_id}/registrations", response_model=list[RegistrationResponse])
+async def list_registrations(
+    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+) -> list[RegistrationResponse]:
+    try:
+        registrations = await service.list_registrations(
+            meeting_id=meeting_id, acting_user_id=user.id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return [RegistrationResponse.model_validate(r) for r in registrations]

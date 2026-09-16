@@ -13,6 +13,7 @@ from app.models.meetings import (
     MeetingPollVote,
     MeetingQuestion,
     MeetingRecording,
+    MeetingRegistration,
     MeetingTranscript,
 )
 from app.repositories.base import Repository
@@ -230,5 +231,28 @@ class BreakoutRoomParticipantRepository(Repository[BreakoutRoomParticipant]):
     ) -> list[BreakoutRoomParticipant]:
         result = await self.session.execute(
             self._select().where(BreakoutRoomParticipant.breakout_room_id == breakout_room_id)
+        )
+        return list(result.scalars().all())
+
+
+class MeetingRegistrationRepository(Repository[MeetingRegistration]):
+    model = MeetingRegistration
+
+    async def get_by_meeting_and_email(
+        self, meeting_id: uuid.UUID, email: str
+    ) -> MeetingRegistration | None:
+        result = await self.session.execute(
+            self._select().where(
+                MeetingRegistration.meeting_id == meeting_id,
+                MeetingRegistration.email == email,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_meeting(self, meeting_id: uuid.UUID) -> list[MeetingRegistration]:
+        result = await self.session.execute(
+            self._select()
+            .where(MeetingRegistration.meeting_id == meeting_id)
+            .order_by(MeetingRegistration.created_at.asc())
         )
         return list(result.scalars().all())

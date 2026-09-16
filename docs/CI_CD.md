@@ -85,6 +85,19 @@ Triggers automatically on every push to `main` touching `apps/mobile/**`.
 
 **Submit**: `gh workflow run mobile-eas-submit.yml -f platform=ios` — deliberately a separate, explicit action from building.
 
+## 6a. Ditsala Meet — Vercel
+
+`apps/meet` (Next.js App Router) is already live at **https://ditsala-meet.vercel.app**, deployed manually the first time (Vercel auto-detects a plain Next.js app, so no `apps/meet/vercel.json` was needed the way `apps/mobile`'s static export required one). `.github/workflows/meet-vercel-deploy.yml` wires up the same automatic, CI-gated deploy the admin panel gets:
+
+**One-time setup:**
+1. If `apps/meet` was connected to Vercel via its own GitHub integration (auto-deploy on push) rather than a one-off `vercel deploy`, either disable that integration or accept that both it and this workflow will deploy on every push to main — redundant, not harmful, but worth picking one.
+2. Add the project's ID as the `VERCEL_MEET_PROJECT_ID` secret (reuses the same `VERCEL_TOKEN`/`VERCEL_ORG_ID` as the admin/mobile deploys) — find it in the Vercel dashboard's project settings, or via `vercel link` locally from `apps/meet`.
+3. Set `apps/meet`'s environment variables in the Vercel dashboard (`NEXT_PUBLIC_MEET_API_BASE_URL` pointing at the backend's public URL).
+
+**Deploy**: automatic, via `meet-vercel-deploy.yml`, after every successful `CI` run on `main`.
+
+`apps/mobile`'s `EXPO_PUBLIC_MEET_WEB_BASE_URL` (`.env`/`.env.example`) already points at `https://ditsala-meet.vercel.app` — update it if the Meet project is ever moved to a custom domain.
+
 ## 7. Secrets reference
 
 | Secret | Used by | Purpose |
@@ -94,6 +107,7 @@ Triggers automatically on every push to `main` touching `apps/mobile/**`.
 | `AWS_DEPLOY_ROLE_ARN` | backend-deploy-aws | OIDC role assumed for ECR push + ECS deploy |
 | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + admin project targeting |
 | `VERCEL_MOBILE_PROJECT_ID` | mobile-vercel-deploy | Same token/org, different (mobile web) Vercel project |
+| `VERCEL_MEET_PROJECT_ID` | meet-vercel-deploy | Same token/org, different (Ditsala Meet) Vercel project |
 | `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit | EAS CLI auth |
 | `EXPO_APPLE_ID`, `EXPO_APPLE_APP_SPECIFIC_PASSWORD` | mobile-eas-submit | App Store Connect submission |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` | mobile-eas-submit | Google Play submission |

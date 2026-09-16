@@ -62,6 +62,7 @@ from app.repositories.meetings import (
     MeetingPollVoteRepository,
     MeetingQuestionRepository,
     MeetingRecordingRepository,
+    MeetingRegistrationRepository,
     MeetingRepository,
     MeetingTranscriptRepository,
 )
@@ -373,6 +374,7 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
         questions=MeetingQuestionRepository(session),
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
+        registrations=MeetingRegistrationRepository(session),
         room_provider=LiveKitRoomProvider.from_settings(settings),
     )
 

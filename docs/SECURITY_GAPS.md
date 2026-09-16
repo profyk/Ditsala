@@ -38,6 +38,14 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Before going live — get real Deepgram/Anthropic API keys and verify `DeepgramTranscriptionProvider`/`ClaudeMeetingIntelligenceProvider` against them; separately, on a machine with adequate RAM/disk (or a dedicated worker host, which is the right place for this anyway — it shouldn't run on the same box as the API server), build and verify the actual `livekit-agents` worker for live captions, upgrading this pipeline from post-meeting to real-time without changing anything downstream (transcript storage, notes, search all already work the same way regardless of when the transcript rows are written).
 
+### Mobile Meet scheduling: no native date picker, no Fraunces display font (DITSALA_MEET_SPEC.md §9 Phase 4)
+
+**What's missing:** `apps/mobile/app/meet/schedule.tsx` (schedule a call, set a password, share the generated `https://ditsala-meet.vercel.app/{id}` link — `apps/meet` is live, see `docs/CI_CD.md` §6a) uses a hand-built, dependency-free calendar/time picker (`components/ScheduleDateTimePicker.tsx`) instead of `@react-native-community/datetimepicker` — this dev machine's resources at the time (~1.1GB disk, ~0.5-0.6GB RAM free) made adding a new native dependency risky, and mobile UI here is unverifiable beyond `tsc`/ESLint/Jest either way (no simulator/device in this environment, same boundary as every other mobile phase). Also real but unwired: the brand's Fraunces display serif (`packages/ui-tokens`' `fontFamily.display`) has no font-asset loading set up in the RN app, so headline text uses the system font's bold weight instead of silently claiming an unloaded typeface.
+
+**Why:** Same class of environment constraint as the LiveKit Agents worker gap above (RAM/disk).
+
+**Tracked for:** Swap in the native date picker and wire real font loading (`expo-font` + Fraunces/Inter assets) once resources allow.
+
 ### VIP privacy/messaging perks not yet built (ADR 0012)
 
 **What's missing:** the tier split, `VipUpgradeService`, and Stitch adapter are all real (see above and `docs/adr/0012-normal-vip-tier-split.md`). Still not built: hiding a VIP's phone number from non-Circle contacts, and VIP-to-VIP automatic trusted messaging ("private space").

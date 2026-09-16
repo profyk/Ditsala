@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
 
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -27,6 +28,7 @@ from app.repositories.meetings import (
     MeetingPollVoteRepository,
     MeetingQuestionRepository,
     MeetingRecordingRepository,
+    MeetingRegistrationRepository,
     MeetingRepository,
     MeetingTranscriptRepository,
 )
@@ -65,6 +67,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             questions=MeetingQuestionRepository(db_session),
             breakout_rooms=BreakoutRoomRepository(db_session),
             breakout_room_participants=BreakoutRoomParticipantRepository(db_session),
+            registrations=MeetingRegistrationRepository(db_session),
         )
 
     async def _override_meeting_intelligence_service(
@@ -440,3 +443,75 @@ async def test_ai_pipeline_transcribe_notes_ask_and_search(
     )
     assert r.status_code == 200, r.text
     assert [m["id"] for m in r.json()] == [meeting_id]
+
+
+async def test_join_info_is_public_and_reports_scheduling_state(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={
+            "title": "Board meeting",
+            "password": "s3cret!",
+            "scheduled_start_at": "2099-01-01T12:00:00Z",
+        },
+        headers=_bearer_for(host),
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.get(f"/api/v1/meetings/{meeting_id}/join-info")
+    assert r.status_code == 200, r.text
+    assert r.json()["requires_password"] is True
+    assert r.json()["joinable_now"] is False
+
+
+async def test_webinar_stage_control_and_registration_endpoints(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": "Product launch", "meeting_type": "webinar"},
+        headers=_bearer_for(host),
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/register",
+        json={"email": "fan@example.com", "display_name": "A Fan"},
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/registrations", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert [reg["email"] for reg in r.json()] == ["fan@example.com"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    participant_id = r.json()["participant_id"]
+    assert r.json()["access"]["token"]
+    assert (
+        jwt.decode(r.json()["access"]["token"], options={"verify_signature": False})["video"][
+            "canPublish"
+        ]
+        is False
+    )
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/invite-to-stage",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["stage_status"] == "on_stage"
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/move-to-audience",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["stage_status"] == "audience"

@@ -87,12 +87,13 @@ class LiveKitRoomProvider(RoomProvider):
         participant_identity: str,
         participant_name: str,
         is_host: bool,
+        can_publish: bool = True,
     ) -> RoomAccessToken:
         grants = livekit_api.VideoGrants(
             room_join=True,
             room=room_name,
             room_admin=is_host,
-            can_publish=True,
+            can_publish=can_publish,
             can_subscribe=True,
         )
         token = (

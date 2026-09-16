@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Text } from "react-native";
+import { Pressable, Text } from "react-native";
 
 import { Button } from "../../components/Button";
 import { Screen } from "../../components/Screen";
@@ -51,8 +51,9 @@ export default function Signup() {
   return (
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Create your account</Text>
-      <Text className="mb-8 text-base text-text-secondary">
-        DITSALA verifies every member’s identity before they can join a Circle.
+      <Text className="mb-8 text-base leading-6 text-text-secondary">
+        Free to join — no ID verification required. Upgrade to VIP any time for a verified badge
+        and a trusted, private space to speak with other VIP members.
       </Text>
 
       <TextField
@@ -102,6 +103,11 @@ export default function Signup() {
         loading={submitting}
         disabled={!canSubmit}
       />
+      <Pressable className="mt-5 items-center py-2" onPress={() => router.push("/login")}>
+        <Text className="text-sm font-medium text-accent">
+          Already have an account? Sign in
+        </Text>
+      </Pressable>
     </Screen>
   );
 }

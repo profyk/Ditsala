@@ -9,8 +9,9 @@ needs nothing more than throwaway key/secret strings — see
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -27,6 +28,7 @@ from app.repositories.meetings import (
     MeetingPollVoteRepository,
     MeetingQuestionRepository,
     MeetingRecordingRepository,
+    MeetingRegistrationRepository,
     MeetingRepository,
 )
 from app.repositories.users import UserRepository
@@ -116,6 +118,7 @@ def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
         questions=MeetingQuestionRepository(session),
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
+        registrations=MeetingRegistrationRepository(session),
     )
     return Harness(service=service, users=UserRepository(session), participants=participants)
 
@@ -143,6 +146,17 @@ async def test_create_meeting_adds_host_as_participant(harness: Harness) -> None
     participant = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
     assert participant is not None
     assert participant.role == "host"
+
+
+async def test_list_hosted_meetings_returns_only_this_hosts_meetings(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    mine = await harness.service.create_meeting(host=host, title="Mine")
+    await harness.service.create_meeting(host=other, title="Not mine")
+
+    meetings = await harness.service.list_hosted_meetings(host.id)
+
+    assert [m.id for m in meetings] == [mine.id]
 
 
 async def test_join_issues_a_real_livekit_token_and_marks_meeting_live(
@@ -281,6 +295,33 @@ async def test_admit_participant_lets_them_get_a_real_token_on_next_join(
 
     assert admitted_result.participant.admission_status == "admitted"
     assert admitted_result.access_token is not None
+
+
+async def test_get_participant_status_lets_a_guest_poll_without_a_new_row_each_time(
+    harness: Harness,
+) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Gated", waiting_room_enabled=True
+    )
+    waiting_result = await harness.service.guest_join(
+        meeting_id=meeting.id, guest_display_name="Guest"
+    )
+    assert waiting_result.access_token is None
+
+    still_waiting = await harness.service.get_participant_status(
+        meeting_id=meeting.id, participant_id=waiting_result.participant.id
+    )
+    assert still_waiting.access_token is None
+    assert still_waiting.participant.id == waiting_result.participant.id
+
+    await harness.service.admit_participant(
+        meeting_id=meeting.id, acting_user_id=host.id, participant_id=waiting_result.participant.id
+    )
+    admitted = await harness.service.get_participant_status(
+        meeting_id=meeting.id, participant_id=waiting_result.participant.id
+    )
+    assert admitted.access_token is not None
 
 
 async def test_non_host_cannot_admit_or_list_waiting_participants(harness: Harness) -> None:
@@ -649,3 +690,192 @@ async def test_only_host_or_cohost_can_create_or_close_breakout_rooms(harness: H
         )
     with pytest.raises(MeetingError, match="host or a co-host"):
         await harness.service.close_breakout_rooms(meeting_id=meeting.id, acting_user_id=other.id)
+
+
+# ---- Phase 4: webinar stage control ------------------------------------------
+
+
+async def test_webinar_participants_default_to_audience_with_a_view_only_token(
+    harness: Harness,
+) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="All-hands", meeting_type="webinar"
+    )
+
+    host_result = await harness.service.join(meeting_id=meeting.id, user=host)
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+
+    assert host_result.participant.stage_status == "on_stage"
+    assert other_result.participant.stage_status == "audience"
+
+    assert other_result.access_token is not None
+    claims = jwt.decode(
+        other_result.access_token.token, options={"verify_signature": False}
+    )
+    assert claims["video"]["canPublish"] is False
+
+    assert host_result.access_token is not None
+    host_claims = jwt.decode(host_result.access_token.token, options={"verify_signature": False})
+    assert host_claims["video"]["canPublish"] is True
+
+
+async def test_standard_meetings_keep_everyone_on_stage(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert other_result.participant.stage_status == "on_stage"
+
+
+async def test_invite_to_stage_and_move_to_audience(
+    harness: Harness, room_provider: StubRoomProvider
+) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Town hall", meeting_type="town_hall"
+    )
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert other_result.participant.stage_status == "audience"
+
+    promoted = await harness.service.invite_to_stage(
+        meeting_id=meeting.id, acting_user_id=host.id, participant_id=other_result.participant.id
+    )
+    assert promoted.stage_status == "on_stage"
+    assert room_provider.publish_updates[-1] == (str(other.id), True)
+
+    demoted = await harness.service.move_to_audience(
+        meeting_id=meeting.id, acting_user_id=host.id, participant_id=other_result.participant.id
+    )
+    assert demoted.stage_status == "audience"
+    assert room_provider.publish_updates[-1] == (str(other.id), False)
+
+
+async def test_cannot_move_the_host_to_the_audience(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Town hall", meeting_type="town_hall"
+    )
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    await harness.service.promote_co_host(
+        meeting_id=meeting.id, acting_user_id=host.id, participant_id=other_result.participant.id
+    )
+    host_participant = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    assert host_participant is not None
+
+    with pytest.raises(MeetingError, match="Cannot move the host"):
+        await harness.service.move_to_audience(
+            meeting_id=meeting.id, acting_user_id=other.id, participant_id=host_participant.id
+        )
+
+
+# ---- Phase 4: webinar registration ---------------------------------------------
+
+
+async def test_register_for_meeting_is_idempotent_by_email(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Product launch", meeting_type="webinar"
+    )
+
+    first = await harness.service.register_for_meeting(
+        meeting_id=meeting.id, email="fan@example.com", display_name="A Fan"
+    )
+    second = await harness.service.register_for_meeting(
+        meeting_id=meeting.id, email="fan@example.com", display_name="A Fan (updated)"
+    )
+
+    assert first.id == second.id
+    assert second.display_name == "A Fan (updated)"
+
+    registrations = await harness.service.list_registrations(
+        meeting_id=meeting.id, acting_user_id=host.id
+    )
+    assert [r.id for r in registrations] == [first.id]
+
+
+async def test_only_host_or_cohost_can_list_registrations(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Webinar", meeting_type="webinar"
+    )
+    await harness.service.join(meeting_id=meeting.id, user=other)
+
+    with pytest.raises(MeetingError, match="host or a co-host"):
+        await harness.service.list_registrations(meeting_id=meeting.id, acting_user_id=other.id)
+
+
+async def test_joining_marks_a_matching_registration_as_attended(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness, email="registrant@example.com")
+    meeting = await harness.service.create_meeting(
+        host=host, title="Webinar", meeting_type="webinar"
+    )
+    registration = await harness.service.register_for_meeting(
+        meeting_id=meeting.id, email="registrant@example.com", display_name="Registrant"
+    )
+    assert registration.attended_at is None
+
+    await harness.service.join(meeting_id=meeting.id, user=other)
+
+    registrations = await harness.service.list_registrations(
+        meeting_id=meeting.id, acting_user_id=host.id
+    )
+    assert registrations[0].attended_at is not None
+
+
+# ---- Phase 4: join-info and the scheduled-meeting early-join window -----------
+
+
+async def test_join_info_reports_password_and_scheduling_state(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        password="s3cret!",
+        scheduled_start_at=datetime.now(UTC) + timedelta(hours=2),
+    )
+
+    info = await harness.service.get_join_info(meeting.id)
+
+    assert info.requires_password is True
+    assert info.joinable_now is False
+    assert info.meeting.scheduled_start_at is not None
+
+
+async def test_non_host_cannot_join_a_meeting_far_before_its_scheduled_start(
+    harness: Harness,
+) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        scheduled_start_at=datetime.now(UTC) + timedelta(hours=2),
+    )
+
+    with pytest.raises(MeetingError, match="hasn't started yet"):
+        await harness.service.join(meeting_id=meeting.id, user=other)
+
+    # The host isn't subject to the early-join window — they need to be
+    # able to start a scheduled meeting whenever they're ready.
+    host_result = await harness.service.join(meeting_id=meeting.id, user=host)
+    assert host_result.access_token is not None
+
+
+async def test_join_is_allowed_within_the_early_join_window(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        scheduled_start_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert result.access_token is not None

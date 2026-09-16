@@ -56,12 +56,31 @@ export interface JoinMeetingResponse {
   meeting: MeetingResponse;
   participant_id: string;
   role: string;
-  access: RoomAccessTokenResponse;
+  admission_status: "waiting" | "admitted" | "removed";
+  // Null while `admission_status === "waiting"` — no LiveKit token is
+  // minted until a host/co-host admits this participant (§9 Phase 2).
+  access: RoomAccessTokenResponse | null;
+}
+
+export interface JoinInfoResponse {
+  id: string;
+  title: string;
+  meeting_type: string;
+  status: string;
+  scheduled_start_at: string | null;
+  requires_password: boolean;
+  joinable_now: boolean;
 }
 
 export const meetingsApi = {
   get: (meetingId: string, accessToken: string) =>
     request<MeetingResponse>(`/meetings/${meetingId}`, { method: "GET", token: accessToken }),
+
+  // Public — no auth — so a shared link's recipient can see the
+  // scheduled time / password requirement before signing in or being
+  // prompted for anything (§9 Phase 4).
+  joinInfo: (meetingId: string) =>
+    request<JoinInfoResponse>(`/meetings/${meetingId}/join-info`, { method: "GET" }),
 
   join: (meetingId: string, accessToken: string, password?: string) =>
     request<JoinMeetingResponse>(`/meetings/${meetingId}/join`, {
@@ -69,8 +88,25 @@ export const meetingsApi = {
       body: { password: password ?? null },
     }),
 
-  guestJoin: (meetingId: string, guestDisplayName: string, password?: string) =>
+  guestJoin: (
+    meetingId: string,
+    guestDisplayName: string,
+    password?: string,
+    guestEmail?: string
+  ) =>
     request<JoinMeetingResponse>(`/meetings/${meetingId}/guest-join`, {
-      body: { guest_display_name: guestDisplayName, password: password ?? null },
+      body: {
+        guest_display_name: guestDisplayName,
+        password: password ?? null,
+        guest_email: guestEmail || null,
+      },
+    }),
+
+  // Public — no auth. Lets a waiting-room client poll for admission
+  // using the stable participant id it already has, instead of
+  // re-calling guestJoin (which would mint a new waiting row each time).
+  participantStatus: (meetingId: string, participantId: string) =>
+    request<JoinMeetingResponse>(`/meetings/${meetingId}/participants/${participantId}/status`, {
+      method: "GET",
     }),
 };

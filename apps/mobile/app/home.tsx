@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { FlatList, Text, View } from "react-native";
+import { FlatList, Pressable, Text, View } from "react-native";
 
 import { Button } from "../components/Button";
 import { Screen } from "../components/Screen";
@@ -63,33 +63,48 @@ export default function Home() {
 
   return (
     <Screen>
-      <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Your devices</Text>
-      <Text className="mb-8 text-base text-text-secondary">
-        Every device signed in to your DITSALA account.
-      </Text>
+      <Text className="mb-1 mt-8 text-3xl font-semibold text-text-primary">Welcome back</Text>
+      <Text className="mb-8 text-base text-text-secondary">Your trusted circle, in one place.</Text>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
-      <Button
-        testID="sos-nav-button"
-        label="SOS"
-        onPress={() => router.push("/sos")}
-      />
-      <View className="h-3" />
-      <Button
-        testID="circle-nav-button"
-        label="Circle"
-        onPress={() => router.push("/circle")}
-        variant="secondary"
-      />
-      <View className="h-3" />
+      <View className="mb-8 flex-row gap-3">
+        <Pressable
+          testID="sos-nav-button"
+          onPress={() => router.push("/sos")}
+          className="flex-1 items-center rounded-lg border border-danger/40 bg-surface py-5 active:bg-surface-raised"
+        >
+          <Text className="mb-1 text-2xl">🆘</Text>
+          <Text className="text-sm font-semibold text-danger">SOS</Text>
+        </Pressable>
+        <Pressable
+          testID="circle-nav-button"
+          onPress={() => router.push("/circle")}
+          className="flex-1 items-center rounded-lg border border-border bg-surface py-5 active:bg-surface-raised"
+        >
+          <Text className="mb-1 text-2xl">🤝</Text>
+          <Text className="text-sm font-semibold text-text-primary">Circle</Text>
+        </Pressable>
+        <Pressable
+          testID="meet-nav-button"
+          onPress={() => router.push("/meet/schedule")}
+          className="flex-1 items-center rounded-lg border border-border bg-surface py-5 active:bg-surface-raised"
+        >
+          <Text className="mb-1 text-2xl">🎥</Text>
+          <Text className="text-sm font-semibold text-text-primary">Meet</Text>
+        </Pressable>
+      </View>
 
+      <Text className="mb-3 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Your devices
+      </Text>
       <FlatList
         data={devices}
         keyExtractor={(item) => item.id}
         className="mb-8"
+        scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-lg border border-border bg-surface p-4">
             <Text className="text-base text-text-primary">{item.device_name}</Text>
             <Text className="text-sm text-text-tertiary">
               {item.platform} · {item.is_trusted ? "Trusted" : "Not trusted"}
@@ -98,6 +113,9 @@ export default function Home() {
         )}
       />
 
+      <Text className="mb-3 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Account
+      </Text>
       <Button testID="logout-button" label="Log out" onPress={handleLogout} variant="secondary" />
       <View className="h-3" />
       <Button

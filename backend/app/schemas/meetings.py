@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class CreateMeetingRequest(BaseModel):
@@ -34,6 +34,20 @@ class MeetingResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JoinInfoResponse(BaseModel):
+    """Public — never includes the password itself, only whether one is
+    required (§9 Phase 4: a shared-link recipient checks this before
+    authenticating or being prompted for a password)."""
+
+    id: uuid.UUID
+    title: str
+    meeting_type: str
+    status: str
+    scheduled_start_at: datetime | None
+    requires_password: bool
+    joinable_now: bool
+
+
 class JoinMeetingRequest(BaseModel):
     password: str | None = None
 
@@ -41,6 +55,9 @@ class JoinMeetingRequest(BaseModel):
 class GuestJoinMeetingRequest(BaseModel):
     guest_display_name: str = Field(min_length=1, max_length=120)
     password: str | None = None
+    # Optional — used only to best-effort mark a matching §9 Phase 4
+    # registration as attended, never required to join.
+    guest_email: EmailStr | None = None
 
 
 class RoomAccessTokenResponse(BaseModel):
@@ -63,6 +80,7 @@ class ParticipantResponse(BaseModel):
     guest_display_name: str | None
     role: str
     admission_status: str
+    stage_status: str
     joined_at: datetime | None
     left_at: datetime | None
 
@@ -223,6 +241,25 @@ class MeetingSearchResultResponse(BaseModel):
     id: uuid.UUID
     title: str
     status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---- Phase 4: webinar stage control + registration --------------------------
+
+
+class RegisterForMeetingRequest(BaseModel):
+    email: EmailStr
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class RegistrationResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    email: str
+    display_name: str
+    attended_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

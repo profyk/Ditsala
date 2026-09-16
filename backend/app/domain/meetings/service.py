@@ -9,13 +9,14 @@ still never touches media itself.
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.security import hash_secret, verify_secret
 from app.domain.meetings.interfaces import RecordingHandle, RoomAccessToken, RoomProvider
 from app.models.accounts import User
 from app.models.meetings import (
+    LARGE_AUDIENCE_MEETING_TYPES,
     BreakoutRoom,
     BreakoutRoomParticipant,
     Meeting,
@@ -25,6 +26,7 @@ from app.models.meetings import (
     MeetingPollVote,
     MeetingQuestion,
     MeetingRecording,
+    MeetingRegistration,
 )
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
@@ -35,10 +37,31 @@ from app.repositories.meetings import (
     MeetingPollVoteRepository,
     MeetingQuestionRepository,
     MeetingRecordingRepository,
+    MeetingRegistrationRepository,
     MeetingRepository,
 )
 
 _HOST_ROLES = ("host", "co_host")
+# §9 Phase 4 — a shared meeting link's recipient shouldn't be let straight
+# into an empty room 6 hours before a scheduled call; this is the window
+# before `scheduled_start_at` a non-host participant is allowed to join
+# (enough time to test audio/video, not "any time before the meeting").
+EARLY_JOIN_WINDOW_MINUTES = 10
+
+
+def _initial_stage_status(meeting: Meeting, role: str) -> str:
+    if role in _HOST_ROLES:
+        return "on_stage"
+    if meeting.meeting_type in LARGE_AUDIENCE_MEETING_TYPES:
+        return "audience"
+    return "on_stage"
+
+
+def _is_within_join_window(meeting: Meeting) -> bool:
+    if meeting.status != "scheduled" or meeting.scheduled_start_at is None:
+        return True
+    earliest_join_at = meeting.scheduled_start_at - timedelta(minutes=EARLY_JOIN_WINDOW_MINUTES)
+    return datetime.now(UTC) >= earliest_join_at
 
 
 class MeetingError(Exception):
@@ -53,6 +76,21 @@ class JoinResult:
     # LiveKit token is minted until a host/co-host admits them, so a
     # waiting participant never receives real room-join credentials.
     access_token: RoomAccessToken | None
+
+
+@dataclass(frozen=True)
+class JoinInfo:
+    """§9 Phase 4 — what a shared meeting link's recipient needs to know
+    *before* attempting to join: whether a password is required, and
+    whether it's too early relative to a scheduled start time. Exposed
+    over a public, unauthenticated endpoint (never includes the password
+    hash or anything else sensitive) so a client can show "this meeting
+    is scheduled for X" or a password prompt without first requiring a
+    DITSALA login."""
+
+    meeting: Meeting
+    requires_password: bool
+    joinable_now: bool
 
 
 @dataclass(frozen=True)
@@ -78,6 +116,7 @@ class MeetingService:
         questions: MeetingQuestionRepository,
         breakout_rooms: BreakoutRoomRepository,
         breakout_room_participants: BreakoutRoomParticipantRepository,
+        registrations: MeetingRegistrationRepository,
     ) -> None:
         self._meetings = meetings
         self._participants = participants
@@ -89,6 +128,7 @@ class MeetingService:
         self._questions = questions
         self._breakout_rooms = breakout_rooms
         self._breakout_room_participants = breakout_room_participants
+        self._registrations = registrations
 
     # ---- Phase 1: create / join / end -----------------------------------
 
@@ -137,15 +177,19 @@ class MeetingService:
             raise MeetingError("No such meeting.")
         return meeting
 
+    async def list_hosted_meetings(self, host_user_id: uuid.UUID) -> list[Meeting]:
+        return await self._meetings.list_for_host(host_user_id)
+
     async def join(
         self, *, meeting_id: uuid.UUID, user: User, password: str | None = None
     ) -> JoinResult:
         meeting = await self.get_meeting(meeting_id)
-        self._check_joinable(meeting, password=password)
+        is_host = meeting.host_user_id == user.id
+        self._check_joinable(meeting, password=password, is_host=is_host)
 
         participant = await self._participants.get_by_meeting_and_user(meeting_id, user.id)
         if participant is None:
-            role = "host" if meeting.host_user_id == user.id else "participant"
+            role = "host" if is_host else "participant"
             needs_admission = meeting.waiting_room_enabled and role == "participant"
             participant = await self._participants.add(
                 MeetingParticipant(
@@ -154,8 +198,10 @@ class MeetingService:
                     role=role,
                     livekit_participant_identity=str(user.id),
                     admission_status="waiting" if needs_admission else "admitted",
+                    stage_status=_initial_stage_status(meeting, role),
                 )
             )
+            await self._mark_attended(meeting_id, user.email)
         if participant.admission_status == "removed":
             raise MeetingError("You have been removed from this meeting.")
         if participant.admission_status == "waiting":
@@ -170,6 +216,7 @@ class MeetingService:
             participant_identity=participant.livekit_participant_identity,
             participant_name=user.display_name,
             is_host=participant.role in _HOST_ROLES,
+            can_publish=participant.stage_status == "on_stage",
         )
         return JoinResult(meeting=meeting, participant=participant, access_token=token)
 
@@ -179,12 +226,15 @@ class MeetingService:
         meeting_id: uuid.UUID,
         guest_display_name: str,
         password: str | None = None,
+        guest_email: str | None = None,
     ) -> JoinResult:
         """§35 — no DITSALA account required or created; `user_id` stays
         null on the participant row, matching the model's own nullable
-        design for exactly this case."""
+        design for exactly this case. `guest_email` is optional and used
+        only to best-effort mark a matching §9 Phase 4 registration as
+        attended — never required to join."""
         meeting = await self.get_meeting(meeting_id)
-        self._check_joinable(meeting, password=password)
+        self._check_joinable(meeting, password=password, is_host=False)
 
         needs_admission = meeting.waiting_room_enabled
         guest_identity = f"guest-{uuid.uuid4().hex}"
@@ -196,9 +246,12 @@ class MeetingService:
                 role="participant",
                 livekit_participant_identity=guest_identity,
                 admission_status="waiting" if needs_admission else "admitted",
+                stage_status=_initial_stage_status(meeting, "participant"),
                 joined_at=None if needs_admission else datetime.now(UTC),
             )
         )
+        if guest_email:
+            await self._mark_attended(meeting_id, guest_email)
         if needs_admission:
             return JoinResult(meeting=meeting, participant=participant, access_token=None)
 
@@ -208,6 +261,41 @@ class MeetingService:
             participant_identity=guest_identity,
             participant_name=guest_display_name,
             is_host=False,
+            can_publish=participant.stage_status == "on_stage",
+        )
+        return JoinResult(meeting=meeting, participant=participant, access_token=token)
+
+    async def _mark_attended(self, meeting_id: uuid.UUID, email: str) -> None:
+        registration = await self._registrations.get_by_meeting_and_email(meeting_id, email)
+        if registration is not None and registration.attended_at is None:
+            registration.attended_at = datetime.now(UTC)
+
+    async def get_participant_status(
+        self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> JoinResult:
+        """
+        §9 Phase 2/4 — lets a waiting participant's client poll for
+        admission without re-calling `join`/`guest_join` (which, for a
+        guest, would mint a brand-new participant row every poll rather
+        than checking the existing one). Deliberately public/unauthenticated
+        the same way `guest_join` already is: knowing a `participant_id`
+        (an unguessable UUID) is already the entire trust boundary for a
+        guest's access token today, so this adds no new class of exposure.
+        """
+        meeting = await self.get_meeting(meeting_id)
+        participant = await self._get_participant_in_meeting(meeting_id, participant_id)
+        if participant.admission_status == "removed":
+            raise MeetingError("You have been removed from this meeting.")
+        if participant.admission_status == "waiting":
+            return JoinResult(meeting=meeting, participant=participant, access_token=None)
+
+        participant_name = participant.guest_display_name or str(participant.user_id)
+        token = self._room_provider.create_access_token(
+            room_name=meeting.livekit_room_name,
+            participant_identity=participant.livekit_participant_identity,
+            participant_name=participant_name,
+            is_host=participant.role in _HOST_ROLES,
+            can_publish=participant.stage_status == "on_stage",
         )
         return JoinResult(meeting=meeting, participant=participant, access_token=token)
 
@@ -226,7 +314,7 @@ class MeetingService:
         meeting.actual_end_at = datetime.now(UTC)
         return meeting
 
-    def _check_joinable(self, meeting: Meeting, *, password: str | None) -> None:
+    def _check_joinable(self, meeting: Meeting, *, password: str | None, is_host: bool) -> None:
         if meeting.status in ("ended", "cancelled"):
             raise MeetingError(f"Cannot join a meeting that has {meeting.status}.")
         if meeting.locked_at is not None:
@@ -234,6 +322,23 @@ class MeetingService:
         if meeting.password_hash is not None:
             if password is None or not verify_secret(meeting.password_hash, password):
                 raise MeetingError("Incorrect meeting password.")
+        if not is_host and not _is_within_join_window(meeting):
+            raise MeetingError(
+                "This meeting hasn't started yet — scheduled for "
+                f"{meeting.scheduled_start_at.isoformat()}."  # type: ignore[union-attr]
+            )
+
+    async def get_join_info(self, meeting_id: uuid.UUID) -> JoinInfo:
+        meeting = await self.get_meeting(meeting_id)
+        return JoinInfo(
+            meeting=meeting,
+            requires_password=meeting.password_hash is not None,
+            joinable_now=(
+                meeting.status not in ("ended", "cancelled")
+                and meeting.locked_at is None
+                and _is_within_join_window(meeting)
+            ),
+        )
 
     def _mark_live_if_needed(self, meeting: Meeting) -> None:
         if meeting.status == "scheduled":
@@ -308,6 +413,60 @@ class MeetingService:
             raise MeetingError("Only the host can lock or unlock this meeting.")
         meeting.locked_at = datetime.now(UTC) if locked else None
         return meeting
+
+    # ---- Phase 4: webinar/large-audience stage control ---------------------
+
+    async def invite_to_stage(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> MeetingParticipant:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        meeting = await self.get_meeting(meeting_id)
+        participant = await self._get_participant_in_meeting(meeting_id, participant_id)
+        participant.stage_status = "on_stage"
+        await self._room_provider.set_participant_can_publish(
+            room_name=meeting.livekit_room_name,
+            participant_identity=participant.livekit_participant_identity,
+            can_publish=True,
+        )
+        return participant
+
+    async def move_to_audience(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> MeetingParticipant:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        meeting = await self.get_meeting(meeting_id)
+        participant = await self._get_participant_in_meeting(meeting_id, participant_id)
+        if participant.role in _HOST_ROLES:
+            raise MeetingError("Cannot move the host or a co-host to the audience.")
+        participant.stage_status = "audience"
+        await self._room_provider.set_participant_can_publish(
+            room_name=meeting.livekit_room_name,
+            participant_identity=participant.livekit_participant_identity,
+            can_publish=False,
+        )
+        return participant
+
+    # ---- Phase 4: webinar registration --------------------------------------
+
+    async def register_for_meeting(
+        self, *, meeting_id: uuid.UUID, email: str, display_name: str
+    ) -> MeetingRegistration:
+        """§35-style public flow, deliberately not auth-gated — RSVP-ing
+        to a webinar shouldn't require a DITSALA account."""
+        await self.get_meeting(meeting_id)  # 404s on an unknown meeting
+        existing = await self._registrations.get_by_meeting_and_email(meeting_id, email)
+        if existing is not None:
+            existing.display_name = display_name
+            return existing
+        return await self._registrations.add(
+            MeetingRegistration(meeting_id=meeting_id, email=email, display_name=display_name)
+        )
+
+    async def list_registrations(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID
+    ) -> list[MeetingRegistration]:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        return await self._registrations.list_for_meeting(meeting_id)
 
     # ---- Phase 2: reactions / raise-hand (ephemeral, no DB row) ----------
 

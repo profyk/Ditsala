@@ -22,6 +22,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
@@ -38,6 +39,13 @@ PARTICIPANT_ROLES = ("host", "co_host", "participant")
 # distinct from `left` (which is just left_at being set — a participant
 # leaving on their own is not an admission-status change).
 PARTICIPANT_ADMISSION_STATUSES = ("waiting", "admitted", "removed")
+# §9 Phase 4 — webinar/town_hall/conference are large-audience modes: a
+# joining `participant` (never host/co-host) starts `audience` (a
+# view-only LiveKit grant, no `can_publish`) until a host/co-host invites
+# them to the stage. Every other meeting type keeps today's behavior —
+# `on_stage` for everyone, i.e. unchanged from before this phase.
+LARGE_AUDIENCE_MEETING_TYPES = ("webinar", "town_hall", "conference")
+PARTICIPANT_STAGE_STATUSES = ("audience", "on_stage")
 
 
 class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -111,6 +119,15 @@ class MeetingParticipant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ),
         default="admitted",
         server_default=text("'admitted'"),
+    )
+    stage_status: Mapped[str] = mapped_column(
+        Enum(
+            *PARTICIPANT_STAGE_STATUSES,
+            name="meeting_participant_stage_status",
+            native_enum=False,
+        ),
+        default="on_stage",
+        server_default=text("'on_stage'"),
     )
 
 
@@ -281,3 +298,31 @@ class MeetingAiNote(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     edited_by_participant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="SET NULL")
     )
+
+
+class MeetingRegistration(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """§9 Phase 4 — webinar/conference RSVP tracking, deliberately not
+    auth-gated (a public webinar invite shouldn't require a DITSALA
+    account to register interest — same reasoning as guest join, §35).
+    `attended_at` is set best-effort when a join/guest-join's email
+    matches an existing registration; it's headcount tracking, not an
+    admission gate — waiting room / lock still govern actual entry."""
+
+    __tablename__ = "meeting_registrations"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id", "email", name="uq_meeting_registrations_meeting_id_email"
+        ),
+    )
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320))
+    display_name: Mapped[str] = mapped_column(String(120))
+    # Set only when the registrant later joins with a DITSALA account —
+    # never required at registration time.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    attended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

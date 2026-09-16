@@ -55,8 +55,17 @@ export default function Welcome() {
   return (
     <Screen scroll={false}>
       <View className="flex-1 items-center justify-center">
+        <View className="mb-8 h-20 w-20 items-center justify-center rounded-full border border-accent/50 bg-accent-muted">
+          {/* Brand type scale calls for Fraunces here (packages/ui-tokens'
+              `fontFamily.display`) — not wired into this RN app yet (no
+              font asset loading set up), so this uses the system font's
+              own bold weight rather than silently claiming a typeface
+              that isn't actually loaded. See docs/SECURITY_GAPS.md. */}
+          <Text className="text-4xl font-bold text-accent">D</Text>
+        </View>
         <Text className="text-5xl font-semibold tracking-wide text-text-primary">DITSALA</Text>
-        <Text className="mt-3 text-lg text-text-primary">Speak with Confidence.</Text>
+        <View className="mt-4 h-px w-12 bg-accent" />
+        <Text className="mt-4 text-lg text-text-primary">Speak with Confidence.</Text>
         <Text className="mt-1 text-base text-text-secondary">Your trusted circle.</Text>
       </View>
       <View className="mb-8">
@@ -84,7 +93,13 @@ export default function Welcome() {
               label="Get Started"
               onPress={() => router.push("/onboarding/signup")}
             />
-            <View className="h-3" />
+            <View className="my-4 flex-row items-center gap-3">
+              <View className="h-px flex-1 bg-border" />
+              <Text className="text-xs font-medium uppercase tracking-widest text-text-tertiary">
+                or
+              </Text>
+              <View className="h-px flex-1 bg-border" />
+            </View>
             <Button
               testID="already-have-account-button"
               label="I already have an account"

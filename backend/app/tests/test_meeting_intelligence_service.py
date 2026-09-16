@@ -37,6 +37,7 @@ from app.repositories.meetings import (
     MeetingPollVoteRepository,
     MeetingQuestionRepository,
     MeetingRecordingRepository,
+    MeetingRegistrationRepository,
     MeetingRepository,
     MeetingTranscriptRepository,
 )
@@ -107,6 +108,7 @@ def harness(session: AsyncSession) -> Harness:
         questions=MeetingQuestionRepository(session),
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
+        registrations=MeetingRegistrationRepository(session),
     )
     transcription = StubTranscriptionProvider(
         [
