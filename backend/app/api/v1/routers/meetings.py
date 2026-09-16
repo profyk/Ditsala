@@ -2,21 +2,27 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.v1.deps import CurrentUserDep, MeetingServiceDep
+from app.api.v1.deps import CurrentUserDep, MeetingIntelligenceServiceDep, MeetingServiceDep
 from app.domain.meetings.service import JoinResult, MeetingError
 from app.models.meetings import MeetingParticipant
 from app.schemas.meetings import (
+    AiNoteResponse,
+    AskQuestionAboutMeetingRequest,
+    AskQuestionAboutMeetingResponse,
     AskQuestionRequest,
     AssignBreakoutRoomRequest,
     BreakoutRoomResponse,
     CreateBreakoutRoomsRequest,
     CreateMeetingRequest,
     CreatePollRequest,
+    EditNoteRequest,
+    GeneratedNotesResponse,
     GuestJoinMeetingRequest,
     JoinMeetingRequest,
     JoinMeetingResponse,
     LockMeetingRequest,
     MeetingResponse,
+    MeetingSearchResultResponse,
     MessageResponse,
     MuteParticipantRequest,
     ParticipantResponse,
@@ -28,6 +34,7 @@ from app.schemas.meetings import (
     RecordingResponse,
     RoomAccessTokenResponse,
     SendMessageRequest,
+    TranscriptSegmentResponse,
     VotePollRequest,
 )
 
@@ -79,6 +86,16 @@ async def create_meeting(
         waiting_room_enabled=body.waiting_room_enabled,
     )
     return MeetingResponse.model_validate(meeting)
+
+
+@router.get("/search", response_model=list[MeetingSearchResultResponse])
+async def search_meetings(
+    q: str, user: CurrentUserDep, service: MeetingIntelligenceServiceDep
+) -> list[MeetingSearchResultResponse]:
+    """§18 — must be registered before `/{meeting_id}` so "search" is
+    never parsed as a meeting id."""
+    meetings = await service.search_meetings(user_id=user.id, query=q)
+    return [MeetingSearchResultResponse.model_validate(m) for m in meetings]
 
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
@@ -571,3 +588,103 @@ async def close_breakout_rooms(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return [BreakoutRoomResponse.model_validate(r) for r in rooms]
+
+
+# ---- Phase 3: AI pipeline (transcript, notes, Q&A) --------------------------
+
+
+@router.post(
+    "/{meeting_id}/recordings/{recording_id}/transcribe",
+    response_model=list[TranscriptSegmentResponse],
+)
+async def transcribe_recording(
+    meeting_id: uuid.UUID,
+    recording_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MeetingIntelligenceServiceDep,
+) -> list[TranscriptSegmentResponse]:
+    try:
+        segments = await service.transcribe_recording(
+            meeting_id=meeting_id, acting_user_id=user.id, recording_id=recording_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return [TranscriptSegmentResponse.model_validate(s) for s in segments]
+
+
+@router.get("/{meeting_id}/transcript", response_model=list[TranscriptSegmentResponse])
+async def get_transcript(
+    meeting_id: uuid.UUID,
+    user: CurrentUserDep,
+    meeting_service: MeetingServiceDep,
+    intel_service: MeetingIntelligenceServiceDep,
+) -> list[TranscriptSegmentResponse]:
+    await _current_participant(meeting_id, user, meeting_service)
+    segments = await intel_service.list_transcript(meeting_id=meeting_id)
+    return [TranscriptSegmentResponse.model_validate(s) for s in segments]
+
+
+@router.post("/{meeting_id}/notes/generate", response_model=GeneratedNotesResponse)
+async def generate_notes(
+    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingIntelligenceServiceDep
+) -> GeneratedNotesResponse:
+    try:
+        notes = await service.generate_notes(meeting_id=meeting_id, acting_user_id=user.id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return GeneratedNotesResponse(
+        summary=AiNoteResponse.model_validate(notes.summary),
+        decisions=[AiNoteResponse.model_validate(n) for n in notes.decisions],
+        action_items=[AiNoteResponse.model_validate(n) for n in notes.action_items],
+        topics=[AiNoteResponse.model_validate(n) for n in notes.topics],
+    )
+
+
+@router.get("/{meeting_id}/notes", response_model=list[AiNoteResponse])
+async def list_notes(
+    meeting_id: uuid.UUID,
+    user: CurrentUserDep,
+    meeting_service: MeetingServiceDep,
+    intel_service: MeetingIntelligenceServiceDep,
+) -> list[AiNoteResponse]:
+    await _current_participant(meeting_id, user, meeting_service)
+    notes = await intel_service.list_notes(meeting_id=meeting_id)
+    return [AiNoteResponse.model_validate(n) for n in notes]
+
+
+@router.patch("/{meeting_id}/notes/{note_id}", response_model=AiNoteResponse)
+async def edit_note(
+    meeting_id: uuid.UUID,
+    note_id: uuid.UUID,
+    body: EditNoteRequest,
+    user: CurrentUserDep,
+    meeting_service: MeetingServiceDep,
+    intel_service: MeetingIntelligenceServiceDep,
+) -> AiNoteResponse:
+    editor = await _current_participant(meeting_id, user, meeting_service)
+    try:
+        note = await intel_service.edit_note(
+            meeting_id=meeting_id,
+            note_id=note_id,
+            editor_participant_id=editor.id,
+            content=body.content,
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return AiNoteResponse.model_validate(note)
+
+
+@router.post("/{meeting_id}/ask", response_model=AskQuestionAboutMeetingResponse)
+async def ask_about_meeting(
+    meeting_id: uuid.UUID,
+    body: AskQuestionAboutMeetingRequest,
+    user: CurrentUserDep,
+    meeting_service: MeetingServiceDep,
+    intel_service: MeetingIntelligenceServiceDep,
+) -> AskQuestionAboutMeetingResponse:
+    await _current_participant(meeting_id, user, meeting_service)
+    try:
+        answer = await intel_service.ask(meeting_id=meeting_id, question=body.question)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return AskQuestionAboutMeetingResponse(answer=answer)

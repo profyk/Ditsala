@@ -28,6 +28,16 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Before going live — provision a real LiveKit Cloud project (or self-hosted instance), re-verify each RoomService/EgressService call against it, and remove this section. Also worth adding then: LiveKit's egress-completion webhook, so a recording's `status` moves from `processing` to a confirmed terminal state asynchronously rather than only being known from `stop_recording`'s own synchronous response.
 
+### Live in-meeting AI captions/transcription not built — post-meeting pipeline only (DITSALA_MEET_SPEC.md §6, §9 Phase 3)
+
+**What's missing:** the parent spec's §6 describes a LiveKit Agents worker joining each meeting as a hidden participant, tapping every track in real time to feed Deepgram's streaming API — live captions and continuously-updating notes during the meeting. That worker needs `livekit-agents` plus the `livekit` core WebRTC client (`livekit-rtc`), which requires native (non-pure-Python) bindings for audio/video codecs and ICE — the same category of native-module constraint as ADR 0005 (libsignal) and ADR 0007 (react-native-webrtc), but here compounded by this dev machine's resources at the time of writing (1.2GB disk, 0.5GB RAM free), which made installing `livekit-agents` unsafe to attempt (see the repeated RAM/disk crises logged elsewhere in this project's history).
+
+**What's real instead:** `MeetingIntelligenceService` (`domain/meet_ai/service.py`) transcribes a *finished* recording via Deepgram's prerecorded REST API, then runs it through Claude for structured notes — delivering §15's notes, §17's "what did I miss," and §18's search, just not live during the meeting. Both the Deepgram and Claude adapters are real code against each vendor's genuine, documented API contract (Claude's shape confirmed via live introspection of the installed `anthropic` SDK; Deepgram's via its public API docs), but **neither has been exercised against a live API key** in this environment — same class of gap as Stitch/Smile ID/LiveKit's RoomService above.
+
+**Why:** No Deepgram or Anthropic API key exists in this environment, and the native LiveKit Agents worker couldn't safely be installed given the resource constraints above.
+
+**Tracked for:** Before going live — get real Deepgram/Anthropic API keys and verify `DeepgramTranscriptionProvider`/`ClaudeMeetingIntelligenceProvider` against them; separately, on a machine with adequate RAM/disk (or a dedicated worker host, which is the right place for this anyway — it shouldn't run on the same box as the API server), build and verify the actual `livekit-agents` worker for live captions, upgrading this pipeline from post-meeting to real-time without changing anything downstream (transcript storage, notes, search all already work the same way regardless of when the transcript rows are written).
+
 ### VIP privacy/messaging perks not yet built (ADR 0012)
 
 **What's missing:** the tier split, `VipUpgradeService`, and Stitch adapter are all real (see above and `docs/adr/0012-normal-vip-tier-split.md`). Still not built: hiding a VIP's phone number from non-Circle contacts, and VIP-to-VIP automatic trusted messaging ("private space").

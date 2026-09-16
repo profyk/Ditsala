@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     stitch_sandbox_auth_url: str = "https://secure.stitch.money/connect/token"
     stitch_sandbox_api_base_url: str = "https://api.stitch.money"
 
+    # --- Ditsala Meet AI pipeline — docs/DITSALA_MEET_SPEC.md §6, §9
+    # Phase 3. No sandbox split, same reasoning as LiveKit above: both
+    # vendors' real APIs are the only APIs, there's no distinct test mode
+    # to switch to. ---
+    deepgram_api_key: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]

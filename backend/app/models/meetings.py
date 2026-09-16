@@ -12,8 +12,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Computed,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -31,6 +42,9 @@ PARTICIPANT_ADMISSION_STATUSES = ("waiting", "admitted", "removed")
 
 class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "meetings"
+    __table_args__ = (
+        Index("ix_meetings_title_search", "title_search", postgresql_using="gin"),
+    )
 
     host_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
@@ -60,6 +74,11 @@ class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Boolean, default=False, server_default=text("false")
     )
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # §18 search — a generated, indexed column rather than computing
+    # `to_tsvector` at query time on every row scanned.
+    title_search: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', title)", persisted=True)
+    )
 
 
 class MeetingParticipant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -204,4 +223,61 @@ class BreakoutRoomParticipant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     participant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+
+
+class MeetingTranscript(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    §9 Phase 3 (DITSALA_MEET_SPEC.md §6). Populated by
+    `MeetingIntelligenceService.transcribe_recording` from a finished
+    `MeetingRecording` via Deepgram's prerecorded API — not a live,
+    per-track stream. See that spec's Phase 3 section for why: a live
+    LiveKit Agents worker (joining the room as a hidden participant to
+    tap each track in real time) needs native WebRTC bindings this
+    resource-constrained dev environment could not safely install, so
+    this pass gets the post-meeting transcript/notes/search value
+    (§15-18) without live in-meeting captions — a real, disclosed scope
+    cut, not a silently faked one. See docs/SECURITY_GAPS.md.
+    """
+
+    __tablename__ = "meeting_transcripts"
+    __table_args__ = (
+        Index(
+            "ix_meeting_transcripts_search_vector", "search_vector", postgresql_using="gin"
+        ),
+    )
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    # Null when Deepgram's diarization couldn't confidently attribute a
+    # segment to a speaker index we could map back to a participant.
+    speaker_participant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="SET NULL")
+    )
+    text_segment: Mapped[str] = mapped_column(String(8000))
+    started_at_ms: Mapped[int] = mapped_column(BigInteger)
+    ended_at_ms: Mapped[int] = mapped_column(BigInteger)
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', text_segment)", persisted=True)
+    )
+
+
+class MeetingAiNote(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "meeting_ai_notes"
+
+    NOTE_KINDS = ("summary", "decision", "action_item", "question", "topic")
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(
+        Enum(*NOTE_KINDS, name="meeting_ai_note_kind", native_enum=False)
+    )
+    content: Mapped[str] = mapped_column(String(4000))
+    # §15 "allow users to edit" — null until a participant has actually
+    # edited the AI-generated text; distinguishes an untouched AI note
+    # from a human-corrected one without a separate boolean flag.
+    edited_by_participant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="SET NULL")
     )

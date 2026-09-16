@@ -23,6 +23,7 @@ dependencies = [
     "pyotp>=2.10",
     "apscheduler>=3.11.3",
     "livekit-api>=1.2.1",
+    "anthropic>=1.6.0",
 ]
 
 [dependency-groups]

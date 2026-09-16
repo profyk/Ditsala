@@ -1,15 +1,19 @@
 import uuid
 
+from sqlalchemy import func, select
+
 from app.models.meetings import (
     BreakoutRoom,
     BreakoutRoomParticipant,
     Meeting,
+    MeetingAiNote,
     MeetingMessage,
     MeetingParticipant,
     MeetingPoll,
     MeetingPollVote,
     MeetingQuestion,
     MeetingRecording,
+    MeetingTranscript,
 )
 from app.repositories.base import Repository
 
@@ -27,6 +31,25 @@ class MeetingRepository(Repository[Meeting]):
         result = await self.session.execute(
             self._select()
             .where(Meeting.host_user_id == host_user_id)
+            .order_by(Meeting.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def search_for_user(self, *, user_id: uuid.UUID, query: str) -> list[Meeting]:
+        """§18 — full-text search over a meeting's title and its
+        transcript, scoped to meetings the searching user actually
+        participated in (never another user's meeting content)."""
+        tsquery = func.plainto_tsquery("english", query)
+        result = await self.session.execute(
+            select(Meeting)
+            .join(MeetingParticipant, MeetingParticipant.meeting_id == Meeting.id)
+            .outerjoin(MeetingTranscript, MeetingTranscript.meeting_id == Meeting.id)
+            .where(MeetingParticipant.user_id == user_id)
+            .where(
+                Meeting.title_search.op("@@")(tsquery)
+                | MeetingTranscript.search_vector.op("@@")(tsquery)
+            )
+            .distinct()
             .order_by(Meeting.created_at.desc())
         )
         return list(result.scalars().all())
@@ -155,6 +178,35 @@ class BreakoutRoomRepository(Repository[BreakoutRoom]):
             self._select()
             .where(BreakoutRoom.meeting_id == meeting_id)
             .order_by(BreakoutRoom.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+
+class MeetingTranscriptRepository(Repository[MeetingTranscript]):
+    model = MeetingTranscript
+
+    async def list_for_meeting(self, meeting_id: uuid.UUID) -> list[MeetingTranscript]:
+        result = await self.session.execute(
+            self._select()
+            .where(MeetingTranscript.meeting_id == meeting_id)
+            .order_by(MeetingTranscript.started_at_ms.asc())
+        )
+        return list(result.scalars().all())
+
+    async def add_many(self, transcripts: list[MeetingTranscript]) -> list[MeetingTranscript]:
+        self.session.add_all(transcripts)
+        await self.session.flush()
+        return transcripts
+
+
+class MeetingAiNoteRepository(Repository[MeetingAiNote]):
+    model = MeetingAiNote
+
+    async def list_for_meeting(self, meeting_id: uuid.UUID) -> list[MeetingAiNote]:
+        result = await self.session.execute(
+            self._select()
+            .where(MeetingAiNote.meeting_id == meeting_id)
+            .order_by(MeetingAiNote.created_at.asc())
         )
         return list(result.scalars().all())
 

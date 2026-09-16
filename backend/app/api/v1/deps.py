@@ -15,6 +15,7 @@ from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
 from app.domain.compliance.service import ComplianceService
 from app.domain.location.service import LocationService
+from app.domain.meet_ai.service import MeetingIntelligenceService
 from app.domain.meetings.service import MeetingService
 from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
@@ -54,6 +55,7 @@ from app.repositories.location import (
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
+    MeetingAiNoteRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -61,6 +63,7 @@ from app.repositories.meetings import (
     MeetingQuestionRepository,
     MeetingRecordingRepository,
     MeetingRepository,
+    MeetingTranscriptRepository,
 )
 from app.repositories.messages import (
     MediaObjectRepository,
@@ -85,6 +88,8 @@ from app.services.factory import (
     get_storage_provider,
 )
 from app.services.meet.livekit import LiveKitRoomProvider
+from app.services.meet_ai.claude import ClaudeMeetingIntelligenceProvider
+from app.services.meet_ai.deepgram import DeepgramTranscriptionProvider
 from app.services.ratelimit.memory import rate_limiter
 from app.services.realtime.websocket_manager import connection_manager
 
@@ -373,6 +378,26 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
 
 
 MeetingServiceDep = Annotated[MeetingService, Depends(get_meeting_service)]
+
+
+async def get_meeting_intelligence_service(
+    session: SessionDep, settings: SettingsDep
+) -> MeetingIntelligenceService:
+    return MeetingIntelligenceService(
+        meetings=MeetingRepository(session),
+        participants=MeetingParticipantRepository(session),
+        recordings=MeetingRecordingRepository(session),
+        transcripts=MeetingTranscriptRepository(session),
+        notes=MeetingAiNoteRepository(session),
+        storage_provider=get_storage_provider(settings),
+        transcription_provider=DeepgramTranscriptionProvider.from_settings(settings),
+        intelligence_provider=ClaudeMeetingIntelligenceProvider.from_settings(settings),
+    )
+
+
+MeetingIntelligenceServiceDep = Annotated[
+    MeetingIntelligenceService, Depends(get_meeting_intelligence_service)
+]
 
 
 async def get_vip_upgrade_service(session: SessionDep, settings: SettingsDep) -> VipUpgradeService:

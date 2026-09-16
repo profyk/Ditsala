@@ -173,3 +173,56 @@ class QuestionResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---- Phase 3: AI pipeline (transcript, notes, search) -----------------------
+
+
+class TranscriptSegmentResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    speaker_participant_id: uuid.UUID | None
+    text_segment: str
+    started_at_ms: int
+    ended_at_ms: int
+
+    model_config = {"from_attributes": True}
+
+
+class AiNoteResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    kind: str
+    content: str
+    edited_by_participant_id: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GeneratedNotesResponse(BaseModel):
+    summary: AiNoteResponse
+    decisions: list[AiNoteResponse]
+    action_items: list[AiNoteResponse]
+    topics: list[AiNoteResponse]
+
+
+class EditNoteRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class AskQuestionAboutMeetingRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+
+
+class AskQuestionAboutMeetingResponse(BaseModel):
+    answer: str
+
+
+class MeetingSearchResultResponse(BaseModel):
+    id: uuid.UUID
+    title: str
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -8,16 +8,19 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.v1.deps import SessionDep, get_meeting_service
+from app.api.v1.deps import SessionDep, get_meeting_intelligence_service, get_meeting_service
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import create_access_token
+from app.domain.meet_ai.interfaces import MeetingSummary, TranscriptSegment
+from app.domain.meet_ai.service import MeetingIntelligenceService
 from app.domain.meetings.service import MeetingService
 from app.main import app
 from app.models.accounts import User
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
+    MeetingAiNoteRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -25,6 +28,12 @@ from app.repositories.meetings import (
     MeetingQuestionRepository,
     MeetingRecordingRepository,
     MeetingRepository,
+    MeetingTranscriptRepository,
+)
+from app.services.storage.s3 import S3StorageProvider
+from app.tests.test_meeting_intelligence_service import (
+    StubIntelligenceProvider,
+    StubTranscriptionProvider,
 )
 from app.tests.test_meeting_service import StubRoomProvider
 
@@ -58,8 +67,45 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             breakout_room_participants=BreakoutRoomParticipantRepository(db_session),
         )
 
+    async def _override_meeting_intelligence_service(
+        db_session: SessionDep,
+    ) -> MeetingIntelligenceService:
+        return MeetingIntelligenceService(
+            meetings=MeetingRepository(db_session),
+            participants=MeetingParticipantRepository(db_session),
+            recordings=MeetingRecordingRepository(db_session),
+            transcripts=MeetingTranscriptRepository(db_session),
+            notes=MeetingAiNoteRepository(db_session),
+            storage_provider=S3StorageProvider(
+                bucket="test-bucket",
+                region="us-east-1",
+                access_key_id="test",
+                secret_access_key="test",
+                endpoint_url="",
+                url_ttl_minutes=15,
+            ),
+            transcription_provider=StubTranscriptionProvider(
+                [
+                    TranscriptSegment(
+                        text="Hello team.", started_at_ms=0, ended_at_ms=800, speaker_index=0
+                    )
+                ]
+            ),
+            intelligence_provider=StubIntelligenceProvider(
+                MeetingSummary(
+                    executive_summary="Quick sync.",
+                    decisions=["Proceed as planned."],
+                    action_items=["Follow up next week."],
+                    topics=["Status update"],
+                )
+            ),
+        )
+
     app.dependency_overrides[get_db_session] = _override_db_session
     app.dependency_overrides[get_meeting_service] = _override_meeting_service
+    app.dependency_overrides[get_meeting_intelligence_service] = (
+        _override_meeting_intelligence_service
+    )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -330,3 +376,67 @@ async def test_breakout_rooms_end_to_end(client: AsyncClient, session: AsyncSess
     )
     assert r.status_code == 200, r.text
     assert all(room["closed_at"] is not None for room in r.json())
+
+
+async def test_ai_pipeline_transcribe_notes_ask_and_search(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    unique = uuid.uuid4().hex[:12]
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": f"Weekly Sync {unique}"},
+        headers=_bearer_for(host),
+    )
+    meeting_id = r.json()["id"]
+    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(host))
+    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other))
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/recordings/start", headers=_bearer_for(host)
+    )
+    recording_id = r.json()["id"]
+    await client.post(
+        f"/api/v1/meetings/{meeting_id}/recordings/{recording_id}/stop", headers=_bearer_for(host)
+    )
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/recordings/{recording_id}/transcribe",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["text_segment"] == "Hello team."
+
+    r = await client.get(f"/api/v1/meetings/{meeting_id}/transcript", headers=_bearer_for(other))
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/notes/generate", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["summary"]["content"] == "Quick sync."
+    note_id = r.json()["summary"]["id"]
+
+    r = await client.patch(
+        f"/api/v1/meetings/{meeting_id}/notes/{note_id}",
+        json={"content": "Edited summary."},
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["content"] == "Edited summary."
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/ask",
+        json={"question": "What did I miss?"},
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["answer"]
+
+    r = await client.get(
+        "/api/v1/meetings/search", params={"q": unique}, headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    assert [m["id"] for m in r.json()] == [meeting_id]
