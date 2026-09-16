@@ -36,6 +36,7 @@ from app.repositories.users import (
     PhoneVerificationRepository,
     UserRepository,
 )
+from app.services.ratelimit.memory import InMemoryRateLimiter
 from app.tests.test_onboarding_service import StubEmailProvider, StubKycProvider, StubOtpProvider
 
 
@@ -65,6 +66,8 @@ async def client(
     # service's session via Depends(get_db_session) rather than closing
     # over the fixture variable, so FastAPI's override machinery applies
     # to it too.
+    rate_limiter = InMemoryRateLimiter()
+
     async def _override_db_session() -> AsyncIterator[AsyncSession]:
         yield session
 
@@ -81,6 +84,7 @@ async def client(
             email_provider=email_provider,
             otp_provider=StubOtpProvider(),
             kyc_provider=StubKycProvider(),
+            rate_limiter=rate_limiter,
         )
 
     app.dependency_overrides[get_db_session] = _override_db_session

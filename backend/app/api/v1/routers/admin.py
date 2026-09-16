@@ -4,8 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.v1.admin_deps import AdminServiceDep, CurrentAdminDep, require_permission
+from app.api.v1.deps import ComplianceServiceDep
 from app.domain.admin.rbac import Permission
 from app.domain.admin.service import AdminError
+from app.domain.compliance.service import ComplianceError
 from app.schemas.admin import (
     ActionReportRequest,
     AuditLogEntryResponse,
@@ -20,6 +22,7 @@ from app.schemas.admin import (
     SystemConfigResponse,
     UserSummaryResponse,
 )
+from app.schemas.compliance import DataSubjectRequestResponse, ResolveDataSubjectRequestRequest
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -249,3 +252,78 @@ async def set_system_config(
         admin_id=admin.id, key=key, value=body.value, reason=body.reason
     )
     return SystemConfigResponse.model_validate(config)
+
+
+# --- §34.4: data subject rights ---
+
+
+def _compliance_http_error(exc: ComplianceError) -> HTTPException:
+    return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/data-subject-requests",
+    response_model=list[DataSubjectRequestResponse],
+    dependencies=[require_permission(Permission.DATA_SUBJECT_REQUESTS_VIEW)],
+)
+async def list_data_subject_requests(
+    service: ComplianceServiceDep,
+    status_filter: Annotated[str, Query(alias="status")] = "pending",
+) -> list[DataSubjectRequestResponse]:
+    requests = await service.list_by_status(status_filter)
+    return [DataSubjectRequestResponse.model_validate(r) for r in requests]
+
+
+@router.post(
+    "/data-subject-requests/{request_id}/in-progress",
+    response_model=DataSubjectRequestResponse,
+    dependencies=[require_permission(Permission.DATA_SUBJECT_REQUESTS_ACTION)],
+)
+async def mark_data_subject_request_in_progress(
+    request_id: uuid.UUID, admin: CurrentAdminDep, service: ComplianceServiceDep
+) -> DataSubjectRequestResponse:
+    try:
+        request = await service.mark_in_progress(admin_id=admin.id, request_id=request_id)
+    except ComplianceError as exc:
+        raise _compliance_http_error(exc) from exc
+    return DataSubjectRequestResponse.model_validate(request)
+
+
+@router.post(
+    "/data-subject-requests/{request_id}/complete",
+    response_model=DataSubjectRequestResponse,
+    dependencies=[require_permission(Permission.DATA_SUBJECT_REQUESTS_ACTION)],
+)
+async def complete_data_subject_request(
+    request_id: uuid.UUID,
+    body: ResolveDataSubjectRequestRequest,
+    admin: CurrentAdminDep,
+    service: ComplianceServiceDep,
+) -> DataSubjectRequestResponse:
+    try:
+        request = await service.complete(
+            admin_id=admin.id, request_id=request_id, resolution_notes=body.resolution_notes
+        )
+    except ComplianceError as exc:
+        raise _compliance_http_error(exc) from exc
+    return DataSubjectRequestResponse.model_validate(request)
+
+
+@router.post(
+    "/data-subject-requests/{request_id}/reject",
+    response_model=DataSubjectRequestResponse,
+    dependencies=[require_permission(Permission.DATA_SUBJECT_REQUESTS_ACTION)],
+)
+async def reject_data_subject_request(
+    request_id: uuid.UUID,
+    body: ResolveDataSubjectRequestRequest,
+    admin: CurrentAdminDep,
+    service: ComplianceServiceDep,
+) -> DataSubjectRequestResponse:
+    try:
+        request = await service.reject(
+            admin_id=admin.id, request_id=request_id, resolution_notes=body.resolution_notes
+        )
+    except ComplianceError as exc:
+        raise _compliance_http_error(exc) from exc
+    return DataSubjectRequestResponse.model_validate(request)

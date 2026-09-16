@@ -85,3 +85,12 @@ class AccountRecoveryRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("devices.id", ondelete="SET NULL")
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # §33 step 1 — real gates `complete()` checks before allowing the
+    # SmartSelfie Authentication step to even start, not just UI-level
+    # sequencing.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    phone_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )

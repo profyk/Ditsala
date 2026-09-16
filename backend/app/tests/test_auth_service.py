@@ -20,6 +20,7 @@ from app.models.accounts import User
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycFaceVerificationRepository
 from app.repositories.users import UserRepository
+from app.services.ratelimit.memory import InMemoryRateLimiter
 from app.tests.test_onboarding_service import StubKycProvider
 
 JWT_SECRET = "test-secret-at-least-32-bytes-long-ok"
@@ -57,6 +58,7 @@ def harness(session: AsyncSession) -> Harness:
         kyc_provider=StubKycProvider(),
         jwt_secret=JWT_SECRET,
         access_token_ttl_minutes=15,
+        rate_limiter=InMemoryRateLimiter(),
     )
     return Harness(service=service, users=users, devices=devices, sessions=sessions)
 

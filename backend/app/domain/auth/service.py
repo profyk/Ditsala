@@ -29,6 +29,7 @@ from app.domain.onboarding.interfaces import (
     KycSdkToken,
     KycWebhookResult,
 )
+from app.domain.ratelimit.interfaces import RateLimiter
 from app.models.accounts import KycFaceVerification, User
 from app.models.devices import Device, LoginAttempt, Session
 from app.repositories.devices import (
@@ -43,6 +44,13 @@ MAX_CODE_ATTEMPTS = 5
 LOCKOUT_BASE_MINUTES = 5
 LOCKOUT_CAP_MINUTES = 24 * 60
 LIVENESS_VALIDITY_MINUTES = 15
+
+# §32: per-IP limit on login attempts, layered on top of the per-account
+# escalating lockout above — that lockout alone doesn't stop credential
+# stuffing spread across many different accounts from one IP. See
+# docs/adr/0010-rate-limiting-key-choice.md.
+LOGIN_START_IP_LIMIT = 30
+LOGIN_START_IP_WINDOW_SECONDS = 900
 
 
 class AuthError(Exception):
@@ -61,6 +69,7 @@ class AuthService:
         kyc_provider: KycProvider,
         jwt_secret: str,
         access_token_ttl_minutes: int,
+        rate_limiter: RateLimiter,
     ) -> None:
         self._users = users
         self._devices = devices
@@ -70,6 +79,7 @@ class AuthService:
         self._kyc_provider = kyc_provider
         self._jwt_secret = jwt_secret
         self._access_token_ttl_minutes = access_token_ttl_minutes
+        self._rate_limiter = rate_limiter
 
     # --- §9 step 8: completing onboarding ---
 
@@ -109,6 +119,11 @@ class AuthService:
         push_token: str | None,
         ip_hash: str,
     ) -> tuple[str, KycSdkToken]:
+        await self._rate_limiter.hit(
+            f"auth:login_start:ip:{ip_hash}",
+            limit=LOGIN_START_IP_LIMIT,
+            window_seconds=LOGIN_START_IP_WINDOW_SECONDS,
+        )
         user = await self._users.get_by_email(identifier) or await self._users.get_by_phone(
             identifier
         )
@@ -302,6 +317,40 @@ class AuthService:
         for session in await self._sessions.list_active_for_user(user.id):
             session.revoked_at = datetime.now(UTC)
             session.revoked_reason = "logout everywhere"
+
+    async def complete_recovery_session(
+        self, user: User, *, device_name: str, platform: str, push_token: str | None
+    ) -> tuple[Device, str, str]:
+        """
+        §33 step 4: called by `domain.recovery.service.RecoveryService` once
+        SmartSelfie Authentication has passed — revokes every prior device
+        and session (not just sessions; a lost-device recovery must not
+        leave the old, physically-lost device still trusted) and issues a
+        session for a newly registered device. Session/token issuance stays
+        centralized here rather than duplicated in RecoveryService, since
+        this is exactly the security-critical code path DRY matters most
+        for — recovery is, mechanically, just another way to reach the
+        same "fully authenticated, fresh device" state onboarding and
+        login also produce.
+        """
+        now = datetime.now(UTC)
+        for device in await self._devices.list_for_user(user.id):
+            device.revoked_at = now
+        await self.revoke_all_sessions(user)
+
+        device = await self._devices.add(
+            Device(
+                user_id=user.id,
+                device_name=device_name,
+                platform=platform,
+                push_token=push_token,
+                first_seen_at=now,
+                last_seen_at=now,
+                is_trusted=True,
+            )
+        )
+        access_token, refresh_token = await self._issue_session(user, device)
+        return device, access_token, refresh_token
 
     # --- helpers ---
 

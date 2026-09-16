@@ -6,6 +6,7 @@ from app.api.v1.deps import (
     AuthServiceDep,
     OnboardingServiceDep,
     OnboardingUserDep,
+    RecoveryServiceDep,
     SessionDep,
     SettingsDep,
 )
@@ -13,6 +14,7 @@ from app.core.security import create_onboarding_token, hash_national_id
 from app.domain.auth.service import AuthError
 from app.domain.onboarding.interfaces import KycJobType
 from app.domain.onboarding.service import OnboardingError
+from app.domain.recovery.service import RecoveryError
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import UserRepository
 from app.schemas.onboarding import (
@@ -166,6 +168,7 @@ async def smile_id_webhook(
     session: SessionDep,
     service: OnboardingServiceDep,
     auth_service: AuthServiceDep,
+    recovery_service: RecoveryServiceDep,
     settings: SettingsDep,
 ) -> dict[str, str]:
     payload = await request.body()
@@ -196,6 +199,11 @@ async def smile_id_webhook(
             await service.handle_kyc_liveness_result(user, result)
         except OnboardingError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    elif result.job_type == KycJobType.RECOVERY_AUTHENTICATION:
+        try:
+            await recovery_service.handle_liveness_webhook(result)
+        except RecoveryError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     else:  # LOGIN_LIVENESS (§17) — records the result only; the account
         # is already active, and completing the login happens
         # synchronously when the client calls /auth/login/complete.

@@ -3,7 +3,13 @@ from datetime import datetime
 
 from sqlalchemy import func, or_, select
 
-from app.models.accounts import EmailVerification, NextOfKin, PhoneVerification, User
+from app.models.accounts import (
+    DataSubjectRequest,
+    EmailVerification,
+    NextOfKin,
+    PhoneVerification,
+    User,
+)
 from app.repositories.base import Repository
 
 
@@ -71,6 +77,16 @@ class UserRepository(Repository[User]):
         )
         return result.scalar_one()
 
+    async def list_pending_hard_delete(self, *, now: datetime) -> list[User]:
+        """§34.2 deletion cascade sweep — `hard_delete_after` is
+        `DateTime(timezone=True)`, so no naive/aware mismatch here."""
+        result = await self.session.execute(
+            self._select().where(
+                User.hard_delete_after.is_not(None), User.hard_delete_after <= now
+            )
+        )
+        return list(result.scalars().all())
+
 
 class NextOfKinRepository(Repository[NextOfKin]):
     model = NextOfKin
@@ -104,3 +120,23 @@ class PhoneVerificationRepository(Repository[PhoneVerification]):
             .order_by(PhoneVerification.created_at.desc())
         )
         return result.scalars().first()
+
+
+class DataSubjectRequestRepository(Repository[DataSubjectRequest]):
+    model = DataSubjectRequest
+
+    async def list_for_user(self, user_id: uuid.UUID) -> list[DataSubjectRequest]:
+        result = await self.session.execute(
+            self._select()
+            .where(DataSubjectRequest.user_id == user_id)
+            .order_by(DataSubjectRequest.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_status(self, status: str) -> list[DataSubjectRequest]:
+        result = await self.session.execute(
+            self._select()
+            .where(DataSubjectRequest.status == status)
+            .order_by(DataSubjectRequest.due_at.asc())
+        )
+        return list(result.scalars().all())

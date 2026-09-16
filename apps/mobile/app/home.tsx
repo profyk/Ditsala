@@ -106,6 +106,13 @@ export default function Home() {
         onPress={handleLogoutEverywhere}
         variant="secondary"
       />
+      <View className="h-3" />
+      <Button
+        testID="manage-account-button"
+        label="Deactivate account"
+        onPress={() => router.push("/account/deactivate")}
+        variant="secondary"
+      />
     </Screen>
   );
 }

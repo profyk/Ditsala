@@ -26,6 +26,7 @@ from app.domain.onboarding.interfaces import (
     KycWebhookResult,
     OtpProvider,
 )
+from app.domain.ratelimit.interfaces import RateLimiter
 from app.models.accounts import (
     EmailVerification,
     KycDocument,
@@ -49,6 +50,15 @@ EMAIL_CODE_TTL_MINUTES = 10
 MAX_EMAIL_CODE_ATTEMPTS = 5
 MAX_KYC_ATTEMPTS_BEFORE_MANUAL_REVIEW = 3
 
+# §32: per-account limits on OTP/email-code sends — per-IP is deliberately
+# not layered on top of these. Pre-auth, the target address/number *is*
+# the account identifier we have; post-signup there is no meaningful
+# "account" distinct from it. See docs/adr/0010-rate-limiting-key-choice.md.
+EMAIL_CODE_SEND_LIMIT = 5
+EMAIL_CODE_SEND_WINDOW_SECONDS = 3600
+PHONE_OTP_SEND_LIMIT = 5
+PHONE_OTP_SEND_WINDOW_SECONDS = 3600
+
 
 class OnboardingError(Exception):
     """Raised for onboarding preconditions a caller should turn into a 4xx, not a 500."""
@@ -69,6 +79,7 @@ class OnboardingService:
         email_provider: EmailProvider,
         otp_provider: OtpProvider,
         kyc_provider: KycProvider,
+        rate_limiter: RateLimiter,
     ) -> None:
         self._users = users
         self._email_verifications = email_verifications
@@ -81,6 +92,7 @@ class OnboardingService:
         self._email_provider = email_provider
         self._otp_provider = otp_provider
         self._kyc_provider = kyc_provider
+        self._rate_limiter = rate_limiter
 
     # --- §9 step 1-2: email + personal info ---
 
@@ -136,6 +148,11 @@ class OnboardingService:
         return invitation
 
     async def request_email_verification(self, user: User) -> None:
+        await self._rate_limiter.hit(
+            f"onboarding:email_code:{user.email}",
+            limit=EMAIL_CODE_SEND_LIMIT,
+            window_seconds=EMAIL_CODE_SEND_WINDOW_SECONDS,
+        )
         code = generate_numeric_code()
         await self._email_verifications.add(
             EmailVerification(
@@ -172,6 +189,11 @@ class OnboardingService:
     async def request_phone_verification(self, user: User) -> None:
         if user.account_state != "pending_phone":
             raise OnboardingError(f"Cannot verify phone in state {user.account_state!r}.")
+        await self._rate_limiter.hit(
+            f"onboarding:phone_otp:{user.phone}",
+            limit=PHONE_OTP_SEND_LIMIT,
+            window_seconds=PHONE_OTP_SEND_WINDOW_SECONDS,
+        )
         provider_sid = await self._otp_provider.start_verification(phone_number=user.phone)
         await self._phone_verifications.add(
             PhoneVerification(

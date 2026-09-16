@@ -23,6 +23,7 @@ from app.repositories.circle import (
     ReportRepository,
 )
 from app.repositories.users import UserRepository
+from app.services.ratelimit.memory import InMemoryRateLimiter
 
 
 @dataclass
@@ -56,6 +57,7 @@ def harness(session: AsyncSession) -> Harness:
         reports=ReportRepository(session),
         users=users,
         system_config=SystemConfigRepository(session),
+        rate_limiter=InMemoryRateLimiter(),
     )
     return Harness(
         service=service, users=users, contacts=contacts, contact_requests=contact_requests

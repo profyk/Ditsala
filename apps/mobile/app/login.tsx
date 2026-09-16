@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Platform, Text } from "react-native";
+import { Platform, Pressable, Text } from "react-native";
 
 import { Button } from "../components/Button";
 import { Screen } from "../components/Screen";
@@ -86,6 +86,12 @@ export default function Login() {
             loading={submitting}
             disabled={identifier.trim().length === 0 || code.length === 0}
           />
+          <Pressable
+            className="mt-4 items-center py-2"
+            onPress={() => router.push("/recovery/start")}
+          >
+            <Text className="text-sm text-accent">Forgot your code or lost your device?</Text>
+          </Pressable>
         </>
       ) : (
         <>

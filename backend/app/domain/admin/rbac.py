@@ -29,6 +29,8 @@ class Permission(StrEnum):
     AUDIT_VIEW = "audit:view"
     SYSTEM_CONFIG_VIEW = "system_config:view"
     SYSTEM_CONFIG_ACTION = "system_config:action"
+    DATA_SUBJECT_REQUESTS_VIEW = "data_subject_requests:view"
+    DATA_SUBJECT_REQUESTS_ACTION = "data_subject_requests:action"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
@@ -44,6 +46,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             Permission.USERS_VIEW,
             Permission.USERS_ACTION,
             Permission.SECURITY_VIEW,
+            Permission.DATA_SUBJECT_REQUESTS_VIEW,
+            Permission.DATA_SUBJECT_REQUESTS_ACTION,
         }
     ),
     "support_readonly": frozenset({Permission.DASHBOARD_VIEW, Permission.USERS_VIEW}),

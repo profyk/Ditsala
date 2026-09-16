@@ -110,6 +110,22 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 **Tracked for:** Same milestone as the Smile ID field/endpoint-accuracy gap above — before Phase 2/3 go live against real credentials, add a test that POSTs a properly-signed payload (using real or sandbox Smile ID credentials) to `/webhooks/smile-id` and asserts the full path end to end.
 
+### Data subject access requests are tracked, not auto-fulfilled (spec §34.4)
+
+**What's missing:** `domain/compliance/service.py` (`ComplianceService`) implements full request-tracking against the 30-day SLA — filing, listing, admin mark-in-progress/complete/reject with resolution notes — for all three request types (access, correction, deletion). Completing a **deletion** request genuinely triggers the real deletion cascade (delegates to `AccountLifecycleService.request_deactivation`, same code path as self-service deactivation, ADR 0009). Completing an **access** request does not generate an actual data-export bundle (a file containing everything DITSALA holds about that user across all P0-P3 tables) — the admin records how it was fulfilled in `resolution_notes`, but no code assembles that export.
+
+**Why:** A full data-export pipeline is a materially larger, separate feature than request tracking — it needs to enumerate every table touching a user (30+ tables as of Phase 8), decide a sensible export format, and handle P1 data (KYC result summaries) and P2 data (the user's own message metadata, never content — §7.3 forbids that regardless) with care. Building it well deserves its own design pass rather than a rushed pass bolted onto the request-tracking feature.
+
+**Tracked for:** Add an export-generation job (likely triggered the same way the scheduled sweeps in `app/tasks/scheduler.py` are, given it may take a while for a user with a lot of history) that gathers a user's P0(-hash-only)/P1(-summary-only)/P3 data into a downloadable bundle, then wire `ComplianceService.complete` to produce and deliver it automatically for `request_type == "access"`.
+
+### Rate limiting and scheduled sweeps are in-process, single-instance (spec §32, §34.2)
+
+**What's missing:** `InMemoryRateLimiter` (`services/ratelimit/memory.py`) and the APScheduler-based sweeps (`app/tasks/scheduler.py`) both hold their state/scheduling in the one backend process — correct for a single instance, but running more than one backend process would give each its own independent rate-limit counters (an attacker could get `N ×` the intended limit by hitting `N` instances) and would run every scheduled sweep once per instance (wasteful, though harmless since every sweep is idempotent).
+
+**Why:** No Redis binary is available in this environment (`docker compose up` was never run — see CLAUDE.md's "Local dev" notes) to back either with the shared, cross-instance state the production-shaped design calls for. Both are isolated behind a `Protocol` (`RateLimiter`, and the scheduler's own module boundary) specifically so this swap doesn't touch call sites later — see `docs/adr/0010-rate-limiting-key-choice.md` and `app/tasks/README.md`.
+
+**Tracked for:** Before running more than one backend instance — replace `InMemoryRateLimiter` with a Redis-backed sliding-window implementation of the same `RateLimiter` Protocol, and either move the scheduled sweeps to a proper distributed scheduler or add a Redis-backed leader-election lock so only one instance runs them.
+
 ## Resolved
 
 _(none yet)_

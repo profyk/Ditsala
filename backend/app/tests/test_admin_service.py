@@ -158,6 +158,23 @@ async def test_action_report_suspend_updates_reported_user(
     assert reported.account_state == "suspended"
 
 
+async def test_action_report_ban_sets_hard_delete_after(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    reporter = await _make_user(harness)
+    reported = await _make_user(harness, account_state="active")
+    report = await harness.reports.add(
+        Report(reporter_user_id=reporter.id, reported_user_id=reported.id, reason="Serious abuse")
+    )
+
+    await harness.service.action_report(
+        admin_id=admin_id, report_id=report.id, action="ban", reason="Confirmed serious abuse"
+    )
+    assert reported.account_state == "banned"
+    # §34.2: ban starts the deletion clock immediately (no hold by default).
+    assert reported.hard_delete_after is not None
+
+
 async def test_action_report_warn_does_not_change_account_state(
     harness: Harness, admin_id: uuid.UUID
 ) -> None:

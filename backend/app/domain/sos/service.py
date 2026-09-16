@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.notifications.interfaces import PushProvider, SmsProvider
+from app.domain.ratelimit.interfaces import RateLimiter
 from app.models.location import SosEvent, SosNotification
 from app.repositories.admin import SystemConfigRepository
 from app.repositories.circle import ContactRepository
@@ -18,6 +19,15 @@ from app.repositories.sos import SosEventRepository, SosNotificationRepository
 from app.repositories.users import NextOfKinRepository, UserRepository
 
 DEFAULT_CANCEL_WINDOW_SECONDS = 10
+
+# §32: "protect against griefing via repeated false SOS — still always
+# allow genuine triggers through, tuned conservatively." Generous on
+# purpose: a real emergency can involve several trigger attempts in an
+# hour (poor signal, a struggle, a second person also triggering for the
+# same user) — this catches scripted/automated abuse, not a distressed
+# person retrying. See docs/adr/0010-rate-limiting-key-choice.md.
+SOS_TRIGGER_LIMIT = 10
+SOS_TRIGGER_WINDOW_SECONDS = 3600
 
 
 class SosError(Exception):
@@ -37,6 +47,7 @@ class SosService:
         system_config: SystemConfigRepository,
         push_provider: PushProvider,
         sms_provider: SmsProvider,
+        rate_limiter: RateLimiter,
     ) -> None:
         self._sos_events = sos_events
         self._sos_notifications = sos_notifications
@@ -47,6 +58,7 @@ class SosService:
         self._system_config = system_config
         self._push = push_provider
         self._sms = sms_provider
+        self._rate_limiter = rate_limiter
 
     async def _cancel_window_seconds(self) -> int:
         config = await self._system_config.get_by_key("sos_cancel_window_seconds")
@@ -59,6 +71,11 @@ class SosService:
     async def trigger(
         self, *, user_id: uuid.UUID, last_known_location_ref: str | None = None
     ) -> SosEvent:
+        await self._rate_limiter.hit(
+            f"sos:trigger:{user_id}",
+            limit=SOS_TRIGGER_LIMIT,
+            window_seconds=SOS_TRIGGER_WINDOW_SECONDS,
+        )
         return await self._sos_events.add(
             SosEvent(
                 user_id=user_id,

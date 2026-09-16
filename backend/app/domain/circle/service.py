@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.security import generate_invite_code
+from app.domain.ratelimit.interfaces import RateLimiter
 from app.models.circle import Block, Contact, ContactRequest, Invitation, Report
 from app.repositories.admin import SystemConfigRepository
 from app.repositories.circle import (
@@ -20,6 +21,14 @@ from app.repositories.circle import (
 from app.repositories.users import UserRepository
 
 INVITE_CODE_TTL_DAYS = 7
+
+# §32: per-account limits — no per-IP layer here, since both actions are
+# already authenticated (the actor's identity is the account, not the IP
+# they happen to be behind). See docs/adr/0010-rate-limiting-key-choice.md.
+CONTACT_REQUEST_LIMIT = 30
+CONTACT_REQUEST_WINDOW_SECONDS = 24 * 3600
+INVITATION_LIMIT = 10
+INVITATION_WINDOW_SECONDS = 24 * 3600
 
 
 class CircleError(Exception):
@@ -53,6 +62,7 @@ class CircleService:
         reports: ReportRepository,
         users: UserRepository,
         system_config: SystemConfigRepository,
+        rate_limiter: RateLimiter,
     ) -> None:
         self._contacts = contacts
         self._contact_requests = contact_requests
@@ -61,12 +71,18 @@ class CircleService:
         self._reports = reports
         self._users = users
         self._system_config = system_config
+        self._rate_limiter = rate_limiter
 
     # --- §22: contact requests ---
 
     async def send_contact_request(
         self, *, from_user_id: uuid.UUID, to_user_id: uuid.UUID, channel: str
     ) -> ContactRequest:
+        await self._rate_limiter.hit(
+            f"circle:contact_request:{from_user_id}",
+            limit=CONTACT_REQUEST_LIMIT,
+            window_seconds=CONTACT_REQUEST_WINDOW_SECONDS,
+        )
         if from_user_id == to_user_id:
             raise CircleError("Cannot send a contact request to yourself.")
         if await self._blocks.exists(to_user_id, from_user_id) or await self._blocks.exists(
@@ -253,6 +269,11 @@ class CircleService:
     # --- §22: invitations ---
 
     async def create_invitation(self, *, inviter_user_id: uuid.UUID, channel: str) -> Invitation:
+        await self._rate_limiter.hit(
+            f"circle:invitation:{inviter_user_id}",
+            limit=INVITATION_LIMIT,
+            window_seconds=INVITATION_WINDOW_SECONDS,
+        )
         return await self._invitations.add(
             Invitation(
                 inviter_user_id=inviter_user_id,

@@ -81,6 +81,10 @@ class KycReviewService:
     async def reject(self, *, admin_id: uuid.UUID, user_id: uuid.UUID, reason: str) -> User:
         user = await self._require_manual_review(user_id)
         user.account_state = "banned"
+        # §34.2: a ban starts the same deletion clock as self-service
+        # deactivation, but with no grace period by default (no hold) —
+        # see docs/adr/0009.
+        user.hard_delete_after = datetime.now(UTC)
         await self._log(admin_id, "admin.kyc.rejected", user_id=user_id, reason=reason)
         return user
 

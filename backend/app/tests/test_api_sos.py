@@ -17,7 +17,7 @@ from app.api.v1.deps import SessionDep, get_sos_service
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import create_access_token
-from app.domain.sos.service import SosService
+from app.domain.sos.service import SOS_TRIGGER_LIMIT, SosService
 from app.main import app
 from app.models.accounts import User
 from app.models.circle import Contact
@@ -27,6 +27,7 @@ from app.repositories.circle import ContactRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.sos import SosEventRepository, SosNotificationRepository
 from app.repositories.users import NextOfKinRepository, UserRepository
+from app.services.ratelimit.memory import InMemoryRateLimiter
 from app.tests.test_sos_service import StubPushProvider, StubSmsProvider
 
 
@@ -42,6 +43,8 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    rate_limiter = InMemoryRateLimiter()
+
     async def _override_db_session() -> AsyncIterator[AsyncSession]:
         yield session
 
@@ -56,6 +59,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             system_config=SystemConfigRepository(db_session),
             push_provider=StubPushProvider(),
             sms_provider=StubSmsProvider(),
+            rate_limiter=rate_limiter,
         )
 
     app.dependency_overrides[get_db_session] = _override_db_session
@@ -141,3 +145,20 @@ async def test_escalate_notifies_trusted_circle(
 async def test_sos_requires_authentication(client: AsyncClient) -> None:
     r = await client.get("/api/v1/sos")
     assert r.status_code == 401
+
+
+async def test_trigger_rate_limited_returns_429(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """§32 — exercises the real HTTP boundary: RateLimitExceeded raised
+    deep in SosService.trigger must surface as 429 with Retry-After via
+    the global exception handler in app.main, not a 500."""
+    alice, _d1, alice_token = await _make_user_with_device(session)
+
+    for _ in range(SOS_TRIGGER_LIMIT):
+        r = await client.post("/api/v1/sos/trigger", json={}, headers=_auth(alice_token))
+        assert r.status_code == 201, r.text
+
+    r = await client.post("/api/v1/sos/trigger", json={}, headers=_auth(alice_token))
+    assert r.status_code == 429, r.text
+    assert "Retry-After" in r.headers

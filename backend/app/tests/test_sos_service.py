@@ -25,6 +25,7 @@ from app.repositories.circle import ContactRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.sos import SosEventRepository, SosNotificationRepository
 from app.repositories.users import NextOfKinRepository, UserRepository
+from app.services.ratelimit.memory import InMemoryRateLimiter
 
 
 class StubPushProvider(PushProvider):
@@ -84,6 +85,7 @@ def harness(session: AsyncSession) -> Harness:
         system_config=SystemConfigRepository(session),
         push_provider=push,
         sms_provider=sms,
+        rate_limiter=InMemoryRateLimiter(),
     )
     return Harness(
         service=service, users=users, contacts=contacts, devices=devices,

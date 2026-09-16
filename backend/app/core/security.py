@@ -288,3 +288,32 @@ def decode_admin_access_token(token: str, *, jwt_secret: str) -> uuid.UUID:
     if payload.get("type") != ADMIN_ACCESS_TOKEN_TYPE:
         raise jwt.InvalidTokenError("Not an admin access token.")
     return uuid.UUID(payload["sub"])
+
+
+# --- §33: account recovery — next-of-kin "flag as suspicious" link ---
+
+_RECOVERY_FLAG_TOKEN_TYPE = "recovery_flag"
+RECOVERY_FLAG_TOKEN_TTL_DAYS = 7
+
+
+def create_recovery_flag_token(recovery_request_id: uuid.UUID, *, jwt_secret: str) -> str:
+    """
+    Embedded in the link texted to next-of-kin (§33 step 3) — redeeming it
+    is a public, unauthenticated GET (the next-of-kin has no DITSALA
+    account), so the token itself is what proves "this is the person we
+    texted," not a session. A 7-day TTL comfortably outlasts the recovery
+    flow itself; a stale/reused link just fails closed.
+    """
+    payload = {
+        "sub": str(recovery_request_id),
+        "type": _RECOVERY_FLAG_TOKEN_TYPE,
+        "exp": datetime.now(UTC) + timedelta(days=RECOVERY_FLAG_TOKEN_TTL_DAYS),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+def decode_recovery_flag_token(token: str, *, jwt_secret: str) -> uuid.UUID:
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != _RECOVERY_FLAG_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not a recovery flag token.")
+    return uuid.UUID(payload["sub"])

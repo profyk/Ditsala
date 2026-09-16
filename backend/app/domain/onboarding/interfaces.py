@@ -31,10 +31,16 @@ class KycJobType(StrEnum):
     DOCUMENT_VERIFICATION = "document_verification"
     SMARTSELFIE = "smartselfie"
     # Re-verification liveness for full server-side authentication — new
-    # device, after logout, or recovery (docs/DITSALA_MASTER_SPEC.md §17).
-    # Reuses the same SmartSelfie job mechanics and the kyc_face_verifications
-    # table as onboarding's SMARTSELFIE step; see domain/auth/service.py.
+    # device or after logout (docs/DITSALA_MASTER_SPEC.md §17). Reuses the
+    # same SmartSelfie job mechanics and the kyc_face_verifications table
+    # as onboarding's SMARTSELFIE step; see domain/auth/service.py.
     LOGIN_LIVENESS = "login_liveness"
+    # §33 step 2, settled per "Resolved per legal review": a *different*
+    # Smile ID product from the above — SmartSelfie Authentication does a
+    # 1:1 match against Smile ID's own enrollment record, not a fresh
+    # liveness-only check. This is what makes device-lost recovery safe
+    # without DITSALA ever holding or re-supplying the original image.
+    RECOVERY_AUTHENTICATION = "recovery_authentication"
 
 
 class KycOutcome(StrEnum):

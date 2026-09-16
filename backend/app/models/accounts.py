@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +45,15 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     code_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_code_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # §34.2 deletion cascade: set whenever account_state transitions to
+    # `deactivated` (self-service, 30-day reversible grace) or `banned`
+    # (immediate, no grace unless trust_safety places a hold — §34.2's
+    # "effectively the same 30-day operational window unless flagged").
+    # A scheduled sweep hard-deletes once `hard_delete_after` elapses;
+    # deleting the row cascades to everything else via the FK graph
+    # (every `users.id` FK in this schema is `ondelete="CASCADE"`).
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    hard_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KycDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -147,3 +156,44 @@ class PhoneVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+
+
+DATA_SUBJECT_REQUEST_TYPES = ("access", "correction", "deletion")
+DATA_SUBJECT_REQUEST_STATUSES = ("pending", "in_progress", "completed", "rejected")
+
+
+class DataSubjectRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """docs/DITSALA_MASTER_SPEC.md §34.4 — access/correction/deletion
+    requests, user-filed and admin-actioned, tracked against a 30-day
+    response SLA (`due_at`, computed at filing time)."""
+
+    __tablename__ = "data_subject_requests"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    request_type: Mapped[str] = mapped_column(
+        Enum(
+            *DATA_SUBJECT_REQUEST_TYPES,
+            name="data_subject_request_type",
+            native_enum=False,
+            validate_strings=True,
+        )
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(
+            *DATA_SUBJECT_REQUEST_STATUSES,
+            name="data_subject_request_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        default="pending",
+        server_default=text("'pending'"),
+    )
+    details: Mapped[str | None] = mapped_column(Text)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_notes: Mapped[str | None] = mapped_column(Text)
+    actioned_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL")
+    )

@@ -160,6 +160,11 @@ class AdminService:
             reported_user = await self._users.get(report.reported_user_id)
             if reported_user is not None:
                 reported_user.account_state = new_state
+                if new_state == "banned":
+                    # §34.2: a ban starts the same deletion clock as
+                    # self-service deactivation, but with no grace period
+                    # by default (no hold) — see docs/adr/0009.
+                    reported_user.hard_delete_after = datetime.now(UTC)
         await self._log(
             admin_id,
             f"admin.report.{action}",

@@ -125,6 +125,8 @@ async def test_reject_transitions_to_banned(harness: Harness) -> None:
         admin_id=ADMIN_ID, user_id=user.id, reason="Document forgery suspected"
     )
     assert updated.account_state == "banned"
+    # §34.2: ban starts the deletion clock immediately (no hold by default).
+    assert updated.hard_delete_after is not None
 
 
 async def test_request_recapture_transitions_to_pending_kyc_document(harness: Harness) -> None:

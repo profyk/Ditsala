@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import text
@@ -13,6 +14,17 @@ _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency — one session per request, committed if the
     request handler completes without raising, rolled back otherwise."""
+    async with _session_factory() as session:
+        yield session
+        await session.commit()
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncIterator[AsyncSession]:
+    """Same commit-on-success/rollback-on-error semantics as
+    `get_db_session`, for callers outside FastAPI's DI — the scheduled
+    tasks in `app/tasks/` being the only current use, since they run on
+    a timer, not per-request."""
     async with _session_factory() as session:
         yield session
         await session.commit()

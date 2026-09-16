@@ -37,6 +37,7 @@ from app.repositories.users import (
     PhoneVerificationRepository,
     UserRepository,
 )
+from app.services.ratelimit.memory import InMemoryRateLimiter
 from app.tests.test_onboarding_service import StubEmailProvider, StubKycProvider, StubOtpProvider
 
 DITSALA_CODE = "correct-horse-9"
@@ -54,6 +55,8 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    rate_limiter = InMemoryRateLimiter()
+
     async def _override_db_session() -> AsyncIterator[AsyncSession]:
         yield session
 
@@ -70,6 +73,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             email_provider=StubEmailProvider(),
             otp_provider=StubOtpProvider(),
             kyc_provider=StubKycProvider(),
+            rate_limiter=rate_limiter,
         )
 
     async def _override_auth_service(db_session: SessionDep) -> AuthService:
@@ -82,6 +86,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             kyc_provider=StubKycProvider(),
             jwt_secret=get_settings().jwt_secret,
             access_token_ttl_minutes=15,
+            rate_limiter=rate_limiter,
         )
 
     app.dependency_overrides[get_db_session] = _override_db_session
@@ -174,6 +179,7 @@ async def test_full_login_flow_via_api(client: AsyncClient, session: AsyncSessio
         kyc_provider=StubKycProvider(),
         jwt_secret=get_settings().jwt_secret,
         access_token_ttl_minutes=15,
+        rate_limiter=InMemoryRateLimiter(),
     )
     await auth_service.record_login_liveness_result(
         KycWebhookResult(

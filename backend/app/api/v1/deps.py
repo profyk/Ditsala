@@ -8,16 +8,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.security import decode_access_token, decode_onboarding_token
+from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
 from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
+from app.domain.compliance.service import ComplianceService
 from app.domain.location.service import LocationService
 from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
+from app.domain.recovery.service import RecoveryService
 from app.domain.sos.service import SosService
 from app.models.accounts import User
 from app.models.devices import Device
-from app.repositories.admin import SystemConfigRepository
+from app.repositories.admin import AuditLogRepository, SystemConfigRepository
 from app.repositories.calls import CallParticipantRepository, CallRepository
 from app.repositories.circle import (
     BlockRepository,
@@ -34,6 +37,7 @@ from app.repositories.crypto import (
     SignedPrekeyRepository,
 )
 from app.repositories.devices import (
+    AccountRecoveryRequestRepository,
     DeviceRepository,
     LoginAttemptRepository,
     SessionRepository,
@@ -51,6 +55,7 @@ from app.repositories.messages import (
 )
 from app.repositories.sos import SosEventRepository, SosNotificationRepository
 from app.repositories.users import (
+    DataSubjectRequestRepository,
     EmailVerificationRepository,
     NextOfKinRepository,
     PhoneVerificationRepository,
@@ -64,6 +69,7 @@ from app.services.factory import (
     get_sms_provider,
     get_storage_provider,
 )
+from app.services.ratelimit.memory import rate_limiter
 from app.services.realtime.websocket_manager import connection_manager
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -85,6 +91,7 @@ async def get_onboarding_service(
         email_provider=get_email_provider(settings),
         otp_provider=get_otp_provider(settings),
         kyc_provider=get_kyc_provider(settings),
+        rate_limiter=rate_limiter,
     )
 
 
@@ -123,10 +130,31 @@ async def get_auth_service(session: SessionDep, settings: SettingsDep) -> AuthSe
         kyc_provider=get_kyc_provider(settings),
         jwt_secret=settings.jwt_secret,
         access_token_ttl_minutes=settings.access_token_ttl_minutes,
+        rate_limiter=rate_limiter,
     )
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+
+async def get_recovery_service(session: SessionDep, settings: SettingsDep) -> RecoveryService:
+    return RecoveryService(
+        users=UserRepository(session),
+        next_of_kin=NextOfKinRepository(session),
+        email_verifications=EmailVerificationRepository(session),
+        recovery_requests=AccountRecoveryRequestRepository(session),
+        audit_log=AuditLogRepository(session),
+        auth_service=await get_auth_service(session, settings),
+        email_provider=get_email_provider(settings),
+        otp_provider=get_otp_provider(settings),
+        kyc_provider=get_kyc_provider(settings),
+        sms_provider=get_sms_provider(settings),
+        jwt_secret=settings.jwt_secret,
+        rate_limiter=rate_limiter,
+    )
+
+
+RecoveryServiceDep = Annotated[RecoveryService, Depends(get_recovery_service)]
 
 
 def get_client_ip_hash(request: Request) -> str:
@@ -237,6 +265,7 @@ async def get_circle_service(session: SessionDep) -> CircleService:
         reports=ReportRepository(session),
         users=UserRepository(session),
         system_config=SystemConfigRepository(session),
+        rate_limiter=rate_limiter,
     )
 
 
@@ -266,6 +295,7 @@ async def get_sos_service(session: SessionDep, settings: SettingsDep) -> SosServ
         system_config=SystemConfigRepository(session),
         push_provider=get_push_provider(settings),
         sms_provider=get_sms_provider(settings),
+        rate_limiter=rate_limiter,
     )
 
 
@@ -284,3 +314,28 @@ async def get_call_service(session: SessionDep) -> CallService:
 
 
 CallServiceDep = Annotated[CallService, Depends(get_call_service)]
+
+
+async def get_account_lifecycle_service(session: SessionDep) -> AccountLifecycleService:
+    return AccountLifecycleService(
+        users=UserRepository(session),
+        audit_log=AuditLogRepository(session),
+    )
+
+
+AccountLifecycleServiceDep = Annotated[
+    AccountLifecycleService, Depends(get_account_lifecycle_service)
+]
+
+
+async def get_compliance_service(
+    session: SessionDep, account_lifecycle: AccountLifecycleServiceDep
+) -> ComplianceService:
+    return ComplianceService(
+        requests=DataSubjectRequestRepository(session),
+        users=UserRepository(session),
+        account_lifecycle=account_lifecycle,
+    )
+
+
+ComplianceServiceDep = Annotated[ComplianceService, Depends(get_compliance_service)]

@@ -22,6 +22,18 @@ class SosEventRepository(Repository[SosEvent]):
         )
         return list(result.scalars().all())
 
+    async def list_armed(self) -> list[SosEvent]:
+        """All currently-armed events, across every user — the scheduled
+        escalation sweep's candidate set (§26). Whether each one's own
+        cancel window has actually elapsed is left to the caller
+        (`SosService.escalate` already encodes that check) rather than
+        duplicated here in SQL — SOS triggers are rare enough that this
+        table is always small."""
+        result = await self.session.execute(
+            self._select().where(SosEvent.status == "armed")
+        )
+        return list(result.scalars().all())
+
 
 class SosNotificationRepository(Repository[SosNotification]):
     model = SosNotification

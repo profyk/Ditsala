@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, delete, func, select
 
 from app.models.devices import AccountRecoveryRequest, Device, LoginAttempt, Session
 from app.repositories.base import Repository
@@ -87,6 +87,31 @@ class LoginAttemptRepository(Repository[LoginAttempt]):
         )
         return list(result.scalars().all())
 
+    async def purge_older_than(self, cutoff: datetime) -> int:
+        """§34.2: `login_attempts` retained 12 months, then hard-deleted."""
+        result = await self.session.execute(
+            delete(LoginAttempt).where(LoginAttempt.created_at < cutoff.replace(tzinfo=None))
+        )
+        assert isinstance(result, CursorResult)
+        return result.rowcount
+
 
 class AccountRecoveryRequestRepository(Repository[AccountRecoveryRequest]):
     model = AccountRecoveryRequest
+
+    async def get_by_smile_id_job(self, smile_id_job_id: str) -> AccountRecoveryRequest | None:
+        result = await self.session.execute(
+            self._select().where(AccountRecoveryRequest.smile_id_job_id == smile_id_job_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def purge_older_than(self, cutoff: datetime) -> int:
+        """§34.2: `account_recovery_requests` retained 12 months, then
+        hard-deleted."""
+        result = await self.session.execute(
+            delete(AccountRecoveryRequest).where(
+                AccountRecoveryRequest.created_at < cutoff.replace(tzinfo=None)
+            )
+        )
+        assert isinstance(result, CursorResult)
+        return result.rowcount

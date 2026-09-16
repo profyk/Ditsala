@@ -38,6 +38,7 @@ from app.repositories.users import (
     PhoneVerificationRepository,
     UserRepository,
 )
+from app.services.ratelimit.memory import InMemoryRateLimiter
 
 
 class StubEmailProvider(EmailProvider):
@@ -109,6 +110,7 @@ def harness(session: AsyncSession) -> Harness:
         email_provider=email,
         otp_provider=StubOtpProvider(),
         kyc_provider=StubKycProvider(),
+        rate_limiter=InMemoryRateLimiter(),
     )
     return Harness(
         service=service,

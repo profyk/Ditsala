@@ -17,10 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import hash_secret
+from app.domain.account.service import AccountLifecycleService
+from app.domain.compliance.service import ComplianceService
 from app.main import app
 from app.models.accounts import User
 from app.models.admin import AdminUser
-from app.repositories.admin import AdminRoleRepository
+from app.repositories.admin import AdminRoleRepository, AuditLogRepository
+from app.repositories.users import DataSubjectRequestRepository, UserRepository
 
 
 @pytest.fixture
@@ -233,3 +236,58 @@ async def test_trust_safety_can_action_report_and_force_state(
     r = await client.get(f"/api/v1/admin/users/{reported.id}/history", headers=_auth(token))
     assert r.status_code == 200, r.text
     assert len(r.json()) == 1
+
+
+async def test_trust_safety_can_action_data_subject_requests(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    admin = await _make_admin(session, role_name="trust_safety")
+    token = await _login(client, admin, "SuperSecret123!")
+
+    requester = User(
+        email=f"{uuid.uuid4()}@example.com",
+        phone=f"+27{uuid.uuid4().int % 10**9}",
+        display_name="Data Subject",
+        date_of_birth=datetime(1990, 1, 1),
+        national_id_hash=uuid.uuid4().hex,
+        account_state="active",
+    )
+    session.add(requester)
+    await session.flush()
+
+    request = await ComplianceService(
+        requests=DataSubjectRequestRepository(session),
+        users=UserRepository(session),
+        account_lifecycle=AccountLifecycleService(
+            users=UserRepository(session), audit_log=AuditLogRepository(session)
+        ),
+    ).file_request(requester, request_type="access", details="Send me my data.")
+
+    r = await client.get("/api/v1/admin/data-subject-requests", headers=_auth(token))
+    assert r.status_code == 200, r.text
+    assert any(item["id"] == str(request.id) for item in r.json())
+
+    r = await client.post(
+        f"/api/v1/admin/data-subject-requests/{request.id}/in-progress", headers=_auth(token)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "in_progress"
+
+    r = await client.post(
+        f"/api/v1/admin/data-subject-requests/{request.id}/complete",
+        json={"resolution_notes": "Emailed the export to the requester."},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "completed"
+    assert r.json()["resolution_notes"] == "Emailed the export to the requester."
+
+
+async def test_kyc_reviewer_cannot_access_data_subject_requests(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    admin = await _make_admin(session, role_name="kyc_reviewer")
+    token = await _login(client, admin, "SuperSecret123!")
+
+    r = await client.get("/api/v1/admin/data-subject-requests", headers=_auth(token))
+    assert r.status_code == 403
