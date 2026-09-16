@@ -23,6 +23,14 @@ ACCOUNT_STATES = (
     "banned",
 )
 
+# Normal/VIP tier split (docs/adr/0012-normal-vip-tier-split.md). Every
+# signup starts `normal` and skips pending_kyc_document/
+# pending_kyc_liveness entirely (see OnboardingService) — those two
+# states are only ever entered by an already-`active` user upgrading to
+# `vip` (domain/billing.VipUpgradeService), paying first, then
+# completing the same KYC steps onboarding always had.
+ACCOUNT_TIERS = ("normal", "vip")
+
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "users"
@@ -40,6 +48,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default="pending_email",
         server_default=text("'pending_email'"),
     )
+    account_tier: Mapped[str] = mapped_column(
+        Enum(*ACCOUNT_TIERS, name="account_tier", native_enum=False, validate_strings=True),
+        default="normal",
+        server_default=text("'normal'"),
+    )
     # P0 — see app.domain.classification. Argon2id, never plaintext.
     ditsala_code_hash: Mapped[str | None] = mapped_column(String(256))
     code_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -56,6 +69,9 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     hard_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+KYC_PURPOSES = ("onboarding", "vip_upgrade")
+
+
 class KycDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "kyc_documents"
 
@@ -64,6 +80,17 @@ class KycDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     document_type: Mapped[str] = mapped_column(
         Enum("sa_id", "passport", name="kyc_document_type", native_enum=False)
+    )
+    # Onboarding KYC and VIP-upgrade KYC (docs/adr/0012) reuse this same
+    # table — an already-`active` user upgrading isn't re-running
+    # onboarding — so the webhook router needs this to know which flow
+    # (OnboardingService vs VipUpgradeService) a completed job belongs to,
+    # rather than inferring it from account_state (which stays `active`
+    # throughout a VIP upgrade).
+    purpose: Mapped[str] = mapped_column(
+        Enum(*KYC_PURPOSES, name="kyc_purpose", native_enum=False, validate_strings=True),
+        default="onboarding",
+        server_default=text("'onboarding'"),
     )
     # The only pointer to imagery — DITSALA never copies raw images into its
     # own storage. See docs/DITSALA_MASTER_SPEC.md §5, §34.2.
@@ -92,6 +119,12 @@ class KycFaceVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     smile_id_job_id: Mapped[str] = mapped_column(String(128), unique=True)
+    # See KycDocument.purpose's docstring — identical reasoning.
+    purpose: Mapped[str] = mapped_column(
+        Enum(*KYC_PURPOSES, name="kyc_purpose", native_enum=False, validate_strings=True),
+        default="onboarding",
+        server_default=text("'onboarding'"),
+    )
     selfie_liveness_score: Mapped[float | None] = mapped_column()
     face_match_score: Mapped[float | None] = mapped_column()
     status: Mapped[str] = mapped_column(

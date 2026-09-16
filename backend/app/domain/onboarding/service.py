@@ -216,7 +216,16 @@ class OnboardingService:
         if verification is not None:
             verification.status = "verified"
         user.phone_verified_at = datetime.now(UTC)
-        user.account_state = "pending_kyc_document"
+        # Normal/VIP split (docs/adr/0012): a `normal` signup skips KYC
+        # entirely and goes straight to next-of-kin — full identity
+        # verification is a `vip`-only, paid-upgrade feature. Nothing
+        # currently signs up as `vip` directly (account_tier defaults to
+        # `normal`; VIP is only reachable via VipUpgradeService on an
+        # already-active account), so this branch is dead code today but
+        # correct if that ever changes.
+        user.account_state = (
+            "pending_next_of_kin" if user.account_tier == "normal" else "pending_kyc_document"
+        )
 
     # --- §9 step 4, §12: Smile ID document capture ---
 

@@ -98,7 +98,11 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides.clear()
 
 
-async def _active_user_with_code(session: AsyncSession, *, code: str = DITSALA_CODE) -> User:
+async def _active_user_with_code(
+    session: AsyncSession, *, code: str = DITSALA_CODE, account_tier: str = "vip"
+) -> User:
+    # Defaults to "vip" — this file's login tests exercise the two-factor
+    # (code + liveness) flow, which only a `vip` account uses (ADR 0012).
     user = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -106,6 +110,7 @@ async def _active_user_with_code(session: AsyncSession, *, code: str = DITSALA_C
         date_of_birth=datetime(1990, 1, 1),
         national_id_hash=uuid.uuid4().hex,
         account_state="active",
+        account_tier=account_tier,
         ditsala_code_hash=hash_secret(code),
     )
     session.add(user)
@@ -196,6 +201,25 @@ async def test_full_login_flow_via_api(client: AsyncClient, session: AsyncSessio
     assert complete.status_code == 200, complete.text
     body = complete.json()
     assert body["access_token"] and body["refresh_token"]
+
+
+async def test_normal_tier_login_via_api_is_single_factor(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """ADR 0012 — a `normal` account logs in with the DITSALA Code alone;
+    /auth/login/start returns a session directly, no liveness step."""
+    user = await _active_user_with_code(session, account_tier="normal")
+
+    response = await client.post(
+        "/api/v1/auth/login/start",
+        json={"identifier": user.email, "ditsala_code": DITSALA_CODE, **_device_payload()},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["requires_liveness"] is False
+    assert body["login_token"] is None
+    assert body["access_token"] and body["refresh_token"] and body["device_id"]
 
 
 async def test_login_wrong_code_returns_401(client: AsyncClient, session: AsyncSession) -> None:

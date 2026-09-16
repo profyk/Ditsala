@@ -25,9 +25,19 @@ class LoginStartRequest(BaseModel):
 
 
 class LoginStartResponse(BaseModel):
-    login_token: str
-    kyc_token: str
-    job_id: str
+    """ADR 0012: `vip` accounts get the two-factor fields (code already
+    checked; still need `login_token`/`kyc_token`/`job_id` to complete
+    the liveness step). `normal` accounts get a session directly — the
+    code alone was the whole login. Exactly one group is populated,
+    selected by `requires_liveness`."""
+
+    requires_liveness: bool
+    login_token: str | None = None
+    kyc_token: str | None = None
+    job_id: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    device_id: uuid.UUID | None = None
 
 
 class LoginCompleteRequest(BaseModel):

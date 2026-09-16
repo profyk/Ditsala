@@ -52,7 +52,7 @@ async def login_start(
     body: LoginStartRequest, service: AuthServiceDep, ip_hash: ClientIpHashDep
 ) -> LoginStartResponse:
     try:
-        login_token, sdk_token = await service.start_login(
+        result = await service.start_login(
             identifier=body.identifier,
             ditsala_code=body.ditsala_code,
             device_name=body.device_name,
@@ -62,8 +62,21 @@ async def login_start(
         )
     except AuthError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+
+    if result.requires_liveness:
+        assert result.login_token is not None and result.kyc_sdk_token is not None
+        return LoginStartResponse(
+            requires_liveness=True,
+            login_token=result.login_token,
+            kyc_token=result.kyc_sdk_token.token,
+            job_id=result.kyc_sdk_token.job_id,
+        )
+    assert result.device is not None
     return LoginStartResponse(
-        login_token=login_token, kyc_token=sdk_token.token, job_id=sdk_token.job_id
+        requires_liveness=False,
+        access_token=result.access_token,
+        refresh_token=result.refresh_token,
+        device_id=result.device.id,
     )
 
 

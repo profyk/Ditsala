@@ -25,6 +25,7 @@ from app.models.admin import (  # noqa: F401
     SystemConfig,
 )
 from app.models.base import Base  # noqa: F401
+from app.models.billing import VipSubscription  # noqa: F401
 from app.models.calls import Call, CallParticipant  # noqa: F401
 from app.models.circle import Block, Contact, ContactRequest, Invitation, Report  # noqa: F401
 from app.models.crypto import IdentityKey, OneTimePrekey, SenderKey, SignedPrekey  # noqa: F401

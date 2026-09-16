@@ -155,12 +155,21 @@ async def test_email_confirm_wrong_code_returns_400(client: AsyncClient) -> None
 
 
 async def test_full_onboarding_flow_via_api(
-    client: AsyncClient, email_provider: StubEmailProvider
+    client: AsyncClient, session: AsyncSession, email_provider: StubEmailProvider
 ) -> None:
-    signup = await client.post("/api/v1/onboarding/signup", json=_signup_payload())
+    payload = _signup_payload()
+    signup = await client.post("/api/v1/onboarding/signup", json=payload)
     assert signup.status_code == 201
     token = signup.json()["onboarding_token"]
     headers = {"Authorization": f"Bearer {token}"}
+
+    # ADR 0012: only a `vip` account passes through the KYC steps this
+    # test exercises — real signups are always `normal` (VIP is a
+    # post-active upgrade), so this opts in directly via the DB, the same
+    # way test_onboarding_service.py's equivalent helper does.
+    user = await UserRepository(session).get_by_email(payload["email"])
+    assert user is not None
+    user.account_tier = "vip"
 
     code = email_provider.sent[0][1]
     r = await client.post(
@@ -199,3 +208,25 @@ async def test_full_onboarding_flow_via_api(
     # the webhook (KYC result) never landed — confirms the API rejects an
     # out-of-order step rather than silently accepting it.
     assert r.status_code == 400
+
+
+async def test_normal_tier_signup_skips_kyc_via_api(
+    client: AsyncClient, email_provider: StubEmailProvider
+) -> None:
+    """ADR 0012 — the real, unmodified signup flow (no DB-side tier
+    override) never enters a KYC state at all."""
+    signup = await client.post("/api/v1/onboarding/signup", json=_signup_payload())
+    token = signup.json()["onboarding_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    code = email_provider.sent[0][1]
+    await client.post(
+        "/api/v1/onboarding/email/confirm", json={"code": code}, headers=headers
+    )
+    await client.post("/api/v1/onboarding/phone/request", headers=headers)
+    r = await client.post(
+        "/api/v1/onboarding/phone/confirm", json={"code": "999999"}, headers=headers
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["account_state"] == "pending_next_of_kin"

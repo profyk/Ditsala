@@ -63,7 +63,12 @@ def harness(session: AsyncSession) -> Harness:
     return Harness(service=service, users=users, devices=devices, sessions=sessions)
 
 
-async def _make_user(users: UserRepository, *, state: str, code: str | None) -> User:
+async def _make_user(
+    users: UserRepository, *, state: str, code: str | None, account_tier: str = "vip"
+) -> User:
+    # Defaults to "vip" — most of this file's existing tests exercise the
+    # two-factor (code + liveness) flow, which only a `vip` account uses
+    # (ADR 0012). Tests of the `normal` single-factor flow pass it explicitly.
     user = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -71,6 +76,7 @@ async def _make_user(users: UserRepository, *, state: str, code: str | None) -> 
         date_of_birth=datetime(1990, 1, 1),
         national_id_hash=uuid.uuid4().hex,
         account_state=state,
+        account_tier=account_tier,
     )
     if code is not None:
         user.ditsala_code_hash = hash_secret(code)
@@ -101,7 +107,7 @@ async def test_complete_onboarding_device_rejects_wrong_state(harness: Harness) 
 async def test_full_login_flow(harness: Harness) -> None:
     user = await _make_user(harness.users, state="active", code="correct-horse-9")
 
-    login_token, sdk_token = await harness.service.start_login(
+    result = await harness.service.start_login(
         identifier=user.email,
         ditsala_code="correct-horse-9",
         device_name="Pixel",
@@ -109,6 +115,9 @@ async def test_full_login_flow(harness: Harness) -> None:
         push_token=None,
         ip_hash="ip-hash",
     )
+    assert result.requires_liveness
+    login_token, sdk_token = result.login_token, result.kyc_sdk_token
+    assert login_token is not None and sdk_token is not None
 
     await harness.service.record_login_liveness_result(
         KycWebhookResult(
@@ -128,6 +137,29 @@ async def test_full_login_flow(harness: Harness) -> None:
     assert access_token and refresh_token
 
 
+async def test_normal_tier_login_is_single_factor(harness: Harness) -> None:
+    """ADR 0012 — a `normal` account has no biometric enrollment, so the
+    DITSALA Code alone completes login; no liveness step at all."""
+    user = await _make_user(
+        harness.users, state="active", code="correct-horse-9", account_tier="normal"
+    )
+
+    result = await harness.service.start_login(
+        identifier=user.email,
+        ditsala_code="correct-horse-9",
+        device_name="Pixel",
+        platform="android",
+        push_token=None,
+        ip_hash="ip-hash",
+    )
+
+    assert result.requires_liveness is False
+    assert result.login_token is None
+    assert result.access_token and result.refresh_token
+    assert result.device is not None
+    assert result.device.is_trusted is True
+
+
 async def test_login_rejects_wrong_code(harness: Harness) -> None:
     user = await _make_user(harness.users, state="active", code="correct-horse-9")
 
@@ -144,7 +176,7 @@ async def test_login_rejects_wrong_code(harness: Harness) -> None:
 
 async def test_login_completes_before_liveness_passes_is_rejected(harness: Harness) -> None:
     user = await _make_user(harness.users, state="active", code="correct-horse-9")
-    login_token, _sdk_token = await harness.service.start_login(
+    result = await harness.service.start_login(
         identifier=user.email,
         ditsala_code="correct-horse-9",
         device_name="Pixel",
@@ -152,7 +184,8 @@ async def test_login_completes_before_liveness_passes_is_rejected(harness: Harne
         push_token=None,
         ip_hash="ip-hash",
     )
-    payload = decode_login_token(login_token, jwt_secret=JWT_SECRET)
+    assert result.login_token is not None
+    payload = decode_login_token(result.login_token, jwt_secret=JWT_SECRET)
 
     with pytest.raises(AuthError, match="Liveness check"):
         await harness.service.complete_login(payload, ip_hash="ip-hash")
@@ -238,7 +271,7 @@ async def test_logout_revokes_only_that_session(harness: Harness) -> None:
 
     # A genuine second session on a different device, via the login flow
     # (complete_onboarding_device only applies once, at pending_code).
-    login_token, sdk_token = await harness.service.start_login(
+    result = await harness.service.start_login(
         identifier=user.email,
         ditsala_code="correct-horse-9",
         device_name="iPad",
@@ -246,15 +279,16 @@ async def test_logout_revokes_only_that_session(harness: Harness) -> None:
         push_token=None,
         ip_hash="ip-hash",
     )
+    assert result.login_token is not None and result.kyc_sdk_token is not None
     await harness.service.record_login_liveness_result(
         KycWebhookResult(
-            job_id=sdk_token.job_id,
+            job_id=result.kyc_sdk_token.job_id,
             job_type=KycJobType.LOGIN_LIVENESS,
             outcome=KycOutcome.PASSED,
             result_summary={},
         )
     )
-    payload = decode_login_token(login_token, jwt_secret=JWT_SECRET)
+    payload = decode_login_token(result.login_token, jwt_secret=JWT_SECRET)
     _user2, _device2, _access2, refresh_token_2 = await harness.service.complete_login(
         payload, ip_hash="ip-hash"
     )

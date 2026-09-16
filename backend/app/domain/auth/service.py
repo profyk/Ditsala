@@ -12,6 +12,7 @@ calls `refresh_session` here — it never re-authenticates from scratch.
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.security import (
@@ -55,6 +56,28 @@ LOGIN_START_IP_WINDOW_SECONDS = 900
 
 class AuthError(Exception):
     """Raised for auth preconditions a caller should turn into a 4xx, not a 500."""
+
+
+@dataclass(frozen=True)
+class LoginStartResult:
+    """
+    §17 login forks by account tier (docs/adr/0012): a `vip` account has
+    real Smile ID biometric enrollment to check a fresh liveness capture
+    against, so it keeps the original two-factor flow (code, then
+    liveness) unchanged. A `normal` account has no such enrollment —
+    there's nothing for a liveness check to verify against — so it
+    authenticates with the DITSALA Code alone. Exactly one field group
+    is populated, selected by `requires_liveness`.
+    """
+
+    requires_liveness: bool
+    # Two-factor (vip) path:
+    login_token: str | None = None
+    kyc_sdk_token: KycSdkToken | None = None
+    # Single-factor (normal) path — a session issued immediately:
+    device: Device | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
 
 
 class AuthService:
@@ -118,7 +141,7 @@ class AuthService:
         platform: str,
         push_token: str | None,
         ip_hash: str,
-    ) -> tuple[str, KycSdkToken]:
+    ) -> LoginStartResult:
         await self._rate_limiter.hit(
             f"auth:login_start:ip:{ip_hash}",
             limit=LOGIN_START_IP_LIMIT,
@@ -150,6 +173,21 @@ class AuthService:
             LoginAttempt(user_id=user.id, ip_hash=ip_hash, stage="code", outcome="success")
         )
 
+        if user.account_tier == "normal":
+            # §17/ADR 0012: no biometric enrollment exists to check a
+            # liveness capture against — the code alone is the whole
+            # authentication for a `normal` account.
+            device = await self._find_or_register_device(
+                user, device_name=device_name, platform=platform, push_token=push_token
+            )
+            access_token, refresh_token = await self._issue_session(user, device)
+            return LoginStartResult(
+                requires_liveness=False,
+                device=device,
+                access_token=access_token,
+                refresh_token=refresh_token,
+            )
+
         sdk_token = await self._kyc_provider.create_sdk_token(
             user_id=user.id, job_type=KycJobType.LOGIN_LIVENESS
         )
@@ -168,7 +206,9 @@ class AuthService:
             ),
             jwt_secret=self._jwt_secret,
         )
-        return login_token, sdk_token
+        return LoginStartResult(
+            requires_liveness=True, login_token=login_token, kyc_sdk_token=sdk_token
+        )
 
     async def _register_code_failure(self, user: User, *, ip_hash: str) -> None:
         user.failed_code_attempts += 1
@@ -220,30 +260,42 @@ class AuthService:
             )
         )
 
+        device = await self._find_or_register_device(
+            user,
+            device_name=payload.device_name,
+            platform=payload.platform,
+            push_token=payload.push_token,
+        )
+        access_token, refresh_token = await self._issue_session(user, device)
+        return user, device, access_token, refresh_token
+
+    async def _find_or_register_device(
+        self, user: User, *, device_name: str, platform: str, push_token: str | None
+    ) -> Device:
+        """Shared by both login paths (§17's two-factor `vip` flow and
+        ADR 0012's single-factor `normal` flow) — a device earns trust by
+        passing whichever of the two this account's tier actually
+        requires, right now."""
         now = datetime.now(UTC)
         existing_devices = await self._devices.list_for_user(user.id)
-        device = next(
-            (d for d in existing_devices if d.device_name == payload.device_name), None
-        )
+        device = next((d for d in existing_devices if d.device_name == device_name), None)
         if device is None:
             device = await self._devices.add(
                 Device(
                     user_id=user.id,
-                    device_name=payload.device_name,
-                    platform=payload.platform,
-                    push_token=payload.push_token,
+                    device_name=device_name,
+                    platform=platform,
+                    push_token=push_token,
                     first_seen_at=now,
                     last_seen_at=now,
-                    is_trusted=True,  # earned by passing code + fresh liveness, right now
+                    is_trusted=True,
                 )
             )
         else:
             device.last_seen_at = now
             device.is_trusted = True
-            device.push_token = payload.push_token
-
-        access_token, refresh_token = await self._issue_session(user, device)
-        return user, device, access_token, refresh_token
+            device.push_token = push_token
+        return device
 
     # --- §16: refresh rotation with reuse detection ---
 

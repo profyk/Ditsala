@@ -12,6 +12,14 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
+### VIP upgrade (payment + Stitch + privacy/messaging perks) not yet built (ADR 0012)
+
+**What's missing:** the normal/VIP tier split itself is real (see `docs/adr/0012-normal-vip-tier-split.md`) — `account_tier`, the onboarding fork, and the login fork are all built and tested. What's not built yet: `VipUpgradeService` (payment initiation → KYC → tier flip), the Stitch payment adapter, the phone-number-hiding privacy feature, and VIP-to-VIP automatic trusted messaging.
+
+**Why:** This is a large, separate feature surface layered on top of the tier-split foundation — building it well (especially a real payment integration) deserves its own pass rather than being rushed in alongside the foundational schema/auth changes.
+
+**Tracked for:** Build `domain/billing/interfaces.py` (`PaymentProvider` Protocol) + a Stitch adapter (real, following this codebase's real-adapter-plus-Sandbox-adapter pattern — no live Stitch account exists in this environment, so the real adapter's exact API shape is unverified, same caveat as the Smile ID field-accuracy gap below) + `VipUpgradeService` reusing `OnboardingService`'s existing KYC methods (tagged `purpose="vip_upgrade"`). Then the privacy (hide phone number) and messaging (VIP-to-VIP auto-trust) perks.
+
 ### Admin TOTP secret stored plaintext (spec §29)
 
 **What's missing:** `admin_users.mfa_secret` (the base32 TOTP seed) is stored in the clear — unlike passwords/refresh tokens, it must be read back to compute the current code, so it can't be a one-way hash, but it should still be encrypted at rest via a KMS-backed key.

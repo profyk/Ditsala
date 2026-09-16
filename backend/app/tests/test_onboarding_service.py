@@ -132,6 +132,13 @@ def _unique_signup_kwargs() -> dict[str, Any]:
 
 
 async def _reach_pending_next_of_kin(h: Harness, user: User) -> None:
+    # ADR 0012: only a `vip` account passes through the KYC states this
+    # helper walks — a `normal` signup skips straight to
+    # pending_next_of_kin. Real signups are always `normal` (VIP is a
+    # post-active upgrade, domain/billing), so this is the one place a
+    # test manually opts a user into the tier that still exercises
+    # onboarding's own KYC handling.
+    user.account_tier = "vip"
     await h.service.confirm_email_verification(user, h.email.sent[0][1])
     await h.service.request_phone_verification(user)
     await h.service.confirm_phone_verification(user, "999999")  # stub approves any code
@@ -184,6 +191,19 @@ async def test_confirm_email_verification_rejects_wrong_code(harness: Harness) -
     assert user.account_state == "pending_email"
 
 
+async def test_normal_tier_skips_kyc_straight_to_next_of_kin(harness: Harness) -> None:
+    """ADR 0012 — a `normal` (default-tier) signup never enters
+    pending_kyc_document/pending_kyc_liveness at all."""
+    user = await harness.service.start_signup(**_unique_signup_kwargs())
+    assert user.account_tier == "normal"
+
+    await harness.service.confirm_email_verification(user, harness.email.sent[0][1])
+    await harness.service.request_phone_verification(user)
+    await harness.service.confirm_phone_verification(user, "999999")
+
+    assert user.account_state == "pending_next_of_kin"
+
+
 async def test_full_flow_reaches_pending_code(harness: Harness) -> None:
     user = await harness.service.start_signup(**_unique_signup_kwargs())
     await _reach_pending_next_of_kin(harness, user)
@@ -203,6 +223,7 @@ async def test_kyc_document_failure_escalates_to_manual_review_after_max_attempt
     harness: Harness,
 ) -> None:
     user = await harness.service.start_signup(**_unique_signup_kwargs())
+    user.account_tier = "vip"  # ADR 0012 — see _reach_pending_next_of_kin's comment
     await harness.service.confirm_email_verification(user, harness.email.sent[0][1])
     await harness.service.request_phone_verification(user)
     await harness.service.confirm_phone_verification(user, "999999")
