@@ -1,0 +1,93 @@
+# DITSALA CI/CD
+
+Pipeline overview, required secrets, and one-time setup for every deploy target. This is a runbook for provisioning real infrastructure — no staging/production environment has actually been stood up from this repository yet (same caveat `DOCUMENTATION.md` makes for the broader deployment runbook). Every workflow below is real, valid GitHub Actions YAML (every `.yml`/`.json` file this doc references has been parsed and confirmed syntactically valid); what's missing is the infrastructure and credentials on the other end, which only you can provision (this environment has no cloud account access).
+
+**Not verified**: `backend/Dockerfile` has not actually been built — Docker isn't installed in this environment (the same constraint `CLAUDE.md`'s "Local dev" section already documents for `infra/docker-compose.yml`). It follows `uv`'s documented multi-stage Docker pattern and was checked line by line against this project's real `pyproject.toml`/`uv.lock`, but "the syntax is correct and follows the documented pattern" is not the same claim as "this image has been built and run" — build it once (`docker build -t ditsala-backend backend/`) and smoke-test it locally before trusting it in a real deploy.
+
+## 1. Pipeline shape
+
+```
+push/PR ──► CI (.github/workflows/ci.yml)
+              │  lint + typecheck + test, backend and web workspace
+              │  (Postgres/Redis as GitHub-hosted service containers)
+              │
+              ▼ (on success, main only)
+   ┌──────────┴───────────┬─────────────────────┐
+   ▼                      ▼                      ▼
+backend-deploy-railway  admin-deploy          (backend-deploy-aws:
+  (automatic)             (automatic,           manual only — see §4)
+                           Vercel)
+
+mobile-eas-build.yml   ─── manual dispatch (platform + profile)
+mobile-eas-submit.yml  ─── manual dispatch (separate from build, on purpose)
+```
+
+`backend-deploy-railway.yml` and `admin-deploy.yml` both trigger on `workflow_run` of `CI` completing successfully on `main` — a broken build/lint/test never reaches a deploy step. `backend-deploy-aws.yml` and both mobile workflows are `workflow_dispatch`-only (manually triggered from the Actions tab or `gh workflow run`), since they're either backup infrastructure, or actions with real-world consequences (an EAS submit can trigger app store review) that shouldn't fire automatically.
+
+## 2. Database migrations
+
+There is no separate "run migrations" workflow — `backend/entrypoint.sh` runs `alembic upgrade head` before starting `uvicorn` on every container boot, on both Railway and AWS. This means a deploy that includes a new migration applies it automatically, in order, before the new code starts serving traffic. Point `DATABASE_URL` (see §3) at your Supabase project's **Session Pooler** connection string (not the direct-connection hostname — see `CLAUDE.md`'s note on why: it's IPv6-only and often unreachable).
+
+## 3. Backend — Railway (primary)
+
+**One-time setup:**
+1. Create a Railway project, add a service named `backend` pointed at this repo's `backend/` directory (Railway auto-detects `railway.json` there for build/deploy config).
+2. Set environment variables on the Railway service: `DATABASE_URL` (Supabase pooler URL), `JWT_SECRET`, `NATIONAL_ID_PEPPER`, plus every provider credential `backend/.env.example` lists (Smile ID, Twilio, Resend, S3).
+3. Generate a Railway API token (Project Settings → Tokens) and add it to the GitHub repo as the `RAILWAY_TOKEN` secret.
+4. Create a GitHub Actions **environment** named `production` (Settings → Environments) — used by every deploy workflow below, so you can gate it with required reviewers later if you want a manual approval step before deploys.
+
+**Deploy**: automatic, via `.github/workflows/backend-deploy-railway.yml`, after every successful `CI` run on `main`.
+
+## 4. Backend — AWS ECS (replica/backup)
+
+This is the backup/replica path behind an Application Load Balancer, deployed manually via `.github/workflows/backend-deploy-aws.yml` — promote to it deliberately, rather than dual-deploying on every push.
+
+**One-time setup** (`af-south-1` — AWS's Cape Town region, closest to this product's market):
+1. **ECR**: create a repository named `ditsala-backend`.
+2. **Secrets Manager**: store `DATABASE_URL`, `JWT_SECRET`, `NATIONAL_ID_PEPPER` as secrets under the `ditsala/` prefix (matching `infra/aws/ecs-task-definition.json`'s `secrets` block) — never as plain task-definition environment variables.
+3. **IAM**: create `ditsala-ecs-execution-role` (needs `AmazonECSTaskExecutionRolePolicy` + `secretsmanager:GetSecretValue` on the secrets above) and `ditsala-ecs-task-role` (the app's own runtime permissions — none needed yet beyond the defaults). Replace the `<ACCOUNT_ID>`/`<REGION>` placeholders in `infra/aws/ecs-task-definition.json` with real values.
+4. **Networking**: a VPC with at least two subnets, an Application Load Balancer with an HTTPS listener and a target group health-checking `/api/v1/health`, and an ECS cluster (`ditsala-cluster`) running the Fargate launch type.
+5. **ECS service**: create `ditsala-backend-service` in that cluster, attached to the ALB target group, initially from the task definition template (register it once manually with real values filled in — the workflow renders and re-registers new revisions of it from then on).
+6. **GitHub OIDC**: rather than long-lived AWS access keys, create an IAM OIDC identity provider trusting `token.actions.githubusercontent.com`, and a role (trust policy scoped to this repo) with permission to push to ECR and update the ECS service. Store its ARN as the `AWS_DEPLOY_ROLE_ARN` secret — the workflow uses `aws-actions/configure-aws-credentials`'s `role-to-assume`, so no static AWS keys ever live in GitHub.
+
+**Deploy**: `gh workflow run backend-deploy-aws.yml` (or trigger from the Actions tab), optionally passing an `image_tag` input.
+
+## 5. Admin panel — Vercel
+
+**One-time setup:**
+1. Create a Vercel project pointed at `apps/admin`, or run `vercel link` once locally from that directory to generate `.vercel/project.json` (don't commit it — it's gitignored).
+2. Set the admin app's environment variables in the Vercel dashboard (`NEXT_PUBLIC_API_URL` pointing at the backend's public URL, plus anything else `apps/admin/.env.example` lists).
+3. Create a Vercel access token (Account Settings → Tokens) and add three GitHub secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (the latter two come from `.vercel/project.json` after linking).
+
+**Deploy**: automatic, via `.github/workflows/admin-deploy.yml`, after every successful `CI` run on `main`.
+
+## 6. Mobile — EAS (build + submit)
+
+`apps/mobile/eas.json` defines three build profiles (`development`, `preview`, `production`) — see that file for the API base URL each targets.
+
+**One-time setup:**
+1. Create an Expo account/organization, run `eas init` once locally from `apps/mobile` to link the project (writes `extra.eas.projectId` into `app.json`).
+2. Generate an Expo access token (expo.dev → Account Settings → Access Tokens) and add it as the `EXPO_TOKEN` secret.
+3. **iOS submission**: add `EXPO_APPLE_ID` and `EXPO_APPLE_APP_SPECIFIC_PASSWORD` (an [app-specific password](https://support.apple.com/en-us/102654), not your real Apple ID password) as secrets. EAS also needs your Apple Team ID and an App Store Connect app already created — `eas submit` prompts for these interactively the first time; run it once locally to cache the answers, or supply them via `eas.json`'s `submit.production.ios` block once you know the exact values.
+4. **Android submission**: create a Google Play service account with release-manager permissions, download its JSON key, base64-encode it (`base64 -w0 service-account.json`), and store the result as the `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` secret — the submit workflow decodes it to a file at runtime and deletes it afterward.
+
+**Build**: `gh workflow run mobile-eas-build.yml -f platform=all -f profile=preview` (or from the Actions tab).
+
+**Submit**: `gh workflow run mobile-eas-submit.yml -f platform=ios` — deliberately a separate, explicit action from building.
+
+## 7. Secrets reference
+
+| Secret | Used by | Purpose |
+|---|---|---|
+| `RAILWAY_TOKEN` | backend-deploy-railway | Railway CLI auth |
+| `AWS_DEPLOY_ROLE_ARN` | backend-deploy-aws | OIDC role assumed for ECR push + ECS deploy |
+| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + project targeting |
+| `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit | EAS CLI auth |
+| `EXPO_APPLE_ID`, `EXPO_APPLE_APP_SPECIFIC_PASSWORD` | mobile-eas-submit | App Store Connect submission |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64` | mobile-eas-submit | Google Play submission |
+
+None of these exist in this repository or environment — every workflow above will fail at the relevant step until its secrets are added in **GitHub repo Settings → Environments → production → Secrets** (preferred, since every deploy workflow targets the `production` environment) or **Settings → Secrets and variables → Actions** for a repo-wide secret.
+
+## 8. What CI itself already covers
+
+`ci.yml` (unchanged by this work) runs on every push/PR: backend lint (ruff) + type-check (mypy) + `alembic upgrade head` + pytest, all against GitHub-hosted Postgres/Redis containers — and the web workspace's lint/typecheck/test via Turborepo. This is what every deploy workflow above gates on.

@@ -126,6 +126,14 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 **Tracked for:** Before running more than one backend instance — replace `InMemoryRateLimiter` with a Redis-backed sliding-window implementation of the same `RateLimiter` Protocol, and either move the scheduled sweeps to a proper distributed scheduler or add a Redis-backed leader-election lock so only one instance runs them.
 
+### CI/CD deploy infrastructure is written but not provisioned or build-tested (spec §35)
+
+**What's missing:** `backend/Dockerfile`, `backend/railway.json`, `infra/aws/ecs-task-definition.json`, and all six `.github/workflows/*.yml` files (`ci.yml` pre-existing, five deploy workflows added this pass) are real, syntactically-valid configuration — but none of it has been exercised end to end. Specifically: `docker build` has never been run against `backend/Dockerfile` (no Docker in this environment); no Railway/AWS/Vercel/Expo account exists to actually deploy to; the AWS ECS task definition's placeholders (`<ACCOUNT_ID>`, `<REGION>`) are literal placeholders, not real values.
+
+**Why:** This environment has no cloud account access or Docker — see `docs/CI_CD.md`'s own "Not verified" note. Writing the pipeline shape and getting every config file's syntax right is the part achievable without that access; provisioning and a real first deploy needs whoever has the actual Railway/AWS/Vercel/Expo accounts.
+
+**Tracked for:** Follow `docs/CI_CD.md` section by section (one-time setup for each target), then trigger each workflow once manually and confirm it succeeds before relying on the automatic ones (`backend-deploy-railway`, `admin-deploy`) firing on every `main` push.
+
 ## Resolved
 
 _(none yet)_

@@ -1,0 +1,74 @@
+name: Mobile submit (EAS)
+
+# Manual dispatch only, and deliberately separate from the build workflow
+# — submitting to App Store Connect / Google Play is a distinct,
+# consequential action (it can trigger real store review) that should
+# never happen as a side effect of a build finishing.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to submit"
+        required: true
+        type: choice
+        options: [ios, android]
+      build_id:
+        description: "EAS build ID to submit (leave blank to submit the latest finished build)"
+        required: false
+        default: ""
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.9
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Materialize Android service account key
+        if: inputs.platform == 'android'
+        run: echo "${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_B64 }}" | base64 -d > google-service-account.json
+
+      - name: Submit (iOS)
+        if: inputs.platform == 'ios'
+        env:
+          EXPO_APPLE_ID: ${{ secrets.EXPO_APPLE_ID }}
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ -n "${{ inputs.build_id }}" ]; then
+            eas submit --platform ios --id "${{ inputs.build_id }}" --non-interactive
+          else
+            eas submit --platform ios --latest --non-interactive
+          fi
+
+      - name: Submit (Android)
+        if: inputs.platform == 'android'
+        run: |
+          if [ -n "${{ inputs.build_id }}" ]; then
+            eas submit --platform android --id "${{ inputs.build_id }}" --non-interactive
+          else
+            eas submit --platform android --latest --non-interactive
+          fi
+
+      - name: Clean up service account key
+        if: always() && inputs.platform == 'android'
+        run: rm -f google-service-account.json

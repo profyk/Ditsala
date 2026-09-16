@@ -396,7 +396,7 @@ Smile ID (biometric/KYC processing), Twilio (phone verification), and the email 
 ## 35. Infrastructure, Environments & Deployment
 
 - Environments: `local` (docker-compose: Postgres, Redis, coturn, Mailpit), `staging`, `production`.
-- `infra/docker-compose.yml` brings up the full local backend dependency stack; `infra/eas/` holds EAS build profiles (`development`, `preview`, `production`) — development builds from day one, Expo Go is never a target per the locked decisions.
+- `infra/docker-compose.yml` brings up the full local backend dependency stack; `apps/mobile/eas.json` holds EAS build profiles (`development`, `preview`, `production`) — development builds from day one, Expo Go is never a target per the locked decisions.
 - CI (per Phase 0): lint + type-check + test for backend (pytest), mobile (Jest/RNTL), admin (Vitest + Playwright for critical flows), run on every PR.
 - Dependency scanning (e.g., `pip-audit`/`npm audit`/Dependabot) wired in before Phase 8 hardening, but the CI hook itself is a Phase 0 concern.
 
