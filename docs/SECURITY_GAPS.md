@@ -4,6 +4,30 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
+### Admin TOTP secret stored plaintext (spec §29)
+
+**What's missing:** `admin_users.mfa_secret` (the base32 TOTP seed) is stored in the clear — unlike passwords/refresh tokens, it must be read back to compute the current code, so it can't be a one-way hash, but it should still be encrypted at rest via a KMS-backed key.
+
+**Why:** No KMS or envelope-encryption infrastructure is provisioned anywhere in this stack; adding one for a single column for a v1 admin panel with a handful of accounts was judged out of proportion for now. See `docs/adr/0008-admin-rbac-and-mfa-design.md`.
+
+**Tracked for:** Before a real admin population exists at scale — envelope-encrypt `mfa_secret`, decrypted only inside `AdminAuthService`.
+
+### Admin RBAC is a hardcoded Python mapping, not DB-driven (spec §29)
+
+**What's missing:** `admin_role_permissions`/`admin_permissions` (modeled in Phase 1, anticipating full RBAC extensibility) are never populated or read — `domain/admin/rbac.py` hardcodes the 4 launch roles' permissions as a Python constant instead.
+
+**Why:** No RBAC-management UI exists yet to actually configure that join table, and the 4 launch roles are fixed by spec text for v1. See ADR 0008 for the full reasoning — this is real enforcement (every route checks it), just not database-driven yet.
+
+**Tracked for:** Whoever builds a `super_admin`-only RBAC management screen — populate the join table and switch `role_has_permission` to query it.
+
+### Admin panel not verified in a real browser (spec §28)
+
+**What's missing:** The Next.js admin panel (`apps/admin`) was verified via `tsc`, ESLint, Vitest (all passing), and a real `next dev` server that successfully compiled and served the login page (HTTP 200) against the real FastAPI backend — but no visual/interactive verification happened in an actual browser, since this session's Chrome extension bridge wasn't connected. Playwright E2E (per the kickoff prompt's "Admin: Vitest + Playwright" working rule) was not attempted at all, for the same reason plus this host's tight memory/disk margins.
+
+**Why:** No browser automation bridge was available in this environment for this pass, and the host machine's resource constraints (see CLAUDE.md's "Local dev" notes) make running a second heavy toolchain (Playwright + browser binaries) risky without more headroom.
+
+**Tracked for:** Open the app in a real browser and walk through each of the 8 sections end to end (login/MFA enrollment, dashboard, KYC review with a real `manual_review` account, users search, report actions, security dashboard, invitations toggle, audit log filters, system config edit) before trusting this beyond "the code compiles and serves." Add Playwright E2E coverage for the login/MFA flow and RBAC-gated navigation once that's done.
+
 ### libsignal native module not built (spec §6) — headline gap
 
 **What's missing:** The actual Signal Protocol implementation — X3DH key agreement, the Double Ratchet, Sender Key encryption/decryption — via libsignal's native Rust core with Swift/Kotlin bindings, wrapped in an Expo config plugin. No message composer or chat UI exists on mobile yet either; see ADR 0005 for why building either without the other would be actively misleading (a chat screen that *looks* encrypted without a real cipher behind it is worse than no chat screen).

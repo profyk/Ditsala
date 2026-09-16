@@ -3,7 +3,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1.routers import auth, calls, circle, health, location, messaging, onboarding, sos
+from app.api.v1.routers import (
+    admin,
+    admin_auth,
+    admin_kyc,
+    auth,
+    calls,
+    circle,
+    health,
+    location,
+    messaging,
+    onboarding,
+    sos,
+)
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -28,3 +40,6 @@ app.include_router(circle.router, prefix="/api/v1")
 app.include_router(location.router, prefix="/api/v1")
 app.include_router(sos.router, prefix="/api/v1")
 app.include_router(calls.router, prefix="/api/v1")
+app.include_router(admin_auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
+app.include_router(admin_kyc.router, prefix="/api/v1")

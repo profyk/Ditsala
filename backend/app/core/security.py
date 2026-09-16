@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
+import pyotp
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
@@ -182,3 +183,108 @@ def decode_login_token(token: str, *, jwt_secret: str) -> LoginTokenPayload:
         platform=claims["platform"],
         push_token=claims["push_token"],
     )
+
+
+# --- §28-29: admin panel auth (TOTP MFA) ---
+#
+# Distinct token `type` claims from the user-facing tokens above, signed
+# with the same `jwt_secret` — the `type` check in each decode function is
+# what stops an admin token and a user token from ever being interchangeable,
+# not a separate key (a separate signing key would be stronger key
+# separation but wasn't judged necessary given admin panel access is
+# already gated by TOTP MFA + RBAC on top of this).
+
+ADMIN_MFA_ENROLL_TOKEN_TYPE = "admin_mfa_enroll"
+ADMIN_LOGIN_TOKEN_TYPE = "admin_login"
+ADMIN_ACCESS_TOKEN_TYPE = "admin_access"
+ADMIN_MFA_TOKEN_TTL_MINUTES = 10
+ADMIN_LOGIN_TOKEN_TTL_MINUTES = 10
+
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def totp_provisioning_uri(*, secret: str, email: str) -> str:
+    """otpauth:// URI for a QR code in an authenticator app (Google
+    Authenticator, 1Password, etc.) — the standard TOTP enrollment UX."""
+    return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name="DITSALA Admin")
+
+
+def verify_totp(*, secret: str, code: str) -> bool:
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def create_admin_mfa_enroll_token(admin_id: uuid.UUID, *, mfa_secret: str, jwt_secret: str) -> str:
+    """
+    Bridges `AdminAuthService.start_login`'s "not yet enrolled" branch to
+    `enroll_mfa` — the freshly generated secret rides in this token rather
+    than being written to `admin_users.mfa_secret` until the admin proves
+    they can actually generate a valid code with it (otherwise a
+    typo'd/never-scanned secret would silently brick the account's MFA).
+    """
+    payload = {
+        "sub": str(admin_id),
+        "type": ADMIN_MFA_ENROLL_TOKEN_TYPE,
+        "mfa_secret": mfa_secret,
+        "exp": datetime.now(UTC) + timedelta(minutes=ADMIN_MFA_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+@dataclass(frozen=True)
+class AdminMfaEnrollTokenPayload:
+    admin_id: uuid.UUID
+    mfa_secret: str
+
+
+def decode_admin_mfa_enroll_token(
+    token: str, *, jwt_secret: str
+) -> AdminMfaEnrollTokenPayload:
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != ADMIN_MFA_ENROLL_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not an admin MFA enrollment token.")
+    return AdminMfaEnrollTokenPayload(
+        admin_id=uuid.UUID(payload["sub"]), mfa_secret=payload["mfa_secret"]
+    )
+
+
+def create_admin_login_token(admin_id: uuid.UUID, *, jwt_secret: str) -> str:
+    """Issued once the admin's password checks out; exchanged for an
+    access token by `POST /admin/auth/login/complete` with a valid TOTP
+    code — mirrors the two-step shape of the user login flow (§17)."""
+    payload = {
+        "sub": str(admin_id),
+        "type": ADMIN_LOGIN_TOKEN_TYPE,
+        "exp": datetime.now(UTC) + timedelta(minutes=ADMIN_LOGIN_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+def decode_admin_login_token(token: str, *, jwt_secret: str) -> uuid.UUID:
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != ADMIN_LOGIN_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not an admin login token.")
+    return uuid.UUID(payload["sub"])
+
+
+def create_admin_access_token(admin_id: uuid.UUID, *, jwt_secret: str, ttl_minutes: int) -> str:
+    """
+    Stateless, like the user access token — no refresh-token pair. Admin
+    sessions are browser-based and shorter-lived by design (re-auth with
+    password + TOTP on expiry is an acceptable UX cost for an internal
+    tool in a way it wouldn't be for the mobile app's routine unlock).
+    """
+    payload = {
+        "sub": str(admin_id),
+        "type": ADMIN_ACCESS_TOKEN_TYPE,
+        "exp": datetime.now(UTC) + timedelta(minutes=ttl_minutes),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+def decode_admin_access_token(token: str, *, jwt_secret: str) -> uuid.UUID:
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != ADMIN_ACCESS_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not an admin access token.")
+    return uuid.UUID(payload["sub"])

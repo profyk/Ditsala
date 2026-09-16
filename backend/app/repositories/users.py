@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.models.accounts import EmailVerification, NextOfKin, PhoneVerification, User
 from app.repositories.base import Repository
@@ -16,6 +17,59 @@ class UserRepository(Repository[User]):
     async def get_by_phone(self, phone: str) -> User | None:
         result = await self.session.execute(self._select().where(User.phone == phone))
         return result.scalar_one_or_none()
+
+    async def search(
+        self,
+        *,
+        query: str | None = None,
+        account_state: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[User]:
+        """§28 Users: search by non-content metadata only (email, phone,
+        display name, account state) — there is no message content to
+        search server-side in the first place (§7.3)."""
+        stmt = self._select()
+        if query:
+            like = f"%{query}%"
+            stmt = stmt.where(
+                or_(User.email.ilike(like), User.phone.ilike(like), User.display_name.ilike(like))
+            )
+        if account_state:
+            stmt = stmt.where(User.account_state == account_state)
+        stmt = stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_by_state(self, account_state: str) -> list[User]:
+        result = await self.session.execute(
+            self._select().where(User.account_state == account_state)
+        )
+        return list(result.scalars().all())
+
+    async def count_by_state(self, account_state: str) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(User).where(User.account_state == account_state)
+        )
+        return result.scalar_one()
+
+    async def count_created_since(self, since: datetime) -> int:
+        # users.created_at (TimestampMixin) is `timestamp without time zone`
+        # — unlike purpose-built columns such as locked_until, it was never
+        # declared DateTime(timezone=True), so a tz-aware `since` must be
+        # stripped to compare cleanly (asyncpg rejects mixing the two).
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(User)
+            .where(User.created_at >= since.replace(tzinfo=None))
+        )
+        return result.scalar_one()
+
+    async def count_locked(self, *, now: datetime) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(User).where(User.locked_until > now)
+        )
+        return result.scalar_one()
 
 
 class NextOfKinRepository(Repository[NextOfKin]):

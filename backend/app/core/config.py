@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # a real deployment must override this via env var regardless.
     jwt_secret: str = "change-me-in-env-to-a-real-32-byte-secret"
     access_token_ttl_minutes: int = 15
+    # Admin sessions are browser-based, no refresh-token pair — see
+    # core/security.py's admin-token section for the full rationale.
+    admin_access_token_ttl_minutes: int = 480
     # Separate from jwt_secret deliberately — key separation between "signs
     # tokens" and "hashes PII for dedup lookup" so rotating one never
     # silently affects the other.

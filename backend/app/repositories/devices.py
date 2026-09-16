@@ -1,4 +1,7 @@
 import uuid
+from datetime import datetime
+
+from sqlalchemy import func, select
 
 from app.models.devices import AccountRecoveryRequest, Device, LoginAttempt, Session
 from app.repositories.base import Repository
@@ -10,6 +13,17 @@ class DeviceRepository(Repository[Device]):
     async def list_for_user(self, user_id: uuid.UUID) -> list[Device]:
         result = await self.session.execute(self._select().where(Device.user_id == user_id))
         return list(result.scalars().all())
+
+    async def count_created_since(self, since: datetime) -> int:
+        """§28 Security Dashboard: 'device-churn outliers.' `created_at`
+        (TimestampMixin) is naive — see UserRepository.count_created_since
+        for why a tz-aware `since` needs stripping first."""
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Device)
+            .where(Device.created_at >= since.replace(tzinfo=None))
+        )
+        return result.scalar_one()
 
 
 class SessionRepository(Repository[Session]):
@@ -36,9 +50,42 @@ class SessionRepository(Repository[Session]):
         )
         return list(result.scalars().all())
 
+    async def count_active(self) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(Session).where(Session.revoked_at.is_(None))
+        )
+        return result.scalar_one()
+
 
 class LoginAttemptRepository(Repository[LoginAttempt]):
     model = LoginAttempt
+
+    async def count_since(self, *, outcome: str | None = None, since: datetime) -> int:
+        # created_at (TimestampMixin) is naive — see
+        # UserRepository.count_created_since for why.
+        stmt = (
+            select(func.count())
+            .select_from(LoginAttempt)
+            .where(LoginAttempt.created_at >= since.replace(tzinfo=None))
+        )
+        if outcome is not None:
+            stmt = stmt.where(LoginAttempt.outcome == outcome)
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def list_recent_failures(
+        self, *, since: datetime, limit: int = 100
+    ) -> list[LoginAttempt]:
+        result = await self.session.execute(
+            self._select()
+            .where(
+                LoginAttempt.outcome == "failure",
+                LoginAttempt.created_at >= since.replace(tzinfo=None),
+            )
+            .order_by(LoginAttempt.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 class AccountRecoveryRequestRepository(Repository[AccountRecoveryRequest]):

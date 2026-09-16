@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -20,8 +20,13 @@ if config.config_file_name is not None:
 
 # Migrations run synchronously (psycopg), independent of the app's async
 # runtime driver (asyncpg) — see docs/DITSALA_MASTER_SPEC.md §3.
+#
+# Built and used directly (never round-tripped through
+# `config.set_main_option`/`engine_from_config`): configparser's default
+# interpolation chokes on a literal `%` in the URL — e.g. a URL-encoded
+# `%23` in a Supabase pooler password — raising "invalid interpolation
+# syntax" even though the URL itself is perfectly valid.
 sync_url = get_settings().database_url.replace("+asyncpg", "+psycopg")
-config.set_main_option("sqlalchemy.url", sync_url)
 
 from app.models import Base  # noqa: E402
 
@@ -45,9 +50,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=sync_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -64,11 +68,7 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(sync_url, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

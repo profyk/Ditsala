@@ -23,6 +23,12 @@ class KycDocumentRepository(Repository[KycDocument]):
         )
         return result.scalar_one()
 
+    async def list_for_user(self, user_id: uuid.UUID) -> list[KycDocument]:
+        result = await self.session.execute(
+            self._select().where(KycDocument.user_id == user_id).order_by(KycDocument.created_at)
+        )
+        return list(result.scalars().all())
+
 
 class KycFaceVerificationRepository(Repository[KycFaceVerification]):
     model = KycFaceVerification
@@ -40,3 +46,11 @@ class KycFaceVerificationRepository(Repository[KycFaceVerification]):
             .where(KycFaceVerification.user_id == user_id, KycFaceVerification.status == "failed")
         )
         return result.scalar_one()
+
+    async def list_for_user(self, user_id: uuid.UUID) -> list[KycFaceVerification]:
+        result = await self.session.execute(
+            self._select()
+            .where(KycFaceVerification.user_id == user_id)
+            .order_by(KycFaceVerification.created_at)
+        )
+        return list(result.scalars().all())

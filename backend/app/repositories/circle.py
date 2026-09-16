@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from app.models.circle import Block, Contact, ContactRequest, Invitation, Report
 from app.repositories.base import Repository
@@ -99,6 +99,24 @@ class InvitationRepository(Repository[Invitation]):
         )
         return result.scalar_one_or_none()
 
+    async def count_by_status(self, status: str) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(Invitation).where(Invitation.status == status)
+        )
+        return result.scalar_one()
+
+    async def top_inviters(self, *, limit: int = 10) -> list[tuple[uuid.UUID, int]]:
+        """§32 abuse signal: inviters ranked by invitations sent — the
+        admin Invitations screen flags outliers, it doesn't auto-block
+        them (rate limiting itself is enforced at request time, §32)."""
+        result = await self.session.execute(
+            select(Invitation.inviter_user_id, func.count().label("sent_count"))
+            .group_by(Invitation.inviter_user_id)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        return [(row[0], row[1]) for row in result.all()]
+
 
 class BlockRepository(Repository[Block]):
     model = Block
@@ -120,3 +138,15 @@ class BlockRepository(Repository[Block]):
 
 class ReportRepository(Repository[Report]):
     model = Report
+
+    async def list_by_status(self, status: str) -> list[Report]:
+        result = await self.session.execute(
+            self._select().where(Report.status == status).order_by(Report.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def count_by_status(self, status: str) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(Report).where(Report.status == status)
+        )
+        return result.scalar_one()

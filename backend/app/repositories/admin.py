@@ -1,3 +1,9 @@
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import desc
+
 from app.models.admin import (
     AdminPermission,
     AdminRole,
@@ -43,6 +49,32 @@ class AuditLogRepository(Repository[AuditLog]):
 
     model = AuditLog
 
+    async def list_filtered(
+        self,
+        *,
+        actor_id: uuid.UUID | None = None,
+        action: str | None = None,
+        target_type: str | None = None,
+        target_id: uuid.UUID | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditLog]:
+        stmt = self._select()
+        if actor_id is not None:
+            stmt = stmt.where(AuditLog.actor_id == actor_id)
+        if action is not None:
+            stmt = stmt.where(AuditLog.action == action)
+        if target_type is not None:
+            stmt = stmt.where(AuditLog.target_type == target_type)
+        if target_id is not None:
+            stmt = stmt.where(AuditLog.target_id == target_id)
+        stmt = stmt.order_by(desc(AuditLog.created_at)).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_for_target(self, target_type: str, target_id: uuid.UUID) -> list[AuditLog]:
+        return await self.list_filtered(target_type=target_type, target_id=target_id, limit=500)
+
 
 class SystemConfigRepository(Repository[SystemConfig]):
     """
@@ -55,3 +87,27 @@ class SystemConfigRepository(Repository[SystemConfig]):
 
     async def get_by_key(self, key: str) -> SystemConfig | None:
         return await self.session.get(SystemConfig, key)
+
+    async def list_all(self) -> list[SystemConfig]:
+        result = await self.session.execute(self._select().order_by(SystemConfig.key))
+        return list(result.scalars().all())
+
+    async def upsert(
+        self, *, key: str, value: dict[str, Any], updated_by_admin_id: uuid.UUID
+    ) -> SystemConfig:
+        """§28.8: every change is audit-logged with before/after by the
+        caller (`AdminService.set_system_config`) — this just persists it."""
+        existing = await self.get_by_key(key)
+        if existing is not None:
+            existing.value = value
+            existing.updated_at = datetime.now(UTC)
+            existing.updated_by_admin_id = updated_by_admin_id
+            return existing
+        return await self.add(
+            SystemConfig(
+                key=key,
+                value=value,
+                updated_at=datetime.now(UTC),
+                updated_by_admin_id=updated_by_admin_id,
+            )
+        )

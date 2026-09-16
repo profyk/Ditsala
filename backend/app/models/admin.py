@@ -49,6 +49,10 @@ class AdminUser(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     mfa_enrolled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    # Base32 TOTP secret, plaintext at rest — see docs/SECURITY_GAPS.md:
+    # a production deployment should envelope-encrypt this with a KMS,
+    # not done here since no KMS is provisioned in this environment.
+    mfa_secret: Mapped[str | None] = mapped_column(String(64))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
