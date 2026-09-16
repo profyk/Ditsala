@@ -27,4 +27,9 @@ jobs:
         working-directory: backend
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service backend --detach
+        # Targeted by service ID, not name — Railway auto-creates a
+        # service with its own generated name the first time you connect
+        # a GitHub repo, which is easy to end up not matching a plain
+        # "backend" name guess. An ID is unambiguous. See docs/CI_CD.md §3
+        # for exactly where to find it.
+        run: railway up --service "${{ secrets.RAILWAY_SERVICE_ID }}" --detach

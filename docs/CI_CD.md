@@ -31,12 +31,13 @@ There is no separate "run migrations" workflow — `backend/entrypoint.sh` runs 
 ## 3. Backend — Railway (primary)
 
 **One-time setup:**
-1. Create a Railway project, add a service named `backend` pointed at this repo's `backend/` directory (Railway auto-detects `railway.json` there for build/deploy config).
-2. Set environment variables on the Railway service: `DATABASE_URL` (Supabase pooler URL), `JWT_SECRET`, `NATIONAL_ID_PEPPER`, plus every provider credential `backend/.env.example` lists (Smile ID, Twilio, Resend, S3).
+1. Create a Railway project, add a service pointed at this repo's `backend/` directory (Railway auto-detects `railway.json` there for build/deploy config). **Don't rely on whatever name Railway auto-assigns it** — the workflow targets the service by ID (see step 4), not by name, specifically because Railway generates its own service name when you first connect a repo, and a deploy silently landing on the wrong same-project service (with none of your configured variables) is a real failure mode this project hit once already.
+2. Set environment variables **on that specific service**: `DATABASE_URL` (Supabase pooler URL), `JWT_SECRET`, `NATIONAL_ID_PEPPER`, plus every provider credential `backend/.env.example` lists (Smile ID, Twilio, Resend, S3).
 3. Generate a Railway API token (Project Settings → Tokens) and add it to the GitHub repo as the `RAILWAY_TOKEN` secret.
-4. Create a GitHub Actions **environment** named `production` (Settings → Environments) — used by every deploy workflow below, so you can gate it with required reviewers later if you want a manual approval step before deploys.
+4. Find that service's ID: open it in the Railway dashboard and copy the UUID from the URL (`railway.app/project/<project-id>/service/<service-id>`), or run `railway status` from a `railway link`-ed local checkout. Add it as the `RAILWAY_SERVICE_ID` secret.
+5. Create a GitHub Actions **environment** named `production` (Settings → Environments) — used by every deploy workflow below, so you can gate it with required reviewers later if you want a manual approval step before deploys.
 
-**Deploy**: automatic, via `.github/workflows/backend-deploy-railway.yml`, after every successful `CI` run on `main`.
+**Deploy**: automatic, via `.github/workflows/backend-deploy-railway.yml`, after every successful `CI` run on `main`. If you ever see it deploying successfully but the app still behaves like it has no environment variables set, the first thing to check is whether `RAILWAY_SERVICE_ID` actually points at the same service you configured variables on — that mismatch is the one failure mode this setup can't validate for you.
 
 ## 4. Backend — AWS ECS (replica/backup)
 
@@ -80,6 +81,7 @@ This is the backup/replica path behind an Application Load Balancer, deployed ma
 | Secret | Used by | Purpose |
 |---|---|---|
 | `RAILWAY_TOKEN` | backend-deploy-railway | Railway CLI auth |
+| `RAILWAY_SERVICE_ID` | backend-deploy-railway | Targets the exact service by ID, not by a guessed name |
 | `AWS_DEPLOY_ROLE_ARN` | backend-deploy-aws | OIDC role assumed for ECR push + ECS deploy |
 | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | admin-deploy | Vercel CLI auth + project targeting |
 | `EXPO_TOKEN` | mobile-eas-build, mobile-eas-submit | EAS CLI auth |
