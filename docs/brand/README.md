@@ -1,6 +1,6 @@
 # DITSALA app icon
 
-**Current design (replaces the earlier programmatic "D" monogram below):** a user-supplied artwork — a black rounded-square badge with a gold "D" that resolves into a speech-bubble ellipsis (three dots), gold glow outline. Saved as `icon-1024.png`.
+**Current design (replaces the earlier programmatic "D" monogram below):** a user-supplied artwork — a solid black square canvas with a gold "D" whose bowl tapers into a speech-bubble tail (a pointed lower-left corner) enclosing a three-dot ellipsis, brushed-gold gradient fill. Saved as `icon-1024.png`. (A refined pass of this same artwork replaced an earlier iteration — same concept, cleaner geometry.)
 
 **Important limitation:** this artwork is a single flattened image (opaque black background baked in, no isolated glyph-on-transparent layer). That's exactly right for `icon.png` (the universal/iOS icon — always opaque, the OS applies its own corner mask). For Android's adaptive icon, which composites a separate foreground + background and lets the OS apply parallax/masking, the *correct* asset would be just the glyph on a transparent background — we don't have that layer, so:
 
