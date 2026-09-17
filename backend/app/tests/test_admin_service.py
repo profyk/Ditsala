@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import get_settings
 from app.core.security import hash_secret
+from app.domain.admin.auth_service import AdminAuthError, AdminAuthService
 from app.domain.admin.service import AdminError, AdminService
 from app.models.accounts import User
 from app.models.admin import AdminUser
@@ -36,6 +37,8 @@ class Harness:
     reports: ReportRepository
     invitations: InvitationRepository
     audit_log: AuditLogRepository
+    admin_users: AdminUserRepository
+    admin_roles: AdminRoleRepository
 
 
 @pytest.fixture
@@ -54,6 +57,8 @@ def harness(session: AsyncSession) -> Harness:
     reports = ReportRepository(session)
     invitations = InvitationRepository(session)
     audit_log = AuditLogRepository(session)
+    admin_users = AdminUserRepository(session)
+    admin_roles = AdminRoleRepository(session)
     service = AdminService(
         users=users,
         reports=reports,
@@ -63,6 +68,8 @@ def harness(session: AsyncSession) -> Harness:
         login_attempts=LoginAttemptRepository(session),
         system_config=SystemConfigRepository(session),
         audit_log=audit_log,
+        admin_users=admin_users,
+        admin_roles=admin_roles,
     )
     return Harness(
         service=service,
@@ -70,6 +77,8 @@ def harness(session: AsyncSession) -> Harness:
         reports=reports,
         invitations=invitations,
         audit_log=audit_log,
+        admin_users=admin_users,
+        admin_roles=admin_roles,
     )
 
 
@@ -275,3 +284,150 @@ async def test_list_system_config(harness: Harness, admin_id: uuid.UUID) -> None
     )
     configs = await harness.service.list_system_config()
     assert any(c.key == "feature_flag_x" for c in configs)
+
+
+# --- admin user management (super_admin only) ---
+
+
+async def test_create_admin_creates_with_role(harness: Harness, admin_id: uuid.UUID) -> None:
+    email = f"{uuid.uuid4()}@example.com"
+    created = await harness.service.create_admin(
+        actor_admin_id=admin_id, email=email, password="a-real-password-123", role="kyc_reviewer"
+    )
+    assert created.email == email
+    assert created.role == "kyc_reviewer"
+    assert created.is_active is True
+    assert created.mfa_enrolled is False
+
+    stored = await harness.admin_users.get_by_email(email)
+    assert stored is not None
+    assert stored.id == created.id
+
+
+async def test_create_admin_rejects_short_password(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    with pytest.raises(AdminError, match="too short"):
+        await harness.service.create_admin(
+            actor_admin_id=admin_id,
+            email=f"{uuid.uuid4()}@example.com",
+            password="short1",
+            role="support_readonly",
+        )
+
+
+async def test_create_admin_rejects_duplicate_email(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    email = f"{uuid.uuid4()}@example.com"
+    await harness.service.create_admin(
+        actor_admin_id=admin_id, email=email, password="a-real-password-123", role="trust_safety"
+    )
+    with pytest.raises(AdminError, match="already exists"):
+        await harness.service.create_admin(
+            actor_admin_id=admin_id,
+            email=email,
+            password="another-real-password-1",
+            role="trust_safety",
+        )
+
+
+async def test_create_admin_rejects_unknown_role(harness: Harness, admin_id: uuid.UUID) -> None:
+    with pytest.raises(AdminError, match="Unrecognized role"):
+        await harness.service.create_admin(
+            actor_admin_id=admin_id,
+            email=f"{uuid.uuid4()}@example.com",
+            password="a-real-password-123",
+            role="cto",
+        )
+
+
+async def test_list_admins_includes_role_name(harness: Harness, admin_id: uuid.UUID) -> None:
+    email = f"{uuid.uuid4()}@example.com"
+    await harness.service.create_admin(
+        actor_admin_id=admin_id,
+        email=email,
+        password="a-real-password-123",
+        role="support_readonly",
+    )
+    admins = await harness.service.list_admins()
+    match = next(a for a in admins if a.email == email)
+    assert match.role == "support_readonly"
+
+
+async def test_set_admin_active_deactivates_and_reactivates(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    created = await harness.service.create_admin(
+        actor_admin_id=admin_id,
+        email=f"{uuid.uuid4()}@example.com",
+        password="a-real-password-123",
+        role="support_readonly",
+    )
+    deactivated = await harness.service.set_admin_active(
+        actor_admin_id=admin_id, admin_id=created.id, is_active=False
+    )
+    assert deactivated.is_active is False
+
+    reactivated = await harness.service.set_admin_active(
+        actor_admin_id=admin_id, admin_id=created.id, is_active=True
+    )
+    assert reactivated.is_active is True
+
+
+async def test_set_admin_active_rejects_self_deactivation(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    with pytest.raises(AdminError, match="own account"):
+        await harness.service.set_admin_active(
+            actor_admin_id=admin_id, admin_id=admin_id, is_active=False
+        )
+
+
+async def test_change_admin_role_changes_role(harness: Harness, admin_id: uuid.UUID) -> None:
+    created = await harness.service.create_admin(
+        actor_admin_id=admin_id,
+        email=f"{uuid.uuid4()}@example.com",
+        password="a-real-password-123",
+        role="support_readonly",
+    )
+    updated = await harness.service.change_admin_role(
+        actor_admin_id=admin_id, admin_id=created.id, role="trust_safety"
+    )
+    assert updated.role == "trust_safety"
+
+
+async def test_change_admin_role_rejects_self_change(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    with pytest.raises(AdminError, match="own role"):
+        await harness.service.change_admin_role(
+            actor_admin_id=admin_id, admin_id=admin_id, role="support_readonly"
+        )
+
+
+async def test_deactivated_admin_cannot_start_login(
+    harness: Harness, admin_id: uuid.UUID, session: AsyncSession
+) -> None:
+    """Deactivation must actually revoke login capability, not just hide
+    the row in the panel — this is what wires that guarantee end to end."""
+    password = "a-real-password-123"
+    created = await harness.service.create_admin(
+        actor_admin_id=admin_id,
+        email=f"{uuid.uuid4()}@example.com",
+        password=password,
+        role="support_readonly",
+    )
+    await harness.service.set_admin_active(
+        actor_admin_id=admin_id, admin_id=created.id, is_active=False
+    )
+
+    auth_service = AdminAuthService(
+        admin_users=harness.admin_users,
+        admin_roles=harness.admin_roles,
+        audit_log=harness.audit_log,
+        jwt_secret="test-secret-at-least-32-bytes-long!!",
+        access_token_ttl_minutes=15,
+    )
+    with pytest.raises(AdminAuthError, match="deactivated"):
+        await auth_service.start_login(email=created.email, password=password)

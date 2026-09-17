@@ -15,10 +15,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from app.core.security import hash_secret, validate_admin_password_strength
 from app.models.accounts import User
-from app.models.admin import AuditLog, SystemConfig
+from app.models.admin import AdminUser, AuditLog, SystemConfig
 from app.models.circle import Report
-from app.repositories.admin import AuditLogRepository, SystemConfigRepository
+from app.repositories.admin import (
+    AdminRoleRepository,
+    AdminUserRepository,
+    AuditLogRepository,
+    SystemConfigRepository,
+)
 from app.repositories.circle import InvitationRepository, ReportRepository
 from app.repositories.devices import (
     DeviceRepository,
@@ -61,6 +67,21 @@ class InvitationStats:
     top_inviters: list[tuple[uuid.UUID, int]]
 
 
+@dataclass(frozen=True)
+class AdminUserSummary:
+    """`AdminUser` plus its role's name — the ORM row only carries
+    `role_id`, and every caller of this (the admin-management screen)
+    wants the human-readable role, not a UUID to look up again."""
+
+    id: uuid.UUID
+    email: str
+    role: str
+    is_active: bool
+    mfa_enrolled: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+
 class AdminService:
     def __init__(
         self,
@@ -73,7 +94,11 @@ class AdminService:
         login_attempts: LoginAttemptRepository,
         system_config: SystemConfigRepository,
         audit_log: AuditLogRepository,
+        admin_users: AdminUserRepository,
+        admin_roles: AdminRoleRepository,
     ) -> None:
+        self._admin_users = admin_users
+        self._admin_roles = admin_roles
         self._users = users
         self._reports = reports
         self._invitations = invitations
@@ -250,6 +275,89 @@ class AdminService:
             metadata_json={"key": key, "before": before_value, "after": value, "reason": reason},
         )
         return config
+
+    # --- admin user management (super_admin only — see admin_deps.py's
+    # require_permission gate) ---
+
+    async def _to_summary(self, admin: AdminUser) -> AdminUserSummary:
+        role = await self._admin_roles.get(admin.role_id)
+        return AdminUserSummary(
+            id=admin.id,
+            email=admin.email,
+            role=role.name if role is not None else "unknown",
+            is_active=admin.is_active,
+            mfa_enrolled=admin.mfa_enrolled,
+            last_login_at=admin.last_login_at,
+            created_at=admin.created_at,
+        )
+
+    async def list_admins(self) -> list[AdminUserSummary]:
+        admins = await self._admin_users.list_all()
+        return [await self._to_summary(admin) for admin in admins]
+
+    async def create_admin(
+        self, *, actor_admin_id: uuid.UUID, email: str, password: str, role: str
+    ) -> AdminUserSummary:
+        if not validate_admin_password_strength(password):
+            raise AdminError("Password is too short for an admin account.")
+        if await self._admin_users.get_by_email(email) is not None:
+            raise AdminError(f"An admin with email {email!r} already exists.")
+        role_row = await self._admin_roles.get_by_name(role)
+        if role_row is None:
+            raise AdminError(f"Unrecognized role: {role!r}")
+
+        admin = await self._admin_users.add(
+            AdminUser(email=email, password_hash=hash_secret(password), role_id=role_row.id)
+        )
+        await self._log(
+            actor_admin_id,
+            "admin.admin_user.created",
+            target_type="admin_user",
+            target_id=admin.id,
+            metadata_json={"email": email, "role": role},
+        )
+        return await self._to_summary(admin)
+
+    async def set_admin_active(
+        self, *, actor_admin_id: uuid.UUID, admin_id: uuid.UUID, is_active: bool
+    ) -> AdminUserSummary:
+        if admin_id == actor_admin_id:
+            raise AdminError("You can't deactivate your own account.")
+        admin = await self._admin_users.get(admin_id)
+        if admin is None:
+            raise AdminError("No such admin.")
+
+        admin.is_active = is_active
+        await self._log(
+            actor_admin_id,
+            "admin.admin_user.activated" if is_active else "admin.admin_user.deactivated",
+            target_type="admin_user",
+            target_id=admin.id,
+        )
+        return await self._to_summary(admin)
+
+    async def change_admin_role(
+        self, *, actor_admin_id: uuid.UUID, admin_id: uuid.UUID, role: str
+    ) -> AdminUserSummary:
+        if admin_id == actor_admin_id:
+            raise AdminError("You can't change your own role.")
+        admin = await self._admin_users.get(admin_id)
+        if admin is None:
+            raise AdminError("No such admin.")
+        role_row = await self._admin_roles.get_by_name(role)
+        if role_row is None:
+            raise AdminError(f"Unrecognized role: {role!r}")
+
+        before_role_id = admin.role_id
+        admin.role_id = role_row.id
+        await self._log(
+            actor_admin_id,
+            "admin.admin_user.role_changed",
+            target_type="admin_user",
+            target_id=admin.id,
+            metadata_json={"before_role_id": str(before_role_id), "after_role": role},
+        )
+        return await self._to_summary(admin)
 
     async def _log(
         self,

@@ -50,6 +50,8 @@ async def get_admin_service(session: SessionDep) -> AdminService:
         login_attempts=LoginAttemptRepository(session),
         system_config=SystemConfigRepository(session),
         audit_log=AuditLogRepository(session),
+        admin_users=AdminUserRepository(session),
+        admin_roles=AdminRoleRepository(session),
     )
 
 

@@ -52,6 +52,16 @@ def validate_ditsala_code_strength(code: str) -> bool:
     return len(code) >= MIN_CODE_LENGTH and any(char.isdigit() for char in code)
 
 
+ADMIN_PASSWORD_MIN_LENGTH = 12
+
+
+def validate_admin_password_strength(password: str) -> bool:
+    """§29 — shared by scripts/create_admin.py, scripts/reset_admin_password.py,
+    and AdminService.create_admin (the in-panel path) so the rule lives in
+    exactly one place."""
+    return len(password) >= ADMIN_PASSWORD_MIN_LENGTH
+
+
 PIN_LENGTH = 6
 _COMMON_WEAK_PINS = frozenset(
     {"000000", "111111", "222222", "333333", "444444", "555555", "666666",

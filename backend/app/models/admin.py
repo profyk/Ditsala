@@ -54,6 +54,11 @@ class AdminUser(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # not done here since no KMS is provisioned in this environment.
     mfa_secret: Mapped[str | None] = mapped_column(String(64))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A deactivated admin can't start a new login — but an already-issued
+    # access token (up to admin_access_token_ttl_minutes old) stays valid
+    # until it naturally expires, since there's no server-side admin
+    # session/revocation list yet (see docs/SECURITY_GAPS.md).
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
 class AuditLog(Base, UUIDPrimaryKeyMixin):

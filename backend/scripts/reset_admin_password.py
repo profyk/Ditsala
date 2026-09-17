@@ -9,14 +9,31 @@ Usage (from backend/):
 
 import argparse
 import asyncio
+import getpass
 import sys
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
-from app.core.security import hash_secret
+from app.core.security import (
+    ADMIN_PASSWORD_MIN_LENGTH,
+    hash_secret,
+    validate_admin_password_strength,
+)
 from app.repositories.admin import AdminUserRepository
-from scripts.create_admin import _read_password
+
+
+def _read_password(prompt: str) -> str:
+    """Duplicated from create_admin.py rather than imported — `scripts/`
+    isn't a package, and importing across sibling scripts creates a
+    module-name collision under mypy (each script is its own top-level
+    module when run directly). `getpass.getpass` reads from the console
+    directly on Windows, ignoring a piped/redirected stdin — falls back
+    to a plain read when stdin isn't a real TTY (CI, piped input)."""
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return sys.stdin.readline().rstrip("\n")
 
 
 async def main() -> None:
@@ -29,8 +46,11 @@ async def main() -> None:
     if password != confirm:
         print("Passwords did not match.", file=sys.stderr)
         raise SystemExit(1)
-    if len(password) < 12:
-        print("Use at least 12 characters for an admin password.", file=sys.stderr)
+    if not validate_admin_password_strength(password):
+        print(
+            f"Use at least {ADMIN_PASSWORD_MIN_LENGTH} characters for an admin password.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     engine = create_async_engine(get_settings().database_url)

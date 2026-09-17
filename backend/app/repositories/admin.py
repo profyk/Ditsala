@@ -22,6 +22,10 @@ class AdminUserRepository(Repository[AdminUser]):
         result = await self.session.execute(self._select().where(AdminUser.email == email))
         return result.scalar_one_or_none()
 
+    async def list_all(self) -> list[AdminUser]:
+        result = await self.session.execute(self._select().order_by(AdminUser.email))
+        return list(result.scalars().all())
+
 
 class AdminRoleRepository(Repository[AdminRole]):
     model = AdminRole
@@ -29,6 +33,10 @@ class AdminRoleRepository(Repository[AdminRole]):
     async def get_by_name(self, name: str) -> AdminRole | None:
         result = await self.session.execute(self._select().where(AdminRole.name == name))
         return result.scalar_one_or_none()
+
+    async def list_all(self) -> list[AdminRole]:
+        result = await self.session.execute(self._select().order_by(AdminRole.name))
+        return list(result.scalars().all())
 
     async def role_has_permission(self, role_id: uuid.UUID, permission_name: str) -> bool:
         """§29 RBAC — DB-driven per ADR 0011: a role has a permission iff a

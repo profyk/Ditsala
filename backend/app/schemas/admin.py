@@ -150,6 +150,35 @@ class SetSystemConfigRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+# --- admin user management (super_admin only) ---
+
+
+class AdminUserResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: str
+    is_active: bool
+    mfa_enrolled: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CreateAdminUserRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str
+    role: str
+
+
+class SetAdminActiveRequest(BaseModel):
+    is_active: bool
+
+
+class ChangeAdminRoleRequest(BaseModel):
+    role: str
+
+
 # --- KYC review ---
 
 

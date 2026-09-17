@@ -67,6 +67,12 @@ class AdminAuthService:
             await self._log(None, "admin.login_failed", metadata_json={"email": email})
             raise AdminAuthError("Invalid email or password.")
 
+        if not admin.is_active:
+            await self._log(
+                admin.id, "admin.login_failed", metadata_json={"stage": "deactivated"}
+            )
+            raise AdminAuthError("This admin account has been deactivated.")
+
         if not admin.mfa_enrolled:
             secret = generate_totp_secret()
             token = create_admin_mfa_enroll_token(
@@ -93,7 +99,7 @@ class AdminAuthService:
             raise AdminAuthError("Incorrect code.")
 
         admin = await self._admin_users.get(payload.admin_id)
-        if admin is None:
+        if admin is None or not admin.is_active:
             raise AdminAuthError("Invalid or expired enrollment session.")
         admin.mfa_secret = payload.mfa_secret
         admin.mfa_enrolled = True
@@ -109,7 +115,7 @@ class AdminAuthService:
             raise AdminAuthError("Invalid or expired login session.") from exc
 
         admin = await self._admin_users.get(admin_id)
-        if admin is None or admin.mfa_secret is None:
+        if admin is None or admin.mfa_secret is None or not admin.is_active:
             raise AdminAuthError("Invalid or expired login session.")
         if not verify_totp(secret=admin.mfa_secret, code=code):
             await self._log(admin.id, "admin.login_failed", metadata_json={"stage": "mfa"})

@@ -10,13 +10,17 @@ from app.domain.admin.service import AdminError
 from app.domain.compliance.service import ComplianceError
 from app.schemas.admin import (
     ActionReportRequest,
+    AdminUserResponse,
     AuditLogEntryResponse,
+    ChangeAdminRoleRequest,
+    CreateAdminUserRequest,
     DashboardSummaryResponse,
     ForceAccountStateRequest,
     InvitationStatsResponse,
     InviteOnlyModeResponse,
     ReportResponse,
     SecuritySummaryResponse,
+    SetAdminActiveRequest,
     SetInviteOnlyModeRequest,
     SetSystemConfigRequest,
     SystemConfigResponse,
@@ -252,6 +256,76 @@ async def set_system_config(
         admin_id=admin.id, key=key, value=body.value, reason=body.reason
     )
     return SystemConfigResponse.model_validate(config)
+
+
+# --- admin user management (super_admin only) ---
+
+
+@router.get(
+    "/admin-users",
+    response_model=list[AdminUserResponse],
+    dependencies=[require_permission(Permission.ADMIN_USERS_VIEW)],
+)
+async def list_admin_users(service: AdminServiceDep) -> list[AdminUserResponse]:
+    admins = await service.list_admins()
+    return [AdminUserResponse(**a.__dict__) for a in admins]
+
+
+@router.post(
+    "/admin-users",
+    response_model=AdminUserResponse,
+    dependencies=[require_permission(Permission.ADMIN_USERS_ACTION)],
+)
+async def create_admin_user(
+    body: CreateAdminUserRequest, admin: CurrentAdminDep, service: AdminServiceDep
+) -> AdminUserResponse:
+    try:
+        created = await service.create_admin(
+            actor_admin_id=admin.id, email=body.email, password=body.password, role=body.role
+        )
+    except AdminError as exc:
+        raise _as_http_error(exc) from exc
+    return AdminUserResponse(**created.__dict__)
+
+
+@router.post(
+    "/admin-users/{admin_id}/active",
+    response_model=AdminUserResponse,
+    dependencies=[require_permission(Permission.ADMIN_USERS_ACTION)],
+)
+async def set_admin_active(
+    admin_id: uuid.UUID,
+    body: SetAdminActiveRequest,
+    admin: CurrentAdminDep,
+    service: AdminServiceDep,
+) -> AdminUserResponse:
+    try:
+        updated = await service.set_admin_active(
+            actor_admin_id=admin.id, admin_id=admin_id, is_active=body.is_active
+        )
+    except AdminError as exc:
+        raise _as_http_error(exc) from exc
+    return AdminUserResponse(**updated.__dict__)
+
+
+@router.post(
+    "/admin-users/{admin_id}/role",
+    response_model=AdminUserResponse,
+    dependencies=[require_permission(Permission.ADMIN_USERS_ACTION)],
+)
+async def change_admin_role(
+    admin_id: uuid.UUID,
+    body: ChangeAdminRoleRequest,
+    admin: CurrentAdminDep,
+    service: AdminServiceDep,
+) -> AdminUserResponse:
+    try:
+        updated = await service.change_admin_role(
+            actor_admin_id=admin.id, admin_id=admin_id, role=body.role
+        )
+    except AdminError as exc:
+        raise _as_http_error(exc) from exc
+    return AdminUserResponse(**updated.__dict__)
 
 
 # --- §34.4: data subject rights ---

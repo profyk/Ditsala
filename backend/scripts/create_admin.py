@@ -18,7 +18,11 @@ import sys
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
-from app.core.security import hash_secret
+from app.core.security import (
+    ADMIN_PASSWORD_MIN_LENGTH,
+    hash_secret,
+    validate_admin_password_strength,
+)
 from app.models.admin import AdminUser
 from app.repositories.admin import AdminRoleRepository, AdminUserRepository
 
@@ -48,8 +52,11 @@ async def main() -> None:
     if password != confirm:
         print("Passwords did not match.", file=sys.stderr)
         raise SystemExit(1)
-    if len(password) < 12:
-        print("Use at least 12 characters for an admin password.", file=sys.stderr)
+    if not validate_admin_password_strength(password):
+        print(
+            f"Use at least {ADMIN_PASSWORD_MIN_LENGTH} characters for an admin password.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     engine = create_async_engine(get_settings().database_url)

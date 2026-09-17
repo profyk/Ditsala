@@ -27,3 +27,5 @@ class Permission(StrEnum):
     SYSTEM_CONFIG_ACTION = "system_config:action"
     DATA_SUBJECT_REQUESTS_VIEW = "data_subject_requests:view"
     DATA_SUBJECT_REQUESTS_ACTION = "data_subject_requests:action"
+    ADMIN_USERS_VIEW = "admin_users:view"
+    ADMIN_USERS_ACTION = "admin_users:action"
