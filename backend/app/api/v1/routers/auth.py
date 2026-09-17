@@ -8,6 +8,7 @@ from app.api.v1.deps import (
     ClientIpHashDep,
     CurrentUserDep,
     OnboardingUserDep,
+    ProfileServiceDep,
     SettingsDep,
 )
 from app.core.security import decode_login_token
@@ -125,8 +126,11 @@ async def logout_all(user: CurrentUserDep, service: AuthServiceDep) -> None:
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-async def get_current_user_info(user: CurrentUserDep) -> CurrentUserResponse:
-    return CurrentUserResponse.model_validate(user)
+async def get_current_user_info(
+    user: CurrentUserDep, profile_service: ProfileServiceDep
+) -> CurrentUserResponse:
+    avatar_url = await profile_service.get_avatar_url(user)
+    return CurrentUserResponse(id=user.id, display_name=user.display_name, avatar_url=avatar_url)
 
 
 @router.get("/devices", response_model=list[DeviceResponse])

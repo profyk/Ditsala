@@ -14,7 +14,9 @@ from app.api.v1.deps import (
     get_messaging_service,
 )
 from app.domain.messaging.service import MessagingError
+from app.models.messaging import Conversation
 from app.schemas.messaging import (
+    ConversationMemberResponse,
     ConversationResponse,
     CreateGroupConversationRequest,
     EditMessageRequest,
@@ -25,7 +27,9 @@ from app.schemas.messaging import (
     MessageResponse,
     OneTimePrekeysRequest,
     PrekeyBundleResponse,
+    PrimaryDeviceResponse,
     ReceiptRequest,
+    RenameGroupConversationRequest,
     SenderKeyRequest,
     SenderKeyResponse,
     SendMessageRequest,
@@ -105,7 +109,32 @@ async def get_prekey_bundle(
     )
 
 
+@router.get("/keys/primary-device/{user_id}", response_model=PrimaryDeviceResponse)
+async def get_primary_device(
+    user_id: uuid.UUID, _user: CurrentUserDep, service: MessagingServiceDep
+) -> PrimaryDeviceResponse:
+    """V1 sends to a single device per recipient — see docs/adr/0013's
+    multi-device-fan-out gap note."""
+    try:
+        device_id = await service.get_primary_device_id(user_id)
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    return PrimaryDeviceResponse(device_id=device_id)
+
+
 # --- conversations ---
+
+
+def _conversation_response(
+    conversation: Conversation, last_message_at: datetime | None = None
+) -> ConversationResponse:
+    return ConversationResponse(
+        id=conversation.id,
+        type=conversation.type,
+        title=conversation.title,
+        disappearing_timer_seconds=conversation.disappearing_timer_seconds,
+        last_message_at=last_message_at,
+    )
 
 
 @router.post("/conversations/direct", response_model=ConversationResponse)
@@ -116,23 +145,56 @@ async def start_direct_conversation(
         conversation = await service.start_direct_conversation(user.id, body.other_user_id)
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
-    return ConversationResponse.model_validate(conversation)
+    return _conversation_response(conversation)
 
 
 @router.post("/conversations/group", response_model=ConversationResponse)
 async def create_group_conversation(
     body: CreateGroupConversationRequest, user: CurrentUserDep, service: MessagingServiceDep
 ) -> ConversationResponse:
-    conversation = await service.create_group_conversation(user.id, body.member_ids)
-    return ConversationResponse.model_validate(conversation)
+    conversation = await service.create_group_conversation(
+        user.id, body.member_ids, title=body.title
+    )
+    return _conversation_response(conversation)
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(
     user: CurrentUserDep, service: MessagingServiceDep
 ) -> list[ConversationResponse]:
-    conversations = await service.list_conversations(user.id)
-    return [ConversationResponse.model_validate(c) for c in conversations]
+    summaries = await service.list_conversations(user.id)
+    return [_conversation_response(s.conversation, s.last_message_at) for s in summaries]
+
+
+@router.patch("/conversations/{conversation_id}/title", response_model=ConversationResponse)
+async def rename_group_conversation(
+    conversation_id: uuid.UUID,
+    body: RenameGroupConversationRequest,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> ConversationResponse:
+    try:
+        conversation = await service.rename_group_conversation(
+            user_id=user.id, conversation_id=conversation_id, title=body.title
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    return _conversation_response(conversation)
+
+
+@router.get(
+    "/conversations/{conversation_id}/members", response_model=list[ConversationMemberResponse]
+)
+async def list_conversation_members(
+    conversation_id: uuid.UUID, user: CurrentUserDep, service: MessagingServiceDep
+) -> list[ConversationMemberResponse]:
+    try:
+        members = await service.list_conversation_members(
+            user_id=user.id, conversation_id=conversation_id
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    return [ConversationMemberResponse.model_validate(m) for m in members]
 
 
 @router.patch(
@@ -294,6 +356,7 @@ async def upload_sender_key(
         await service.upload_sender_key(
             device=device,
             conversation_id=conversation_id,
+            recipient_device_id=body.recipient_device_id,
             distribution_message_ref=decode_b64(body.distribution_message_ref),
         )
     except MessagingError as exc:
@@ -302,11 +365,14 @@ async def upload_sender_key(
 
 @router.get("/conversations/{conversation_id}/sender-keys", response_model=list[SenderKeyResponse])
 async def list_sender_keys(
-    conversation_id: uuid.UUID, user: CurrentUserDep, service: MessagingServiceDep
+    conversation_id: uuid.UUID,
+    user: CurrentUserDep,
+    device: CurrentDeviceDep,
+    service: MessagingServiceDep,
 ) -> list[SenderKeyResponse]:
     try:
         sender_keys = await service.list_sender_keys(
-            user_id=user.id, conversation_id=conversation_id
+            user_id=user.id, conversation_id=conversation_id, recipient_device_id=device.id
         )
     except MessagingError as exc:
         raise _as_http_error(exc) from exc

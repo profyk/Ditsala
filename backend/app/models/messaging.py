@@ -18,6 +18,11 @@ class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     disappearing_timer_seconds: Mapped[int | None] = mapped_column(Integer)
+    # Group display name — null for `direct` (the client shows the other
+    # member instead). Plaintext, not E2EE: like Signal's own older group
+    # names, this is treated as low-sensitivity metadata, not message
+    # content — a real, disclosed scope line, not an oversight.
+    title: Mapped[str | None] = mapped_column(String(200))
 
 
 class ConversationMember(Base, UUIDPrimaryKeyMixin, TimestampMixin):

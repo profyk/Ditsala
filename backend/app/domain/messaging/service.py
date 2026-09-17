@@ -40,6 +40,7 @@ from app.repositories.messages import (
     MessageReceiptRepository,
     MessageRepository,
 )
+from app.repositories.users import UserRepository
 from app.services.realtime.websocket_manager import ConnectionManager
 
 MAX_MEDIA_SIZE_BYTES = 100 * 1024 * 1024  # 100MB, client-side-encrypted
@@ -47,6 +48,21 @@ MAX_MEDIA_SIZE_BYTES = 100 * 1024 * 1024  # 100MB, client-side-encrypted
 
 class MessagingError(Exception):
     """Raised for messaging preconditions a caller should turn into a 4xx, not a 500."""
+
+
+@dataclass(frozen=True)
+class ConversationSummary:
+    conversation: Conversation
+    last_message_at: datetime | None
+
+
+@dataclass(frozen=True)
+class EnrichedMember:
+    user_id: uuid.UUID
+    display_name: str
+    avatar_url: str | None
+    role: str
+    joined_at: datetime
 
 
 @dataclass(frozen=True)
@@ -76,6 +92,7 @@ class MessagingService:
         devices: DeviceRepository,
         blocks: BlockRepository,
         contacts: ContactRepository,
+        users: UserRepository,
         storage_provider: StorageProvider,
         connection_manager: ConnectionManager,
     ) -> None:
@@ -90,6 +107,7 @@ class MessagingService:
         self._media_objects = media_objects
         self._devices = devices
         self._blocks = blocks
+        self._users = users
         self._contacts = contacts
         self._storage = storage_provider
         self._connections = connection_manager
@@ -163,6 +181,12 @@ class MessagingService:
             one_time_prekey_public=one_time_prekey.public_key if one_time_prekey else None,
         )
 
+    async def get_primary_device_id(self, user_id: uuid.UUID) -> uuid.UUID:
+        identity_key = await self._identity_keys.get_most_recent_for_user(user_id)
+        if identity_key is None:
+            raise MessagingError("This user has not completed key registration on any device.")
+        return identity_key.device_id
+
     # --- conversations ---
 
     async def start_direct_conversation(
@@ -200,10 +224,10 @@ class MessagingService:
         return conversation
 
     async def create_group_conversation(
-        self, creator_id: uuid.UUID, member_ids: list[uuid.UUID]
+        self, creator_id: uuid.UUID, member_ids: list[uuid.UUID], *, title: str | None = None
     ) -> Conversation:
         conversation = await self._conversations.add(
-            Conversation(type="group", created_by=creator_id)
+            Conversation(type="group", created_by=creator_id, title=title)
         )
         now = datetime.now(UTC)
         await self._conversation_members.add(
@@ -221,14 +245,61 @@ class MessagingService:
             )
         return conversation
 
-    async def list_conversations(self, user_id: uuid.UUID) -> list[Conversation]:
+    async def list_conversations(self, user_id: uuid.UUID) -> list[ConversationSummary]:
         memberships = await self._conversation_members.list_for_user(user_id)
-        conversations = []
+        summaries = []
         for membership in memberships:
             conversation = await self._conversations.get(membership.conversation_id)
-            if conversation is not None:
-                conversations.append(conversation)
-        return conversations
+            if conversation is None:
+                continue
+            latest = await self._messages.get_latest_for_conversation(conversation.id)
+            summaries.append(
+                ConversationSummary(
+                    conversation=conversation,
+                    last_message_at=latest.created_at if latest else None,
+                )
+            )
+        return summaries
+
+    async def rename_group_conversation(
+        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID, title: str
+    ) -> Conversation:
+        membership = await self._require_membership(conversation_id, user_id)
+        conversation = await self._conversations.get(conversation_id)
+        if conversation is None:
+            raise MessagingError("No such conversation.")
+        if conversation.type != "group":
+            raise MessagingError("Only group conversations can be renamed.")
+        if membership.role != "admin":
+            raise MessagingError("Only a group admin can rename this conversation.")
+        conversation.title = title
+        return conversation
+
+    async def list_conversation_members(
+        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> list[EnrichedMember]:
+        await self._require_membership(conversation_id, user_id)
+        members = await self._conversation_members.list_for_conversation(conversation_id)
+        enriched = []
+        for member in members:
+            member_user = await self._users.get(member.user_id)
+            if member_user is None:
+                continue
+            avatar_url = (
+                await self._storage.create_download_url(key=member_user.avatar_key)
+                if member_user.avatar_key
+                else None
+            )
+            enriched.append(
+                EnrichedMember(
+                    user_id=member.user_id,
+                    display_name=member_user.display_name,
+                    avatar_url=avatar_url,
+                    role=member.role,
+                    joined_at=member.joined_at,
+                )
+            )
+        return enriched
 
     async def _require_membership(
         self, conversation_id: uuid.UUID, user_id: uuid.UUID
@@ -395,22 +466,36 @@ class MessagingService:
     # --- groups: Sender Keys distribution (relay only, never decrypted) ---
 
     async def upload_sender_key(
-        self, *, device: Device, conversation_id: uuid.UUID, distribution_message_ref: bytes
+        self,
+        *,
+        device: Device,
+        conversation_id: uuid.UUID,
+        recipient_device_id: uuid.UUID,
+        distribution_message_ref: bytes,
     ) -> SenderKey:
         await self._require_membership(conversation_id, device.user_id)
+        existing = await self._sender_keys.get_for_conversation_device_and_recipient(
+            conversation_id, device.id, recipient_device_id
+        )
+        if existing is not None:
+            existing.distribution_message_ref = distribution_message_ref
+            return existing
         return await self._sender_keys.add(
             SenderKey(
                 conversation_id=conversation_id,
                 device_id=device.id,
+                recipient_device_id=recipient_device_id,
                 distribution_message_ref=distribution_message_ref,
             )
         )
 
     async def list_sender_keys(
-        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID
+        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID, recipient_device_id: uuid.UUID
     ) -> list[SenderKey]:
         await self._require_membership(conversation_id, user_id)
-        return await self._sender_keys.list_for_conversation(conversation_id)
+        return await self._sender_keys.list_for_conversation_and_recipient(
+            conversation_id, recipient_device_id
+        )
 
     # --- media: client-side encrypted, backend only issues signed URLs ---
 

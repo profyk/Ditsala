@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.security import decode_access_token, decode_onboarding_token
+from app.domain.account.profile_service import ProfileService
 from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
 from app.domain.billing.service import VipUpgradeService
@@ -270,6 +271,7 @@ async def get_messaging_service(session: SessionDep, settings: SettingsDep) -> M
         devices=DeviceRepository(session),
         blocks=BlockRepository(session),
         contacts=ContactRepository(session),
+        users=UserRepository(session),
         storage_provider=get_storage_provider(settings),
         connection_manager=connection_manager,
     )
@@ -348,6 +350,15 @@ async def get_account_lifecycle_service(session: SessionDep) -> AccountLifecycle
 AccountLifecycleServiceDep = Annotated[
     AccountLifecycleService, Depends(get_account_lifecycle_service)
 ]
+
+
+async def get_profile_service(session: SessionDep, settings: SettingsDep) -> ProfileService:
+    return ProfileService(
+        users=UserRepository(session), storage_provider=get_storage_provider(settings)
+    )
+
+
+ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
 
 
 async def get_compliance_service(

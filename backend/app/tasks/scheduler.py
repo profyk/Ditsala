@@ -68,6 +68,7 @@ async def purge_expired_messages() -> int:
             devices=DeviceRepository(session),
             blocks=BlockRepository(session),
             contacts=ContactRepository(session),
+            users=UserRepository(session),
             storage_provider=get_storage_provider(get_settings()),
             connection_manager=connection_manager,
         )

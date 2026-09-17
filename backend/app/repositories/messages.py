@@ -29,6 +29,15 @@ class MessageRepository(Repository[Message]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_latest_for_conversation(self, conversation_id: uuid.UUID) -> Message | None:
+        result = await self.session.execute(
+            self._select()
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def list_expired(self, *, now: datetime) -> list[Message]:
         """Disappearing messages (§21) due for the retention sweep —
         deliberately excludes already-deleted rows (nothing to purge twice)."""

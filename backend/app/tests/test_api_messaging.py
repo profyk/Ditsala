@@ -39,6 +39,7 @@ from app.repositories.messages import (
     MessageReceiptRepository,
     MessageRepository,
 )
+from app.repositories.users import UserRepository
 from app.services.realtime.websocket_manager import ConnectionManager
 from app.tests.test_messaging_service import StubStorageProvider
 
@@ -76,6 +77,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             devices=DeviceRepository(db_session),
             blocks=BlockRepository(db_session),
             contacts=ContactRepository(db_session),
+            users=UserRepository(db_session),
             storage_provider=StubStorageProvider(),
             connection_manager=ConnectionManager(),
         )
@@ -271,7 +273,7 @@ async def test_group_conversation_and_sender_keys(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     alice, alice_device, alice_token = await _make_user_with_device(session)
-    bob, _d2, bob_token = await _make_user_with_device(session)
+    bob, bob_device, bob_token = await _make_user_with_device(session)
 
     r = await client.post(
         "/api/v1/messaging/conversations/group",
@@ -283,7 +285,10 @@ async def test_group_conversation_and_sender_keys(
 
     r = await client.post(
         f"/api/v1/messaging/conversations/{conversation_id}/sender-keys",
-        json={"distribution_message_ref": _b64(b"dist-ref")},
+        json={
+            "recipient_device_id": str(bob_device.id),
+            "distribution_message_ref": _b64(b"dist-ref"),
+        },
         headers=_auth(alice_token),
     )
     assert r.status_code == 204, r.text

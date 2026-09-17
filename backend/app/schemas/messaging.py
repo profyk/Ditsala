@@ -48,6 +48,10 @@ class PrekeyBundleResponse(BaseModel):
     one_time_prekey_public: str | None  # base64
 
 
+class PrimaryDeviceResponse(BaseModel):
+    device_id: uuid.UUID
+
+
 # --- conversations ---
 
 
@@ -57,12 +61,29 @@ class StartDirectConversationRequest(BaseModel):
 
 class CreateGroupConversationRequest(BaseModel):
     member_ids: list[uuid.UUID] = Field(min_length=1, max_length=250)
+    title: str | None = Field(default=None, max_length=200)
+
+
+class RenameGroupConversationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
 
 
 class ConversationResponse(BaseModel):
     id: uuid.UUID
     type: str
+    title: str | None
     disappearing_timer_seconds: int | None
+    last_message_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationMemberResponse(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    avatar_url: str | None
+    role: str
+    joined_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -131,6 +152,7 @@ class ReceiptRequest(BaseModel):
 
 
 class SenderKeyRequest(BaseModel):
+    recipient_device_id: uuid.UUID
     distribution_message_ref: str  # base64
 
 

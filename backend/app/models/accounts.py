@@ -53,6 +53,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default="normal",
         server_default=text("'normal'"),
     )
+    # S3-compatible object key (P3 — not secret, not message content); the
+    # actual bytes go through the same StorageProvider presigned-URL flow
+    # media does. Null means no avatar set.
+    avatar_key: Mapped[str | None] = mapped_column(String(512))
     # P0 — see app.domain.classification. Argon2id, never plaintext.
     ditsala_code_hash: Mapped[str | None] = mapped_column(String(256))
     code_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

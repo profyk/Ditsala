@@ -138,3 +138,44 @@ async def test_file_data_subject_request_rejects_unknown_type(
         headers=_bearer_for(user),
     )
     assert r.status_code == 422
+
+
+async def test_avatar_upload_confirm_and_remove(client: AsyncClient, session: AsyncSession) -> None:
+    user = await _make_active_user(session)
+    headers = _bearer_for(user)
+
+    r = await client.get("/api/v1/auth/me", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["avatar_url"] is None
+
+    r = await client.post(
+        "/api/v1/account/avatar/upload-url", json={"content_type": "image/png"}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    key = r.json()["key"]
+    assert r.json()["upload_url"]
+
+    r = await client.post("/api/v1/account/avatar/confirm", json={"key": key}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["avatar_url"]
+
+    r = await client.get("/api/v1/auth/me", headers=headers)
+    assert r.json()["avatar_url"]
+
+    r = await client.delete("/api/v1/account/avatar", headers=headers)
+    assert r.status_code == 204, r.text
+
+    r = await client.get("/api/v1/auth/me", headers=headers)
+    assert r.json()["avatar_url"] is None
+
+
+async def test_avatar_upload_rejects_unsupported_content_type(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/account/avatar/upload-url",
+        json={"content_type": "application/pdf"},
+        headers=_bearer_for(user),
+    )
+    assert r.status_code == 422

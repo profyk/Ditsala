@@ -18,4 +18,21 @@ export const accountApi = {
 
   cancelDeactivation: (accessToken: string) =>
     request<AccountDeactivationStatus>("/account/deactivate/cancel", { token: accessToken }),
+
+  // --- profile picture ---
+
+  requestAvatarUpload: (accessToken: string, contentType: string) =>
+    request<{ key: string; upload_url: string }>("/account/avatar/upload-url", {
+      token: accessToken,
+      body: { content_type: contentType },
+    }),
+
+  confirmAvatar: (accessToken: string, key: string) =>
+    request<{ avatar_url: string | null }>("/account/avatar/confirm", {
+      token: accessToken,
+      body: { key },
+    }),
+
+  removeAvatar: (accessToken: string) =>
+    request<void>("/account/avatar", { method: "DELETE", token: accessToken }),
 };

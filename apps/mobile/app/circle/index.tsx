@@ -34,6 +34,7 @@ export default function Circle() {
   const [error, setError] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [callingId, setCallingId] = useState<string | null>(null);
+  const [messagingId, setMessagingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -71,6 +72,20 @@ export default function Circle() {
       setError(err instanceof ApiError ? err.message : "Could not verify this contact.");
     } finally {
       setVerifyingId(null);
+    }
+  }
+
+  async function handleMessage(contactUserId: string) {
+    const token = await getAccessToken();
+    if (!token) return;
+    setMessagingId(contactUserId);
+    try {
+      const conversation = await messagingApi.startDirectConversation(token, contactUserId);
+      router.push(`/messages/${conversation.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start this conversation.");
+    } finally {
+      setMessagingId(null);
     }
   }
 
@@ -128,6 +143,16 @@ export default function Circle() {
           <View className="mb-3 rounded border border-border bg-surface p-4">
             <Text className="text-base text-text-primary">{item.contact_display_name}</Text>
             <Text className="mb-3 text-sm text-text-tertiary">{TIER_LABEL[item.tier]}</Text>
+            {item.tier === "verified" || item.tier === "trusted" ? (
+              <View className="mb-3">
+                <Button
+                  testID={`message-button-${item.contact_user_id}`}
+                  label="Message"
+                  loading={messagingId === item.contact_user_id}
+                  onPress={() => handleMessage(item.contact_user_id)}
+                />
+              </View>
+            ) : null}
             {item.tier === "verified" ? (
               <Button
                 testID={`verify-button-${item.contact_user_id}`}

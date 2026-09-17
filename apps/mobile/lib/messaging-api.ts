@@ -23,7 +23,17 @@ export interface PrekeyBundle {
 export interface Conversation {
   id: string;
   type: "direct" | "group";
+  title: string | null;
   disappearing_timer_seconds: number | null;
+  last_message_at: string | null;
+}
+
+export interface ConversationMember {
+  user_id: string;
+  display_name: string;
+  avatar_url: string | null;
+  role: "member" | "admin";
+  joined_at: string;
 }
 
 export interface Message {
@@ -90,6 +100,14 @@ export const messagingApi = {
       },
     }),
 
+  getPrimaryDevice: async (accessToken: string, userId: string): Promise<string> => {
+    const raw = await request<{ device_id: string }>(
+      `/messaging/keys/primary-device/${userId}`,
+      { method: "GET", token: accessToken }
+    );
+    return raw.device_id;
+  },
+
   getPrekeyBundle: async (
     accessToken: string,
     userId: string,
@@ -128,14 +146,27 @@ export const messagingApi = {
       body: { other_user_id: otherUserId },
     }),
 
-  createGroupConversation: (accessToken: string, memberIds: string[]) =>
+  createGroupConversation: (accessToken: string, memberIds: string[], title?: string) =>
     request<Conversation>("/messaging/conversations/group", {
       token: accessToken,
-      body: { member_ids: memberIds },
+      body: { member_ids: memberIds, title: title ?? null },
     }),
 
   listConversations: (accessToken: string) =>
     request<Conversation[]>("/messaging/conversations", { method: "GET", token: accessToken }),
+
+  renameGroupConversation: (accessToken: string, conversationId: string, title: string) =>
+    request<Conversation>(`/messaging/conversations/${conversationId}/title`, {
+      method: "PATCH",
+      token: accessToken,
+      body: { title },
+    }),
+
+  listConversationMembers: (accessToken: string, conversationId: string) =>
+    request<ConversationMember[]>(`/messaging/conversations/${conversationId}/members`, {
+      method: "GET",
+      token: accessToken,
+    }),
 
   setDisappearingTimer: (accessToken: string, conversationId: string, seconds: number | null) =>
     request<Conversation>(`/messaging/conversations/${conversationId}/disappearing-timer`, {
@@ -229,10 +260,18 @@ export const messagingApi = {
 
   // --- groups: Sender Keys ---
 
-  uploadSenderKey: (accessToken: string, conversationId: string, distributionMessageRef: Uint8Array) =>
+  uploadSenderKey: (
+    accessToken: string,
+    conversationId: string,
+    recipientDeviceId: string,
+    distributionMessageRef: Uint8Array
+  ) =>
     request<void>(`/messaging/conversations/${conversationId}/sender-keys`, {
       token: accessToken,
-      body: { distribution_message_ref: bytesToBase64(distributionMessageRef) },
+      body: {
+        recipient_device_id: recipientDeviceId,
+        distribution_message_ref: bytesToBase64(distributionMessageRef),
+      },
     }),
 
   listSenderKeys: async (

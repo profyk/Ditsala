@@ -87,6 +87,7 @@ def harness(session: AsyncSession) -> Harness:
         devices=devices,
         blocks=blocks,
         contacts=contacts,
+        users=users,
         storage_provider=StubStorageProvider(),
         connection_manager=ConnectionManager(),
     )
@@ -179,6 +180,43 @@ async def test_prekey_bundle_requires_registered_device(harness: Harness) -> Non
         await harness.service.get_prekey_bundle(user_id=user.id, device_id=device.id)
 
 
+async def test_get_primary_device_id_returns_the_most_recently_registered_device(
+    harness: Harness,
+) -> None:
+    user, first_device = await _make_user_with_device(harness)
+    first_identity = await harness.service.register_identity_key(
+        first_device, public_identity_key=b"first-device-key", registration_id=1
+    )
+    # Postgres's `now()` is frozen for this whole test's transaction, so
+    # both identity keys' `created_at` would otherwise tie — force a real
+    # ordering the way two genuinely separate requests naturally would.
+    first_identity.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+
+    now = datetime.now(UTC)
+    second_device = await harness.devices.add(
+        Device(
+            user_id=user.id,
+            device_name="Second Device",
+            platform="android",
+            first_seen_at=now,
+            last_seen_at=now,
+            is_trusted=True,
+        )
+    )
+    await harness.service.register_identity_key(
+        second_device, public_identity_key=b"second-device-key", registration_id=2
+    )
+
+    primary = await harness.service.get_primary_device_id(user.id)
+    assert primary == second_device.id
+
+
+async def test_get_primary_device_id_requires_some_registered_device(harness: Harness) -> None:
+    user, _device = await _make_user_with_device(harness)
+    with pytest.raises(MessagingError, match="not completed key registration"):
+        await harness.service.get_primary_device_id(user.id)
+
+
 # --- conversations ---
 
 
@@ -223,8 +261,8 @@ async def test_group_conversation_creator_is_admin(harness: Harness) -> None:
     )
     assert conversation.type == "group"
 
-    conversations = await harness.service.list_conversations(bob.id)
-    assert conversation.id in [c.id for c in conversations]
+    summaries = await harness.service.list_conversations(bob.id)
+    assert conversation.id in [s.conversation.id for s in summaries]
 
 
 # --- messages ---
@@ -405,18 +443,29 @@ async def test_mute_archive_pin_flags(harness: Harness) -> None:
 
 async def test_sender_key_upload_and_list(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
-    bob, _bob_device = await _make_user_with_device(harness)
+    bob, bob_device = await _make_user_with_device(harness)
     conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
 
     await harness.service.upload_sender_key(
         device=alice_device,
         conversation_id=conversation.id,
+        recipient_device_id=bob_device.id,
         distribution_message_ref=b"distribution-bytes",
     )
 
-    keys = await harness.service.list_sender_keys(user_id=bob.id, conversation_id=conversation.id)
+    keys = await harness.service.list_sender_keys(
+        user_id=bob.id, conversation_id=conversation.id, recipient_device_id=bob_device.id
+    )
     assert len(keys) == 1
     assert keys[0].distribution_message_ref == b"distribution-bytes"
+
+    # A device that isn't the addressed recipient never sees this copy —
+    # each Sender Key distribution message is individually encrypted per
+    # recipient device, never one shared blob for the whole conversation.
+    unrelated_keys = await harness.service.list_sender_keys(
+        user_id=alice.id, conversation_id=conversation.id, recipient_device_id=alice_device.id
+    )
+    assert unrelated_keys == []
 
 
 # --- media ---
@@ -527,3 +576,92 @@ async def test_identity_key_change_demotes_trusted_contacts(harness: Harness) ->
     await harness.contacts.session.refresh(trusted_contact)
     assert trusted_contact.tier == "verified"
     assert trusted_contact.safety_number_verified_at is None
+
+
+# --- group titles, membership enrichment, conversation summaries ---
+
+
+async def test_group_conversation_can_be_created_with_a_title_and_renamed_by_an_admin(
+    harness: Harness,
+) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+
+    conversation = await harness.service.create_group_conversation(
+        alice.id, [bob.id], title="Weekend Trip"
+    )
+    assert conversation.title == "Weekend Trip"
+
+    renamed = await harness.service.rename_group_conversation(
+        user_id=alice.id, conversation_id=conversation.id, title="Weekend Trip 2026"
+    )
+    assert renamed.title == "Weekend Trip 2026"
+
+    with pytest.raises(MessagingError, match="admin"):
+        await harness.service.rename_group_conversation(
+            user_id=bob.id, conversation_id=conversation.id, title="Bob's Title"
+        )
+
+
+async def test_direct_conversation_cannot_be_renamed(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    with pytest.raises(MessagingError, match="Only group conversations"):
+        await harness.service.rename_group_conversation(
+            user_id=alice.id, conversation_id=conversation.id, title="Nope"
+        )
+
+
+async def test_list_conversation_members_is_enriched_and_membership_gated(
+    harness: Harness,
+) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    outsider, _d3 = await _make_user_with_device(harness)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    members = await harness.service.list_conversation_members(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert {m.display_name for m in members} == {alice.display_name, bob.display_name}
+    assert {m.user_id for m in members} == {alice.id, bob.id}
+    creator = next(m for m in members if m.user_id == alice.id)
+    assert creator.role == "admin"
+
+    with pytest.raises(MessagingError, match="Not a member"):
+        await harness.service.list_conversation_members(
+            user_id=outsider.id, conversation_id=conversation.id
+        )
+
+
+async def test_list_conversations_includes_last_message_timestamp(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    [summary] = [
+        s
+        for s in await harness.service.list_conversations(alice.id)
+        if s.conversation.id == conversation.id
+    ]
+    assert summary.last_message_at is None
+
+    await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"hi",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+
+    [summary] = [
+        s
+        for s in await harness.service.list_conversations(alice.id)
+        if s.conversation.id == conversation.id
+    ]
+    assert summary.last_message_at is not None

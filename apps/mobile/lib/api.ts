@@ -205,6 +205,7 @@ export interface Device {
 export interface CurrentUser {
   id: string;
   display_name: string;
+  avatar_url: string | null;
 }
 
 export const authApi = {
