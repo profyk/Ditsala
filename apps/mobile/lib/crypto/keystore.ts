@@ -1,8 +1,9 @@
 /**
- * Persists this device's E2EE key material (docs/adr/0013) in
- * expo-secure-store — Keychain (iOS) / Keystore (Android), the same
- * backing store lib/session.ts already trusts for tokens — and
- * orchestrates registering/replenishing keys with the backend.
+ * Persists this device's E2EE key material (docs/adr/0013) via
+ * lib/platform-storage.ts — Keychain (iOS) / Keystore (Android) /
+ * localStorage (web), the same backing store lib/session.ts already
+ * trusts for tokens — and orchestrates registering/replenishing keys
+ * with the backend.
  *
  * Each value is kept small and stored under its own key rather than one
  * big JSON blob: SecureStore has historically had a ~2048-byte per-value
@@ -10,10 +11,10 @@
  * plays it safe rather than assume a single large blob always fits.
  */
 
-import * as SecureStore from "expo-secure-store";
 import nacl from "tweetnacl";
 
 import { messagingApi } from "../messaging-api";
+import { deleteSecureItem, getSecureItem, setSecureItem } from "../platform-storage";
 import {
   type DeviceIdentity,
   type SignedPrekey,
@@ -79,29 +80,29 @@ function deserializeIdentity(stored: StoredIdentity): DeviceIdentity {
  * identity key is exactly what §23's safety-number re-verification
  * gates on, so this must stay stable across app restarts. */
 export async function ensureDeviceIdentity(): Promise<DeviceIdentity> {
-  const existing = await SecureStore.getItemAsync(IDENTITY_KEY);
+  const existing = await getSecureItem(IDENTITY_KEY);
   if (existing) {
     return deserializeIdentity(JSON.parse(existing) as StoredIdentity);
   }
   const identity = generateIdentity();
-  await SecureStore.setItemAsync(IDENTITY_KEY, JSON.stringify(serializeIdentity(identity)));
+  await setSecureItem(IDENTITY_KEY, JSON.stringify(serializeIdentity(identity)));
   return identity;
 }
 
 async function ensureRegistrationId(): Promise<number> {
-  const existing = await SecureStore.getItemAsync(REGISTRATION_ID_KEY);
+  const existing = await getSecureItem(REGISTRATION_ID_KEY);
   if (existing) return Number(existing);
   // Housekeeping value only (distinguishes a reinstall to the backend),
   // not a secret — still drawn from the same CSPRNG as everything else
   // here rather than Math.random(), to avoid mixing weak and strong
   // randomness practices in the same module.
   const id = new DataView(nacl.randomBytes(4).buffer).getUint32(0) % 0x3fff;
-  await SecureStore.setItemAsync(REGISTRATION_ID_KEY, String(id));
+  await setSecureItem(REGISTRATION_ID_KEY, String(id));
   return id;
 }
 
 async function loadSignedPrekey(): Promise<SignedPrekey | null> {
-  const raw = await SecureStore.getItemAsync(SIGNED_PREKEY_KEY);
+  const raw = await getSecureItem(SIGNED_PREKEY_KEY);
   if (!raw) return null;
   const stored = JSON.parse(raw) as StoredSignedPrekey;
   return {
@@ -119,16 +120,16 @@ async function saveSignedPrekey(prekey: SignedPrekey): Promise<void> {
     secretKey: toBase64(prekey.secretKey),
     signature: toBase64(prekey.signature),
   };
-  await SecureStore.setItemAsync(SIGNED_PREKEY_KEY, JSON.stringify(stored));
+  await setSecureItem(SIGNED_PREKEY_KEY, JSON.stringify(stored));
 }
 
 async function loadOneTimePrekeyIndex(): Promise<number[]> {
-  const raw = await SecureStore.getItemAsync(OTPK_INDEX_KEY);
+  const raw = await getSecureItem(OTPK_INDEX_KEY);
   return raw ? (JSON.parse(raw) as number[]) : [];
 }
 
 async function saveOneTimePrekeyIndex(keyIds: number[]): Promise<void> {
-  await SecureStore.setItemAsync(OTPK_INDEX_KEY, JSON.stringify(keyIds));
+  await setSecureItem(OTPK_INDEX_KEY, JSON.stringify(keyIds));
 }
 
 /**
@@ -141,7 +142,7 @@ async function saveOneTimePrekeyIndex(keyIds: number[]): Promise<void> {
 export async function registerWithBackend(accessToken: string): Promise<void> {
   const identity = await ensureDeviceIdentity();
   const registrationId = await ensureRegistrationId();
-  const alreadyRegistered = await SecureStore.getItemAsync(REGISTERED_FLAG_KEY);
+  const alreadyRegistered = await getSecureItem(REGISTERED_FLAG_KEY);
 
   if (!alreadyRegistered) {
     await messagingApi.registerIdentityKey(
@@ -149,7 +150,7 @@ export async function registerWithBackend(accessToken: string): Promise<void> {
       packIdentityPublicKey(identity),
       registrationId
     );
-    await SecureStore.setItemAsync(REGISTERED_FLAG_KEY, "true");
+    await setSecureItem(REGISTERED_FLAG_KEY, "true");
   }
 
   let signedPrekey = await loadSignedPrekey();
@@ -171,7 +172,7 @@ export async function registerWithBackend(accessToken: string): Promise<void> {
       : signedPrekey.keyId + 1;
     const freshKeys = generateOneTimePrekeys(ONE_TIME_PREKEY_BATCH_SIZE, nextKeyId);
     await Promise.all(
-      freshKeys.map((k) => SecureStore.setItemAsync(`${OTPK_PREFIX}${k.keyId}`, toBase64(k.secretKey)))
+      freshKeys.map((k) => setSecureItem(`${OTPK_PREFIX}${k.keyId}`, toBase64(k.secretKey)))
     );
     await messagingApi.uploadOneTimePrekeys(
       accessToken,
@@ -194,11 +195,11 @@ export async function findLocalPrekeySecret(prekeyId: number): Promise<Uint8Arra
     return signedPrekey.secretKey;
   }
 
-  const raw = await SecureStore.getItemAsync(`${OTPK_PREFIX}${prekeyId}`);
+  const raw = await getSecureItem(`${OTPK_PREFIX}${prekeyId}`);
   if (!raw) return null;
   const secretKey = fromBase64(raw);
 
-  await SecureStore.deleteItemAsync(`${OTPK_PREFIX}${prekeyId}`);
+  await deleteSecureItem(`${OTPK_PREFIX}${prekeyId}`);
   const index = await loadOneTimePrekeyIndex();
   await saveOneTimePrekeyIndex(index.filter((id) => id !== prekeyId));
 
