@@ -254,15 +254,29 @@ export interface RemoteDeviceAndPrekey extends RemotePrekey {
   deviceId: string;
 }
 
-/** V1 sends to a single device per recipient (docs/adr/0013's disclosed
- * multi-device-fan-out gap) — resolves *which* device via the backend's
- * "most recently registered" lookup, then fetches and verifies its
- * prekey bundle. */
-export async function fetchVerifiedPrekeyForUser(
+/**
+ * Real multi-device fan-out (docs/adr/0013): every device of this user
+ * that has completed key registration, each with its own verified
+ * prekey — a sender distributes a Sender Key to each one, so every
+ * device the recipient is signed into can decrypt, not just whichever
+ * one registered keys most recently. A device whose bundle fails to
+ * fetch or verify is skipped (logged via the thrown error being
+ * swallowed here) rather than failing the whole send — one stale
+ * device shouldn't block a message from reaching every other one.
+ */
+export async function fetchVerifiedPrekeysForAllDevices(
   accessToken: string,
   userId: string
-): Promise<RemoteDeviceAndPrekey> {
-  const deviceId = await messagingApi.getPrimaryDevice(accessToken, userId);
-  const prekey = await fetchVerifiedPrekey(accessToken, userId, deviceId);
-  return { ...prekey, deviceId };
+): Promise<RemoteDeviceAndPrekey[]> {
+  const deviceIds = await messagingApi.listDevicesForUser(accessToken, userId);
+  const results: RemoteDeviceAndPrekey[] = [];
+  for (const deviceId of deviceIds) {
+    try {
+      const prekey = await fetchVerifiedPrekey(accessToken, userId, deviceId);
+      results.push({ ...prekey, deviceId });
+    } catch {
+      // Skip this one device rather than failing the whole distribution.
+    }
+  }
+  return results;
 }

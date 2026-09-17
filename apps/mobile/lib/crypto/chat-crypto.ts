@@ -4,6 +4,16 @@
  * and other devices' verified prekeys), wire.ts (envelope encoding),
  * and messaging-api.ts (the actual REST calls). Screens call this
  * module, never e2ee.ts directly.
+ *
+ * Every conversation — direct or group — uses the same Sender Key
+ * design: this device generates one symmetric key per conversation and
+ * distributes it (via a 1:1-encrypted envelope) to every device of
+ * every other member, then encrypts actual messages with that one key.
+ * Unifying direct and group under Sender Keys, rather than a separate
+ * pairwise scheme for direct messages, is what gives a direct
+ * conversation real multi-device fan-out for free: any device that has
+ * decrypted the distribution message can decrypt every later message,
+ * not just whichever single device happened to receive it.
  */
 
 import * as SecureStore from "expo-secure-store";
@@ -20,7 +30,7 @@ import {
   toBase64,
   utf8ToBytes,
 } from "./e2ee";
-import { ensureDeviceIdentity, fetchVerifiedPrekeyForUser, findLocalPrekeySecret } from "./keystore";
+import { ensureDeviceIdentity, fetchVerifiedPrekeysForAllDevices, findLocalPrekeySecret } from "./keystore";
 import { packDirectEnvelope, packGroupEnvelope, unpackDirectEnvelope, unpackGroupEnvelope } from "./wire";
 
 const SENDER_KEY_PREFIX = "ditsala.e2ee.senderKey.";
@@ -34,9 +44,14 @@ async function saveOwnSenderKey(conversationId: string, key: Uint8Array): Promis
   await SecureStore.setItemAsync(`${SENDER_KEY_PREFIX}${conversationId}`, toBase64(key));
 }
 
-/** Ensures this device has a Sender Key for the conversation, generating
- * and distributing a fresh one (encrypted individually to every other
- * member's device) the first time it's needed. */
+/**
+ * Ensures this device has a Sender Key for the conversation, generating
+ * and distributing a fresh one — individually encrypted to every
+ * device of every other member — the first time it's needed. Cached
+ * locally after that, so this is a one-time cost per conversation
+ * (until a member's device roster changes — see docs/SECURITY_GAPS.md's
+ * note on redistributing to newly added devices).
+ */
 async function ensureOwnSenderKeyDistributed(
   accessToken: string,
   conversation: Conversation,
@@ -52,18 +67,25 @@ async function ensureOwnSenderKeyDistributed(
   const others = members.filter((m) => m.user_id !== ownUserId);
   await Promise.all(
     others.map(async (member) => {
-      const recipientPrekey = await fetchVerifiedPrekeyForUser(accessToken, member.user_id);
-      const envelope = encryptDirectMessage({
-        plaintext: senderKey,
-        senderIdentity: identity,
-        recipientPrekeyId: recipientPrekey.prekeyId,
-        recipientPrekeyPublicKey: recipientPrekey.prekeyPublicKey,
-      });
-      await messagingApi.uploadSenderKey(
+      const recipientDevices = await fetchVerifiedPrekeysForAllDevices(
         accessToken,
-        conversation.id,
-        recipientPrekey.deviceId,
-        packDirectEnvelope(envelope)
+        member.user_id
+      );
+      await Promise.all(
+        recipientDevices.map(async (recipientDevice) => {
+          const envelope = encryptDirectMessage({
+            plaintext: senderKey,
+            senderIdentity: identity,
+            recipientPrekeyId: recipientDevice.prekeyId,
+            recipientPrekeyPublicKey: recipientDevice.prekeyPublicKey,
+          });
+          await messagingApi.uploadSenderKey(
+            accessToken,
+            conversation.id,
+            recipientDevice.deviceId,
+            packDirectEnvelope(envelope)
+          );
+        })
       );
     })
   );
@@ -108,36 +130,15 @@ export async function encryptOutgoingMessage(
   ownUserId: string,
   plaintext: string
 ): Promise<Uint8Array> {
-  const plaintextBytes = utf8ToBytes(plaintext);
-
-  if (conversation.type === "group") {
-    const senderKey = await ensureOwnSenderKeyDistributed(
-      accessToken,
-      conversation,
-      members,
-      ownUserId
-    );
-    return packGroupEnvelope(encryptGroupMessage(plaintextBytes, senderKey));
-  }
-
-  const recipient = members.find((m) => m.user_id !== ownUserId);
-  if (!recipient) throw new Error("Direct conversation has no other member to encrypt to.");
-  const identity = await ensureDeviceIdentity();
-  const recipientPrekey = await fetchVerifiedPrekeyForUser(accessToken, recipient.user_id);
-  const envelope = encryptDirectMessage({
-    plaintext: plaintextBytes,
-    senderIdentity: identity,
-    recipientPrekeyId: recipientPrekey.prekeyId,
-    recipientPrekeyPublicKey: recipientPrekey.prekeyPublicKey,
-  });
-  return packDirectEnvelope(envelope);
+  const senderKey = await ensureOwnSenderKeyDistributed(accessToken, conversation, members, ownUserId);
+  return packGroupEnvelope(encryptGroupMessage(utf8ToBytes(plaintext), senderKey));
 }
 
 /**
  * Decrypts a received message. Returns `null` (never throws) on
- * failure — a message this device can't decrypt (wrong prekey already
- * consumed by another of the sender's messages, corrupted data, etc.)
- * should render as "couldn't decrypt this message," not crash the chat.
+ * failure — a message this device can't decrypt (the distribution
+ * message hasn't arrived yet, corrupted data, etc.) should render as
+ * "couldn't decrypt this message," not crash the chat.
  */
 export async function decryptIncomingMessage(
   accessToken: string,
@@ -146,18 +147,10 @@ export async function decryptIncomingMessage(
   ciphertext: Uint8Array
 ): Promise<string | null> {
   try {
-    if (conversation.type === "group") {
-      if (!senderDeviceId) return null;
-      const senderKey = await resolveSenderKeyFor(accessToken, conversation.id, senderDeviceId);
-      if (!senderKey) return null;
-      const plaintext = decryptGroupMessage(unpackGroupEnvelope(ciphertext), senderKey);
-      return plaintext ? bytesToUtf8(plaintext) : null;
-    }
-
-    const envelope = unpackDirectEnvelope(ciphertext);
-    const prekeySecret = await findLocalPrekeySecret(envelope.recipientPrekeyId);
-    if (!prekeySecret) return null;
-    const plaintext = decryptDirectMessage({ envelope, recipientPrekeySecretKey: prekeySecret });
+    if (!senderDeviceId) return null;
+    const senderKey = await resolveSenderKeyFor(accessToken, conversation.id, senderDeviceId);
+    if (!senderKey) return null;
+    const plaintext = decryptGroupMessage(unpackGroupEnvelope(ciphertext), senderKey);
     return plaintext ? bytesToUtf8(plaintext) : null;
   } catch {
     return null;
