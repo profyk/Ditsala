@@ -30,4 +30,11 @@ describe("roleHasPermission", () => {
   it("returns false for an unknown role rather than throwing", () => {
     expect(roleHasPermission("nonexistent_role", "dashboard:view")).toBe(false);
   });
+
+  it("restricts admin user management to super_admin only", () => {
+    expect(roleHasPermission("super_admin", "admin_users:action")).toBe(true);
+    expect(roleHasPermission("kyc_reviewer", "admin_users:view")).toBe(false);
+    expect(roleHasPermission("trust_safety", "admin_users:view")).toBe(false);
+    expect(roleHasPermission("support_readonly", "admin_users:view")).toBe(false);
+  });
 });

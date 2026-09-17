@@ -112,6 +112,18 @@ export interface SystemConfigEntry {
   updated_by_admin_id: string | null;
 }
 
+// --- admin user management (super_admin only) ---
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  mfa_enrolled: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
 // --- KYC review ---
 
 export interface KycDocument {
@@ -215,6 +227,25 @@ export const adminApi = {
       method: "PUT",
       token,
       body: { value, reason },
+    }),
+
+  // admin user management
+  listAdmins: (token: string) =>
+    request<AdminUserSummary[]>("/admin/admin-users", { method: "GET", token }),
+
+  createAdmin: (token: string, email: string, password: string, role: string) =>
+    request<AdminUserSummary>("/admin/admin-users", { token, body: { email, password, role } }),
+
+  setAdminActive: (token: string, adminId: string, isActive: boolean) =>
+    request<AdminUserSummary>(`/admin/admin-users/${adminId}/active`, {
+      token,
+      body: { is_active: isActive },
+    }),
+
+  changeAdminRole: (token: string, adminId: string, role: string) =>
+    request<AdminUserSummary>(`/admin/admin-users/${adminId}/role`, {
+      token,
+      body: { role },
     }),
 };
 

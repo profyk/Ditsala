@@ -15,6 +15,7 @@ const NAV_ITEMS: { href: string; label: string; permission: Permission }[] = [
   { href: "/invitations", label: "Invitations", permission: "invitations:view" },
   { href: "/audit-log", label: "Audit Log", permission: "audit:view" },
   { href: "/system-config", label: "System Configuration", permission: "system_config:view" },
+  { href: "/admins", label: "Admins", permission: "admin_users:view" },
 ];
 
 export function Sidebar() {

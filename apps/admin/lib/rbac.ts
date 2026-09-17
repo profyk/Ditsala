@@ -19,7 +19,11 @@ export type Permission =
   | "invitations:action"
   | "audit:view"
   | "system_config:view"
-  | "system_config:action";
+  | "system_config:action"
+  | "data_subject_requests:view"
+  | "data_subject_requests:action"
+  | "admin_users:view"
+  | "admin_users:action";
 
 const ALL_PERMISSIONS: Permission[] = [
   "dashboard:view",
@@ -35,6 +39,10 @@ const ALL_PERMISSIONS: Permission[] = [
   "audit:view",
   "system_config:view",
   "system_config:action",
+  "data_subject_requests:view",
+  "data_subject_requests:action",
+  "admin_users:view",
+  "admin_users:action",
 ];
 
 export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
@@ -47,6 +55,8 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "users:view",
     "users:action",
     "security:view",
+    "data_subject_requests:view",
+    "data_subject_requests:action",
   ],
   support_readonly: ["dashboard:view", "users:view"],
 };
