@@ -170,11 +170,11 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 ### CI/CD deploy infrastructure is written but not provisioned or build-tested (spec §35)
 
-**What's actually verified now:** the backend Dockerfile builds and runs for real — a manual Railway deploy (via the dashboard, not the GitHub Actions workflow) is live at `https://ditsala-production.up.railway.app` and `GET /api/v1/health` returns 200, proving `entrypoint.sh`'s `alembic upgrade head` succeeded against the real Supabase database and uvicorn is serving. That's a genuine, running deployment, not just reviewed config.
+**What's actually verified now:** the backend, `apps/admin`, `apps/meet`, and `apps/mobile`'s web export all auto-deploy for real on every push to `main`, via Railway's and Vercel's own native GitHub integrations (no GitHub Actions workflow or secret involved — see `docs/CI_CD.md` §1 and the "Resolved" note below). `GET /api/v1/health` returns 200 live at `https://ditsala-production.up.railway.app`, and the live OpenAPI schema reflects the exact code from the latest push, confirming `entrypoint.sh`'s `alembic upgrade head` runs against the real Supabase database on every deploy, not just once manually.
 
-**What's still missing:** the automated `backend-deploy-railway.yml` GitHub Actions path is not yet authorized (`RAILWAY_TOKEN`/`RAILWAY_SERVICE_ID` secrets not set — see ADR-worthy incident: the workflow originally targeted a service by guessed name, causing a silent deploy to an unconfigured service; fixed to target by ID, see `docs/CI_CD.md` §3's revised setup steps). AWS ECS, Vercel, and EAS submit are all still unexercised — no accounts/credentials wired for those in this environment.
+**What's still missing:** AWS ECS (the replica/backup path) and EAS submit (app store submission) remain genuinely unprovisioned and unexercised — no AWS account/IAM role or App Store Connect/Google Play credentials wired in this environment. Neither blocks the live product; ECS is a deliberate backup path and EAS submit is only needed for native app store releases.
 
-**Tracked for:** Add `RAILWAY_SERVICE_ID` + a Project (not personal) `RAILWAY_TOKEN` so future pushes auto-deploy. Follow `docs/CI_CD.md` section by section for AWS/Vercel/EAS's remaining one-time setup.
+**Tracked for:** Follow `docs/CI_CD.md` §4 (AWS ECS) and §6 (EAS submit) for their one-time setup whenever a backup deploy path or a native app store release is actually needed.
 
 ## Resolved
 
@@ -185,3 +185,7 @@ Resolved in Phase 8 — see `docs/adr/0011-admin-rbac-db-driven.md`. `require_pe
 ### DITSALA Code breach-corpus check (spec §15)
 
 Resolved in Phase 8 — `core/security.py::is_breached_code` calls Have I Been Pwned's Pwned Passwords k-anonymity API (only a 5-character SHA-1 prefix ever leaves the process, never the code itself), wired into both onboarding's `set_ditsala_code` and recovery's `complete`. Fails open on any network/API problem so signup/recovery availability never depends on a third party's uptime. Verified with real calls to the live HIBP API in tests (a known-breached password correctly flagged, a random string correctly allowed) — not mocked.
+
+### Redundant, secret-less GitHub Actions deploy workflows kept CI permanently red
+
+`backend-deploy-railway.yml`, `admin-deploy.yml`, and `mobile-vercel-deploy.yml` duplicated deploy behavior Railway/Vercel's own native GitHub integrations already performed, and none of their required secrets (`RAILWAY_SERVICE_ID`, `VERCEL_TOKEN`, etc.) were ever set — every push showed 2-3 failing workflow runs alongside the real, working native deploys. Also surfaced and fixed in the same pass: `ci.yml`'s `ruff check .` (the whole `backend/` directory, not just `app/`) had been failing since the first Alembic migration using the default `Union[...]` template syntax was committed — nobody had run `ruff check .` locally, only `ruff check app`. Removed the three redundant workflows (native integrations already cover the same deploys with no secrets needed) and ran `ruff check . --fix` across every migration file. `docs/CI_CD.md` rewritten to match.

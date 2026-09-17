@@ -2,9 +2,10 @@ name: Deploy backend (AWS ECS — replica/backup)
 
 # AWS hosts the backup/replica path behind an Application Load Balancer
 # (see docs/CI_CD.md) — deliberately manual-dispatch, not automatic on
-# every push, since Railway (backend-deploy-railway.yml) is the primary
-# path this promotes alongside. Requires the one-time ECS/ALB/ECR setup
-# documented in docs/CI_CD.md before this workflow can succeed.
+# every push, since Railway (native GitHub integration, no workflow of
+# its own) is the primary path this promotes alongside. Requires the
+# one-time ECS/ALB/ECR setup documented in docs/CI_CD.md before this
+# workflow can succeed.
 on:
   workflow_dispatch:
     inputs:
