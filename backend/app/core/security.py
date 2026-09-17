@@ -52,6 +52,35 @@ def validate_ditsala_code_strength(code: str) -> bool:
     return len(code) >= MIN_CODE_LENGTH and any(char.isdigit() for char in code)
 
 
+PIN_LENGTH = 6
+_COMMON_WEAK_PINS = frozenset(
+    {"000000", "111111", "222222", "333333", "444444", "555555", "666666",
+     "777777", "888888", "999999", "123456", "654321", "123123", "112233",
+     "121212", "010203", "202020"}
+)  # fmt: skip
+
+
+def validate_pin_strength(pin: str) -> bool:
+    """ADR 0014 — normal-tier accounts use a 6-digit PIN instead of the
+    original alphanumeric DITSALA Code; VIP keeps that original rule
+    (`validate_ditsala_code_strength`) unchanged."""
+    return len(pin) == PIN_LENGTH and pin.isdigit()
+
+
+def is_weak_pin(pin: str) -> bool:
+    """The numeric-PIN equivalent of `is_breached_code`'s HIBP check —
+    a 6-digit space is too small for a breach-corpus lookup to say much,
+    so this instead rejects the patterns real PIN attackers try first:
+    every digit the same, a purely sequential run, and a short blocklist
+    of common picks."""
+    if pin in _COMMON_WEAK_PINS:
+        return True
+    digits = [int(d) for d in pin]
+    ascending = all(b - a == 1 for a, b in zip(digits, digits[1:], strict=False))
+    descending = all(a - b == 1 for a, b in zip(digits, digits[1:], strict=False))
+    return ascending or descending
+
+
 async def is_breached_code(code: str) -> bool:
     """
     §15 breach-corpus check, via Have I Been Pwned's Pwned Passwords

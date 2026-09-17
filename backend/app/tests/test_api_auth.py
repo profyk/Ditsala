@@ -259,6 +259,8 @@ async def test_refresh_and_device_management_via_api(
     )
     assert me.status_code == 200, me.text
     assert me.json()["id"] == str(user.id)
+    assert me.json()["account_tier"] == "normal"
+    assert me.json()["identifier"] == user.phone
 
     devices = await client.get(
         "/api/v1/auth/devices", headers={"Authorization": f"Bearer {access_token}"}

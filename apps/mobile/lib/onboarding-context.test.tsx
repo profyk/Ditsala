@@ -18,6 +18,7 @@ describe("useOnboarding", () => {
     const { result } = renderHook(() => useOnboarding(), { wrapper: OnboardingProvider });
     expect(result.current.token).toBeNull();
     expect(result.current.accountState).toBeNull();
+    expect(result.current.codeKind).toBe("code");
   });
 
   it("setSession stores the token and account state", () => {
@@ -29,6 +30,17 @@ describe("useOnboarding", () => {
 
     expect(result.current.token).toBe("a.jwt.token");
     expect(result.current.accountState).toBe("pending_email");
+    expect(result.current.codeKind).toBe("code");
+  });
+
+  it("setSession accepts ADR 0014's pin codeKind for phone-first signup", () => {
+    const { result } = renderHook(() => useOnboarding(), { wrapper: OnboardingProvider });
+
+    act(() => {
+      result.current.setSession("a.jwt.token", "pending_phone", "pin");
+    });
+
+    expect(result.current.codeKind).toBe("pin");
   });
 
   it("setAccountState updates state without touching the token", () => {
@@ -57,5 +69,18 @@ describe("useOnboarding", () => {
 
     expect(result.current.token).toBeNull();
     expect(result.current.accountState).toBeNull();
+  });
+
+  it("clear resets codeKind back to the default", () => {
+    const { result } = renderHook(() => useOnboarding(), { wrapper: OnboardingProvider });
+
+    act(() => {
+      result.current.setSession("a.jwt.token", "pending_phone", "pin");
+    });
+    act(() => {
+      result.current.clear();
+    });
+
+    expect(result.current.codeKind).toBe("code");
   });
 });

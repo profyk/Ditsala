@@ -13,6 +13,15 @@ class SignupRequest(BaseModel):
     national_id: str = Field(min_length=4, max_length=64)
 
 
+class PhoneSignupRequest(BaseModel):
+    """ADR 0014 — the entire normal-tier signup: a phone number (E.164,
+    country code included) and a display name. No email/DOB/national ID."""
+
+    phone: str = Field(min_length=8, max_length=32)
+    display_name: str = Field(min_length=1, max_length=120)
+    invite_code: str | None = None
+
+
 class OnboardingSessionResponse(BaseModel):
     onboarding_token: str
     account_state: str
@@ -39,7 +48,10 @@ class NextOfKinRequest(BaseModel):
 
 
 class DitsalaCodeRequest(BaseModel):
-    code: str = Field(min_length=8, max_length=128)
+    # 6 for a normal-tier PIN, up to 128 for VIP's alphanumeric code —
+    # OnboardingService.set_ditsala_code applies the precise, tier-aware
+    # rule; this is just a loose outer bound covering both.
+    code: str = Field(min_length=6, max_length=128)
 
 
 class AccountStateResponse(BaseModel):

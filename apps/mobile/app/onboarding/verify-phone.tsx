@@ -37,7 +37,14 @@ export default function VerifyPhone() {
     try {
       const result = await onboardingApi.confirmPhone(token, code.trim());
       setAccountState(result.account_state);
-      router.push("/onboarding/kyc-document");
+      // ADR 0014: normal tier skips KYC and next-of-kin entirely, landing
+      // straight on "pending_code" — only a (legacy, full-signup) VIP
+      // account still needs the document/liveness/next-of-kin chain.
+      if (result.account_state === "pending_code") {
+        router.push("/onboarding/set-code");
+      } else {
+        router.push("/onboarding/kyc-document");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not verify that code.");
     } finally {

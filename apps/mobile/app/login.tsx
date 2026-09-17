@@ -6,7 +6,7 @@ import { Button } from "../components/Button";
 import { Screen } from "../components/Screen";
 import { TextField } from "../components/TextField";
 import { ApiError, authApi } from "../lib/api";
-import { saveSession } from "../lib/session";
+import { saveIdentity, saveSession } from "../lib/session";
 
 /**
  * ADR 0012 — this screen now branches on `requires_liveness`: a `vip`
@@ -40,6 +40,8 @@ export default function Login() {
         setAwaitingLiveness(true);
       } else if (result.access_token && result.refresh_token) {
         await saveSession(result.access_token, result.refresh_token);
+        const me = await authApi.getMe(result.access_token);
+        await saveIdentity(me.identifier, me.account_tier);
         router.replace("/home");
       } else {
         setError("Something unexpected happened. Please try again.");
@@ -58,6 +60,8 @@ export default function Login() {
     try {
       const session = await authApi.loginComplete(loginToken);
       await saveSession(session.access_token, session.refresh_token);
+      const me = await authApi.getMe(session.access_token);
+      await saveIdentity(me.identifier, me.account_tier);
       router.replace("/home");
     } catch (err) {
       setError(

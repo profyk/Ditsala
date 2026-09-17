@@ -27,6 +27,7 @@ from app.schemas.onboarding import (
     KycSdkTokenResponse,
     NextOfKinRequest,
     OnboardingSessionResponse,
+    PhoneSignupRequest,
     SignupRequest,
 )
 from app.services.factory import get_kyc_provider
@@ -61,6 +62,21 @@ async def signup(
             national_id_hash=hash_national_id(
                 body.national_id, pepper=settings.national_id_pepper
             ),
+        )
+    except OnboardingError as exc:
+        raise _as_http_error(exc) from exc
+    token = create_onboarding_token(user.id, jwt_secret=settings.jwt_secret)
+    return OnboardingSessionResponse(onboarding_token=token, account_state=user.account_state)
+
+
+@router.post("/signup/phone", response_model=OnboardingSessionResponse, status_code=201)
+async def signup_phone(
+    body: PhoneSignupRequest, service: OnboardingServiceDep, settings: SettingsDep
+) -> OnboardingSessionResponse:
+    """ADR 0014 — the normal-tier signup: phone + display name only."""
+    try:
+        user = await service.start_phone_signup(
+            phone=body.phone, display_name=body.display_name, invite_code=body.invite_code
         )
     except OnboardingError as exc:
         raise _as_http_error(exc) from exc

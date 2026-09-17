@@ -21,7 +21,9 @@ from app.core.security import (
     generate_numeric_code,
     hash_secret,
     is_breached_code,
+    is_weak_pin,
     validate_ditsala_code_strength,
+    validate_pin_strength,
     verify_secret,
 )
 from app.domain.auth.service import AuthService
@@ -106,6 +108,7 @@ class RecoveryService:
             raise RecoveryError("No matching account found.")
         if user.account_state != "active":
             raise RecoveryError("No matching account found.")
+        assert user.email is not None  # guaranteed: get_by_email only matches a set email
 
         request = await self._recovery_requests.add(AccountRecoveryRequest(user_id=user.id))
         await self._send_email_code(user)
@@ -114,6 +117,7 @@ class RecoveryService:
         return request
 
     async def _send_email_code(self, user: User) -> None:
+        assert user.email is not None  # only called from the email+phone recovery path
         code = generate_numeric_code()
         await self._email_verifications.add(
             EmailVerification(
@@ -156,6 +160,46 @@ class RecoveryService:
         ):
             raise RecoveryError("Incorrect code.")
         request.phone_verified = True
+
+    # --- ADR 0014: normal-tier phone-only recovery (no email, no liveness) ---
+
+    async def start_phone_recovery(self, *, phone: str) -> AccountRecoveryRequest:
+        """A `normal`-tier account has no email and no liveness
+        enrollment — the only real re-verification available is the
+        phone number itself. `vip` accounts are explicitly rejected
+        here; a lighter recovery flow would undercut exactly the
+        verified-identity promise VIP is sold on, so they keep the
+        original email+phone+liveness `start_recovery` unchanged."""
+        await self._rate_limiter.hit(
+            f"recovery:start_phone:{phone}",
+            limit=RECOVERY_START_LIMIT,
+            window_seconds=RECOVERY_START_WINDOW_SECONDS,
+        )
+        user = await self._users.get_by_phone(phone)
+        if user is None or user.account_state != "active" or user.account_tier != "normal":
+            # Same generic message regardless of which check failed —
+            # this endpoint must not be usable to enumerate accounts or
+            # tiers.
+            raise RecoveryError("No matching account found.")
+
+        request = await self._recovery_requests.add(AccountRecoveryRequest(user_id=user.id))
+        await self._otp_provider.start_verification(phone_number=user.phone)
+        await self._log(request, "recovery.phone_started")
+        return request
+
+    async def confirm_phone_recovery(
+        self, *, recovery_request_id: uuid.UUID, code: str
+    ) -> None:
+        request = await self._get_request(recovery_request_id)
+        user = await self._users.get(request.user_id)
+        assert user is not None
+        if not await self._otp_provider.check_verification(
+            phone_number=user.phone, code=code
+        ):
+            raise RecoveryError("Incorrect code.")
+        request.phone_verified = True
+        request.status = "phone_verified"
+        await self._notify_next_of_kin(request)
 
     # --- §33 step 2: SmartSelfie Authentication (1:1 match) ---
 
@@ -219,20 +263,37 @@ class RecoveryService:
         push_token: str | None,
     ) -> tuple[User, Device, str, str]:
         request = await self._get_request(recovery_request_id)
-        if request.status not in ("liveness_passed", "next_of_kin_flagged"):
-            raise RecoveryError(
-                f"Cannot complete recovery in status {request.status!r} — "
-                "SmartSelfie Authentication must pass first."
-            )
-        if not validate_ditsala_code_strength(new_ditsala_code):
-            raise RecoveryError("DITSALA Code does not meet strength requirements.")
-        if await is_breached_code(new_ditsala_code):
-            raise RecoveryError(
-                "This code has appeared in a known data breach — choose a different one."
-            )
-
         user = await self._users.get(request.user_id)
         assert user is not None
+
+        # ADR 0014: a `normal`-tier account completes via the phone-only
+        # path (no liveness step exists for it) and sets a PIN, not the
+        # original alphanumeric code.
+        if user.account_tier == "normal":
+            if request.status != "phone_verified":
+                raise RecoveryError(
+                    f"Cannot complete recovery in status {request.status!r} — "
+                    "confirm your phone number first."
+                )
+            if not validate_pin_strength(new_ditsala_code):
+                raise RecoveryError("Your PIN must be exactly 6 digits.")
+            if is_weak_pin(new_ditsala_code):
+                raise RecoveryError(
+                    "That PIN is too easy to guess — avoid repeated or sequential digits."
+                )
+        else:
+            if request.status not in ("liveness_passed", "next_of_kin_flagged"):
+                raise RecoveryError(
+                    f"Cannot complete recovery in status {request.status!r} — "
+                    "SmartSelfie Authentication must pass first."
+                )
+            if not validate_ditsala_code_strength(new_ditsala_code):
+                raise RecoveryError("DITSALA Code does not meet strength requirements.")
+            if await is_breached_code(new_ditsala_code):
+                raise RecoveryError(
+                    "This code has appeared in a known data breach — choose a different one."
+                )
+
         user.ditsala_code_hash = hash_secret(new_ditsala_code)
         user.code_set_at = datetime.now(UTC)
         user.failed_code_attempts = 0

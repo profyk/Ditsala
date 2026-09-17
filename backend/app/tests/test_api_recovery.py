@@ -93,6 +93,8 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
 
 
 async def _make_active_user(session: AsyncSession) -> User:
+    """VIP-shaped fixture (ADR 0014 split recovery `complete()` by tier —
+    this file's email+liveness flow only applies to `vip`)."""
     user = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -100,7 +102,25 @@ async def _make_active_user(session: AsyncSession) -> User:
         date_of_birth=datetime(1990, 1, 1),
         national_id_hash=uuid.uuid4().hex,
         account_state="active",
+        account_tier="vip",
         ditsala_code_hash="old-code-hash",
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def _make_normal_phone_only_user(session: AsyncSession) -> User:
+    """ADR 0014 — a phone-first signup: no email, `normal` tier."""
+    user = User(
+        email=None,
+        phone=f"+27{uuid.uuid4().int % 10**9}",
+        display_name="API Phone Recovery Test User",
+        date_of_birth=None,
+        national_id_hash=None,
+        account_state="active",
+        account_tier="normal",
+        ditsala_code_hash="old-pin-hash",
     )
     session.add(user)
     await session.flush()
@@ -227,5 +247,69 @@ async def test_recovery_requires_valid_ids(client: AsyncClient) -> None:
     r = await client.post(
         "/api/v1/recovery/email/confirm",
         json={"recovery_request_id": str(uuid.uuid4()), "code": "123456"},
+    )
+    assert r.status_code == 400
+
+
+# --- ADR 0014: normal-tier phone-only recovery over HTTP ---
+
+
+async def test_phone_recovery_full_flow_via_http(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_normal_phone_only_user(session)
+
+    r = await client.post("/api/v1/recovery/start/phone", json={"phone": user.phone})
+    assert r.status_code == 200, r.text
+    request_id = r.json()["id"]
+    assert r.json()["status"] == "initiated"
+
+    r = await client.post(
+        "/api/v1/recovery/phone/confirm-recovery",
+        json={"recovery_request_id": request_id, "code": "123456"},
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.post(
+        "/api/v1/recovery/complete",
+        json={
+            "recovery_request_id": request_id,
+            "new_ditsala_code": "483920",
+            "device_name": "New Phone",
+            "platform": "android",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"]
+    assert r.json()["refresh_token"]
+
+
+async def test_phone_recovery_start_rejects_a_vip_account_via_http(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)  # VIP-tier fixture
+    r = await client.post("/api/v1/recovery/start/phone", json={"phone": user.phone})
+    assert r.status_code == 400
+
+
+async def test_phone_recovery_complete_rejects_weak_pin_via_http(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_normal_phone_only_user(session)
+    r = await client.post("/api/v1/recovery/start/phone", json={"phone": user.phone})
+    request_id = r.json()["id"]
+    await client.post(
+        "/api/v1/recovery/phone/confirm-recovery",
+        json={"recovery_request_id": request_id, "code": "123456"},
+    )
+
+    r = await client.post(
+        "/api/v1/recovery/complete",
+        json={
+            "recovery_request_id": request_id,
+            "new_ditsala_code": "111111",
+            "device_name": "New Phone",
+            "platform": "android",
+        },
     )
     assert r.status_code == 400

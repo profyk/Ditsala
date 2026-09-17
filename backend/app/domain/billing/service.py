@@ -64,12 +64,36 @@ class VipUpgradeService:
 
     # --- step 1: payment ---
 
-    async def start_upgrade(self, user: User) -> PaymentInitiation:
+    async def start_upgrade(
+        self,
+        user: User,
+        *,
+        email: str | None = None,
+        date_of_birth: datetime | None = None,
+        national_id_hash: str | None = None,
+    ) -> PaymentInitiation:
         if user.account_tier == "vip":
             raise VipUpgradeError("Account is already VIP.")
         in_progress = await self._vip_subscriptions.get_latest_for_user(user.id)
         if in_progress is not None and in_progress.status in ("pending_payment", "awaiting_kyc"):
             raise VipUpgradeError("A VIP upgrade is already in progress for this account.")
+
+        # ADR 0014: a normal-tier phone-only signup has none of these —
+        # VIP identifies by email (its login uses email + PIN, unlike
+        # normal's phone + PIN), so upgrading is the real point they get
+        # collected. A legacy account that already has them (the old
+        # email-first signup path) isn't asked again.
+        if user.email is None:
+            if email is None or date_of_birth is None or national_id_hash is None:
+                raise VipUpgradeError(
+                    "Email, date of birth, and national ID are required to upgrade to VIP."
+                )
+            existing = await self._users.get_by_email(email)
+            if existing is not None and existing.id != user.id:
+                raise VipUpgradeError("An account with this email already exists.")
+            user.email = email
+            user.date_of_birth = date_of_birth
+            user.national_id_hash = national_id_hash
 
         amount_cents, currency = await self._get_pricing()
         initiation = await self._payment_provider.initiate_payment(

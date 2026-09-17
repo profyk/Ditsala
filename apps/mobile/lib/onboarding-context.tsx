@@ -3,10 +3,18 @@ import type { PropsWithChildren } from "react";
 
 import type { AccountState } from "./api";
 
+/** ADR 0014 — which shape the final onboarding/code screen should collect:
+ * `"pin"` for the normal-tier phone-first signup (a 6-digit PIN), `"code"`
+ * for the legacy full email/KYC signup (the original alphanumeric DITSALA
+ * Code). Defaults to `"code"` so an unset context stays backward compatible
+ * with the pre-ADR-0014 flow. */
+export type CodeKind = "pin" | "code";
+
 interface OnboardingContextValue {
   token: string | null;
   accountState: AccountState | null;
-  setSession: (token: string, accountState: AccountState) => void;
+  codeKind: CodeKind;
+  setSession: (token: string, accountState: AccountState, codeKind?: CodeKind) => void;
   setAccountState: (accountState: AccountState) => void;
   clear: () => void;
 }
@@ -23,11 +31,16 @@ const OnboardingContext = createContext<OnboardingContextValue | null>(null);
 export function OnboardingProvider({ children }: PropsWithChildren) {
   const [token, setToken] = useState<string | null>(null);
   const [accountState, setAccountStateValue] = useState<AccountState | null>(null);
+  const [codeKind, setCodeKind] = useState<CodeKind>("code");
 
-  const setSession = useCallback((newToken: string, newAccountState: AccountState) => {
-    setToken(newToken);
-    setAccountStateValue(newAccountState);
-  }, []);
+  const setSession = useCallback(
+    (newToken: string, newAccountState: AccountState, newCodeKind: CodeKind = "code") => {
+      setToken(newToken);
+      setAccountStateValue(newAccountState);
+      setCodeKind(newCodeKind);
+    },
+    []
+  );
 
   const setAccountState = useCallback((newAccountState: AccountState) => {
     setAccountStateValue(newAccountState);
@@ -36,11 +49,12 @@ export function OnboardingProvider({ children }: PropsWithChildren) {
   const clear = useCallback(() => {
     setToken(null);
     setAccountStateValue(null);
+    setCodeKind("code");
   }, []);
 
   const value = useMemo(
-    () => ({ token, accountState, setSession, setAccountState, clear }),
-    [token, accountState, setSession, setAccountState, clear]
+    () => ({ token, accountState, codeKind, setSession, setAccountState, clear }),
+    [token, accountState, codeKind, setSession, setAccountState, clear]
   );
 
   return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>;

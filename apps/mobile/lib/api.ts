@@ -124,9 +124,19 @@ export interface SignupPayload {
   national_id: string;
 }
 
+/** ADR 0014 — the entire normal-tier signup: phone (E.164) + display name. */
+export interface PhoneSignupPayload {
+  phone: string;
+  display_name: string;
+  invite_code?: string | null;
+}
+
 export const onboardingApi = {
   signup: (payload: SignupPayload) =>
     request<OnboardingSession>("/onboarding/signup", { body: payload }),
+
+  signupPhone: (payload: PhoneSignupPayload) =>
+    request<OnboardingSession>("/onboarding/signup/phone", { body: payload }),
 
   getStatus: (token: string) =>
     request<AccountStateResponse>("/onboarding/status", { method: "GET", token }),
@@ -202,10 +212,15 @@ export interface Device {
   revoked_at: string | null;
 }
 
+/** ADR 0014: `account_tier` gates tier-specific UI (e.g. hiding logout for
+ * `normal`); `identifier` is what `authApi.loginStart` expects — phone for
+ * `normal`, email for `vip`. */
 export interface CurrentUser {
   id: string;
   display_name: string;
   avatar_url: string | null;
+  account_tier: "normal" | "vip";
+  identifier: string;
 }
 
 export const authApi = {

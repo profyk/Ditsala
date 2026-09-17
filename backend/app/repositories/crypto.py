@@ -14,16 +14,27 @@ class IdentityKeyRepository(Repository[IdentityKey]):
         return result.scalar_one_or_none()
 
     async def get_most_recent_for_user(self, user_id: uuid.UUID) -> IdentityKey | None:
-        """V1 sends to a single device per recipient (docs/adr/0013 —
-        multi-device fan-out is a disclosed, not-yet-built gap), so a
-        sender needs *a* device to encrypt to: the one whose keys were
-        registered most recently."""
+        """Used by the legacy single-device prekey-bundle lookup — real
+        multi-device fan-out (`list_for_user` below) is what a sender
+        actually uses to distribute a Sender Key to every device."""
         result = await self.session.execute(
             self._select()
             .where(IdentityKey.user_id == user_id)
             .order_by(IdentityKey.created_at.desc())
         )
         return result.scalars().first()
+
+    async def list_for_user(self, user_id: uuid.UUID) -> list[IdentityKey]:
+        """Every device of this user that has completed key registration
+        — a sender needs all of them to give every device of a recipient
+        a real chance to decrypt (docs/adr/0013's Sender-Key-for-
+        everything design)."""
+        result = await self.session.execute(
+            self._select()
+            .where(IdentityKey.user_id == user_id)
+            .order_by(IdentityKey.created_at.asc())
+        )
+        return list(result.scalars().all())
 
 
 class SignedPrekeyRepository(Repository[SignedPrekey]):

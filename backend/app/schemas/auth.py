@@ -66,10 +66,17 @@ class DeviceResponse(BaseModel):
 
 class CurrentUserResponse(BaseModel):
     """Minimal 'who am I' — e.g. so the client can render its own QR code
-    for Circle's add-contact flow (§22) without decoding its own JWT."""
+    for Circle's add-contact flow (§22) without decoding its own JWT.
+    `account_tier` and the login `identifier` (ADR 0014: phone for
+    `normal`, email for `vip`) let the client gate its own UI — e.g.
+    hiding logout for `normal` tier (§14: "no login, no logout, just
+    exit") and re-authenticating for a PIN unlock without re-asking the
+    user for their phone number."""
 
     id: uuid.UUID
     display_name: str
     avatar_url: str | None = None
+    account_tier: str
+    identifier: str
 
     model_config = {"from_attributes": True}

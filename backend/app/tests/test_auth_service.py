@@ -83,6 +83,14 @@ async def _make_user(
     return await users.add(user)
 
 
+def _email_of(user: User) -> str:
+    """`User.email` is nullable now (ADR 0014) but every fixture in this
+    file sets a real one — this just gives mypy the narrowing a plain
+    attribute access loses across intervening `await`s."""
+    assert user.email is not None
+    return user.email
+
+
 async def test_complete_onboarding_device_activates_account(harness: Harness) -> None:
     user = await _make_user(harness.users, state="pending_code", code="correct-horse-9")
 
@@ -108,7 +116,7 @@ async def test_full_login_flow(harness: Harness) -> None:
     user = await _make_user(harness.users, state="active", code="correct-horse-9")
 
     result = await harness.service.start_login(
-        identifier=user.email,
+        identifier=_email_of(user),
         ditsala_code="correct-horse-9",
         device_name="Pixel",
         platform="android",
@@ -145,7 +153,7 @@ async def test_normal_tier_login_is_single_factor(harness: Harness) -> None:
     )
 
     result = await harness.service.start_login(
-        identifier=user.email,
+        identifier=_email_of(user),
         ditsala_code="correct-horse-9",
         device_name="Pixel",
         platform="android",
@@ -165,7 +173,7 @@ async def test_login_rejects_wrong_code(harness: Harness) -> None:
 
     with pytest.raises(AuthError, match="Invalid credentials"):
         await harness.service.start_login(
-            identifier=user.email,
+            identifier=_email_of(user),
             ditsala_code="totally-wrong",
             device_name="Pixel",
             platform="android",
@@ -177,7 +185,7 @@ async def test_login_rejects_wrong_code(harness: Harness) -> None:
 async def test_login_completes_before_liveness_passes_is_rejected(harness: Harness) -> None:
     user = await _make_user(harness.users, state="active", code="correct-horse-9")
     result = await harness.service.start_login(
-        identifier=user.email,
+        identifier=_email_of(user),
         ditsala_code="correct-horse-9",
         device_name="Pixel",
         platform="android",
@@ -197,7 +205,7 @@ async def test_lockout_after_max_failed_attempts(harness: Harness) -> None:
     for _ in range(MAX_CODE_ATTEMPTS):
         with pytest.raises(AuthError):
             await harness.service.start_login(
-                identifier=user.email,
+                identifier=_email_of(user),
                 ditsala_code="wrong",
                 device_name="Pixel",
                 platform="android",
@@ -210,7 +218,7 @@ async def test_lockout_after_max_failed_attempts(harness: Harness) -> None:
 
     with pytest.raises(AuthError, match="temporarily locked"):
         await harness.service.start_login(
-            identifier=user.email,
+            identifier=_email_of(user),
             ditsala_code="correct-horse-9",  # even the right code is rejected while locked
             device_name="Pixel",
             platform="android",
@@ -272,7 +280,7 @@ async def test_logout_revokes_only_that_session(harness: Harness) -> None:
     # A genuine second session on a different device, via the login flow
     # (complete_onboarding_device only applies once, at pending_code).
     result = await harness.service.start_login(
-        identifier=user.email,
+        identifier=_email_of(user),
         ditsala_code="correct-horse-9",
         device_name="iPad",
         platform="ios",

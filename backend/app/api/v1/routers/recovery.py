@@ -10,6 +10,7 @@ from app.schemas.recovery import (
     KycSdkTokenResponse,
     LivenessStartRequest,
     RecoveryRequestResponse,
+    StartPhoneRecoveryRequest,
     StartRecoveryRequest,
 )
 
@@ -29,6 +30,31 @@ async def start_recovery(
     except RecoveryError as exc:
         raise _as_http_error(exc) from exc
     return RecoveryRequestResponse.model_validate(request)
+
+
+@router.post("/start/phone", response_model=RecoveryRequestResponse)
+async def start_phone_recovery(
+    body: StartPhoneRecoveryRequest, service: RecoveryServiceDep
+) -> RecoveryRequestResponse:
+    """ADR 0014 — normal-tier recovery: phone-only, no email/liveness."""
+    try:
+        request = await service.start_phone_recovery(phone=body.phone)
+    except RecoveryError as exc:
+        raise _as_http_error(exc) from exc
+    return RecoveryRequestResponse.model_validate(request)
+
+
+@router.post("/phone/confirm-recovery", status_code=204)
+async def confirm_phone_recovery(body: ConfirmCodeRequest, service: RecoveryServiceDep) -> None:
+    """ADR 0014's phone-only path — distinct from `/phone/confirm`
+    (the email-flow's phone-verification step, which doesn't move the
+    request into a completable state on its own)."""
+    try:
+        await service.confirm_phone_recovery(
+            recovery_request_id=body.recovery_request_id, code=body.code
+        )
+    except RecoveryError as exc:
+        raise _as_http_error(exc) from exc
 
 
 @router.post("/email/confirm", status_code=204)

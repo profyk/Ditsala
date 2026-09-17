@@ -130,7 +130,18 @@ async def get_current_user_info(
     user: CurrentUserDep, profile_service: ProfileServiceDep
 ) -> CurrentUserResponse:
     avatar_url = await profile_service.get_avatar_url(user)
-    return CurrentUserResponse(id=user.id, display_name=user.display_name, avatar_url=avatar_url)
+    # ADR 0014: `vip` logs in with email, `normal` with phone — one of the
+    # two is always set for an active account (see the model's own
+    # nullability comment), never both required together.
+    identifier = user.email if user.account_tier == "vip" else user.phone
+    assert identifier is not None
+    return CurrentUserResponse(
+        id=user.id,
+        display_name=user.display_name,
+        avatar_url=avatar_url,
+        account_tier=user.account_tier,
+        identifier=identifier,
+    )
 
 
 @router.get("/devices", response_model=list[DeviceResponse])

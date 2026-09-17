@@ -191,9 +191,11 @@ async def test_confirm_email_verification_rejects_wrong_code(harness: Harness) -
     assert user.account_state == "pending_email"
 
 
-async def test_normal_tier_skips_kyc_straight_to_next_of_kin(harness: Harness) -> None:
+async def test_normal_tier_skips_kyc_and_next_of_kin_straight_to_code(harness: Harness) -> None:
     """ADR 0012 — a `normal` (default-tier) signup never enters
-    pending_kyc_document/pending_kyc_liveness at all."""
+    pending_kyc_document/pending_kyc_liveness at all. ADR 0014 narrows
+    this further: normal tier skips next-of-kin too, landing straight
+    on pending_code (a PIN, not the full alphanumeric DITSALA Code)."""
     user = await harness.service.start_signup(**_unique_signup_kwargs())
     assert user.account_tier == "normal"
 
@@ -201,7 +203,7 @@ async def test_normal_tier_skips_kyc_straight_to_next_of_kin(harness: Harness) -
     await harness.service.request_phone_verification(user)
     await harness.service.confirm_phone_verification(user, "999999")
 
-    assert user.account_state == "pending_next_of_kin"
+    assert user.account_state == "pending_code"
 
 
 async def test_full_flow_reaches_pending_code(harness: Harness) -> None:
@@ -252,6 +254,70 @@ async def test_set_ditsala_code_rejects_weak_code(harness: Harness) -> None:
 
     with pytest.raises(OnboardingError, match="DITSALA Code"):
         await harness.service.set_ditsala_code(user, "short1")
+
+
+# --- ADR 0014: phone-first signup + PIN for normal tier ---
+
+
+async def test_start_phone_signup_reaches_pending_phone(harness: Harness) -> None:
+    user = await harness.service.start_phone_signup(
+        phone=f"+27{uuid.uuid4().int % 10**9}", display_name="Phone User"
+    )
+    assert user.account_state == "pending_phone"
+    assert user.account_tier == "normal"
+    assert user.email is None
+    assert user.date_of_birth is None
+    assert user.national_id_hash is None
+
+
+async def test_start_phone_signup_rejects_duplicate_phone(harness: Harness) -> None:
+    phone = f"+27{uuid.uuid4().int % 10**9}"
+    await harness.service.start_phone_signup(phone=phone, display_name="First")
+    with pytest.raises(OnboardingError, match="already exists"):
+        await harness.service.start_phone_signup(phone=phone, display_name="Second")
+
+
+async def test_phone_signup_confirm_skips_kyc_and_next_of_kin_straight_to_code(
+    harness: Harness,
+) -> None:
+    user = await harness.service.start_phone_signup(
+        phone=f"+27{uuid.uuid4().int % 10**9}", display_name="Phone User"
+    )
+    await harness.service.confirm_phone_verification(user, "999999")
+    assert user.account_state == "pending_code"
+
+
+async def test_set_ditsala_code_normal_tier_requires_pin_format(harness: Harness) -> None:
+    user = await harness.service.start_phone_signup(
+        phone=f"+27{uuid.uuid4().int % 10**9}", display_name="Phone User"
+    )
+    await harness.service.confirm_phone_verification(user, "999999")
+
+    with pytest.raises(OnboardingError, match="exactly 6 digits"):
+        await harness.service.set_ditsala_code(user, "12345")
+    with pytest.raises(OnboardingError, match="exactly 6 digits"):
+        await harness.service.set_ditsala_code(user, "12a456")
+
+
+async def test_set_ditsala_code_normal_tier_rejects_weak_pin(harness: Harness) -> None:
+    user = await harness.service.start_phone_signup(
+        phone=f"+27{uuid.uuid4().int % 10**9}", display_name="Phone User"
+    )
+    await harness.service.confirm_phone_verification(user, "999999")
+
+    with pytest.raises(OnboardingError, match="too easy to guess"):
+        await harness.service.set_ditsala_code(user, "123456")
+
+
+async def test_set_ditsala_code_normal_tier_accepts_a_real_pin(harness: Harness) -> None:
+    user = await harness.service.start_phone_signup(
+        phone=f"+27{uuid.uuid4().int % 10**9}", display_name="Phone User"
+    )
+    await harness.service.confirm_phone_verification(user, "999999")
+
+    await harness.service.set_ditsala_code(user, "483920")
+    assert user.ditsala_code_hash is not None
+    assert user.code_set_at is not None
 
 
 # --- §22/§28: invite-only mode ---

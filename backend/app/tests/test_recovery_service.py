@@ -104,6 +104,8 @@ def harness(session: AsyncSession) -> Harness:
 
 
 async def _make_active_user(harness: Harness) -> User:
+    """VIP-shaped fixture (ADR 0014 split `complete()` by tier — this
+    file's original email+liveness flow only applies to `vip`)."""
     return await harness.users.add(
         User(
             email=f"{uuid.uuid4()}@example.com",
@@ -112,7 +114,33 @@ async def _make_active_user(harness: Harness) -> User:
             date_of_birth=datetime(1990, 1, 1),
             national_id_hash=uuid.uuid4().hex,
             account_state="active",
+            account_tier="vip",
             ditsala_code_hash="irrelevant-old-hash",
+        )
+    )
+
+
+def _email_of(user: User) -> str:
+    """`User.email` is nullable now (ADR 0014) but this file's fixture
+    always sets a real one — narrows for mypy across intervening
+    `await`s, which a bare attribute access doesn't survive."""
+    assert user.email is not None
+    return user.email
+
+
+async def _make_normal_phone_only_user(harness: Harness) -> User:
+    """ADR 0014 — a phone-first signup: no email, no DOB, no national
+    ID, `normal` tier."""
+    return await harness.users.add(
+        User(
+            email=None,
+            phone=f"+27{uuid.uuid4().int % 10**9}",
+            display_name="Phone Recovery Test User",
+            date_of_birth=None,
+            national_id_hash=None,
+            account_state="active",
+            account_tier="normal",
+            ditsala_code_hash="irrelevant-old-pin-hash",
         )
     )
 
@@ -126,19 +154,19 @@ async def _verify_both(harness: Harness, request_id: uuid.UUID) -> None:
 async def test_start_recovery_requires_matching_email_and_phone(harness: Harness) -> None:
     user = await _make_active_user(harness)
     with pytest.raises(RecoveryError, match="No matching account"):
-        await harness.service.start_recovery(email=user.email, phone="+27000000000")
+        await harness.service.start_recovery(email=_email_of(user), phone="+27000000000")
 
 
 async def test_start_recovery_rejects_non_active_accounts(harness: Harness) -> None:
     user = await _make_active_user(harness)
     user.account_state = "manual_review"
     with pytest.raises(RecoveryError, match="No matching account"):
-        await harness.service.start_recovery(email=user.email, phone=user.phone)
+        await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
 
 
 async def test_start_recovery_sends_email_code(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     assert request.status == "initiated"
     assert len(harness.email.sent) == 1
     assert harness.email.sent[0][0] == user.email
@@ -146,7 +174,7 @@ async def test_start_recovery_sends_email_code(harness: Harness) -> None:
 
 async def test_confirm_email_and_phone_sets_flags(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     await _verify_both(harness, request.id)
     assert request.email_verified is True
     assert request.phone_verified is True
@@ -154,14 +182,14 @@ async def test_confirm_email_and_phone_sets_flags(harness: Harness) -> None:
 
 async def test_confirm_email_wrong_code_fails(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     with pytest.raises(RecoveryError, match="Incorrect code"):
         await harness.service.confirm_email(recovery_request_id=request.id, code="000000")
 
 
 async def test_start_liveness_requires_both_verifications(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     with pytest.raises(RecoveryError, match="Confirm both email and phone"):
         await harness.service.start_liveness(request.id)
 
@@ -178,7 +206,7 @@ async def test_liveness_webhook_pass_notifies_next_of_kin(harness: Harness) -> N
             user_id=user.id, full_name="Aunt Jane", relationship="Aunt", phone="+27831234567"
         )
     )
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     await _verify_both(harness, request.id)
     token = await harness.service.start_liveness(request.id)
 
@@ -197,7 +225,7 @@ async def test_liveness_webhook_pass_notifies_next_of_kin(harness: Harness) -> N
 
 async def test_liveness_webhook_fail_sets_status(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     await _verify_both(harness, request.id)
     token = await harness.service.start_liveness(request.id)
 
@@ -214,7 +242,7 @@ async def test_liveness_webhook_fail_sets_status(harness: Harness) -> None:
 
 async def test_flag_by_token_marks_request(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     token = create_recovery_flag_token(request.id, jwt_secret=TEST_JWT_SECRET)
 
     flagged = await harness.service.flag_by_token(token)
@@ -228,7 +256,7 @@ async def test_flag_by_token_rejects_invalid_token(harness: Harness) -> None:
 
 async def test_complete_requires_passed_liveness(harness: Harness) -> None:
     user = await _make_active_user(harness)
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     with pytest.raises(RecoveryError, match="SmartSelfie Authentication must pass"):
         await harness.service.complete(
             recovery_request_id=request.id,
@@ -253,7 +281,7 @@ async def test_complete_revokes_old_devices_and_issues_new_session(
             is_trusted=True,
         )
     )
-    request = await harness.service.start_recovery(email=user.email, phone=user.phone)
+    request = await harness.service.start_recovery(email=_email_of(user), phone=user.phone)
     await _verify_both(harness, request.id)
     token = await harness.service.start_liveness(request.id)
     await harness.service.handle_liveness_webhook(
@@ -285,3 +313,78 @@ async def test_decode_recovery_flag_token_roundtrip() -> None:
     request_id = uuid.uuid4()
     token = create_recovery_flag_token(request_id, jwt_secret=TEST_JWT_SECRET)
     assert decode_recovery_flag_token(token, jwt_secret=TEST_JWT_SECRET) == request_id
+
+
+# --- ADR 0014: normal-tier phone-only recovery (no email, no liveness) ---
+
+
+async def test_start_phone_recovery_rejects_unknown_phone(harness: Harness) -> None:
+    with pytest.raises(RecoveryError, match="No matching account"):
+        await harness.service.start_phone_recovery(phone="+27000000000")
+
+
+async def test_start_phone_recovery_rejects_a_vip_account(harness: Harness) -> None:
+    user = await _make_active_user(harness)  # VIP-tier fixture
+    with pytest.raises(RecoveryError, match="No matching account"):
+        await harness.service.start_phone_recovery(phone=user.phone)
+
+
+async def test_phone_recovery_full_flow(harness: Harness) -> None:
+    user = await _make_normal_phone_only_user(harness)
+
+    request = await harness.service.start_phone_recovery(phone=user.phone)
+    assert request.status == "initiated"
+
+    await harness.service.confirm_phone_recovery(recovery_request_id=request.id, code="000000")
+    assert request.phone_verified is True
+    assert request.status == "phone_verified"
+
+    updated_user, device, access_token, refresh_token = await harness.service.complete(
+        recovery_request_id=request.id,
+        new_ditsala_code="483920",
+        device_name="New Phone",
+        platform="android",
+        push_token=None,
+    )
+    assert access_token and refresh_token
+    assert device.device_name == "New Phone"
+    assert updated_user.ditsala_code_hash != "irrelevant-old-pin-hash"
+    assert request.status == "completed"
+
+
+async def test_phone_recovery_confirm_rejects_wrong_code(harness: Harness) -> None:
+    harness.otp._approve = False
+    user = await _make_normal_phone_only_user(harness)
+    request = await harness.service.start_phone_recovery(phone=user.phone)
+
+    with pytest.raises(RecoveryError, match="Incorrect code"):
+        await harness.service.confirm_phone_recovery(recovery_request_id=request.id, code="000000")
+
+
+async def test_phone_recovery_complete_requires_phone_verified_first(harness: Harness) -> None:
+    user = await _make_normal_phone_only_user(harness)
+    request = await harness.service.start_phone_recovery(phone=user.phone)
+
+    with pytest.raises(RecoveryError, match="confirm your phone number first"):
+        await harness.service.complete(
+            recovery_request_id=request.id,
+            new_ditsala_code="483920",
+            device_name="New Phone",
+            platform="android",
+            push_token=None,
+        )
+
+
+async def test_phone_recovery_complete_rejects_weak_pin(harness: Harness) -> None:
+    user = await _make_normal_phone_only_user(harness)
+    request = await harness.service.start_phone_recovery(phone=user.phone)
+    await harness.service.confirm_phone_recovery(recovery_request_id=request.id, code="000000")
+
+    with pytest.raises(RecoveryError, match="6 digits"):
+        await harness.service.complete(
+            recovery_request_id=request.id,
+            new_ditsala_code="short",
+            device_name="New Phone",
+            platform="android",
+            push_token=None,
+        )

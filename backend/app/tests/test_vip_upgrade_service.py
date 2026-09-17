@@ -179,6 +179,69 @@ async def test_kyc_requires_payment_first(harness: Harness) -> None:
         await harness.service.start_kyc_document(user, document_type="sa_id")
 
 
+# --- ADR 0014: a phone-only account has no email/DOB/national ID yet ---
+
+
+async def test_start_upgrade_requires_identity_fields_for_a_phone_only_account(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(
+        harness, email=None, date_of_birth=None, national_id_hash=None
+    )
+    await _set_pricing(harness, admin_id)
+
+    with pytest.raises(VipUpgradeError, match="Email, date of birth, and national ID"):
+        await harness.service.start_upgrade(user)
+
+
+async def test_start_upgrade_collects_identity_for_a_phone_only_account(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(
+        harness, email=None, date_of_birth=None, national_id_hash=None
+    )
+    await _set_pricing(harness, admin_id)
+
+    await harness.service.start_upgrade(
+        user,
+        email="new-vip@example.com",
+        date_of_birth=datetime(1985, 5, 5),
+        national_id_hash="hashed-id-value",
+    )
+
+    assert user.email == "new-vip@example.com"
+    assert user.date_of_birth == datetime(1985, 5, 5)
+    assert user.national_id_hash == "hashed-id-value"
+
+
+async def test_start_upgrade_rejects_an_email_already_in_use(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    await _make_user(harness, email="taken@example.com")
+    user = await _make_user(harness, email=None, date_of_birth=None, national_id_hash=None)
+    await _set_pricing(harness, admin_id)
+
+    with pytest.raises(VipUpgradeError, match="already exists"):
+        await harness.service.start_upgrade(
+            user,
+            email="taken@example.com",
+            date_of_birth=datetime(1985, 5, 5),
+            national_id_hash="hashed-id-value",
+        )
+
+
+async def test_start_upgrade_does_not_re_collect_identity_for_an_existing_account(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
+    user = await _make_user(harness, email="already-set@example.com")
+    await _set_pricing(harness, admin_id)
+
+    # No identity kwargs supplied — should not raise, since the account
+    # already has an email (e.g. the legacy email-first signup path).
+    await harness.service.start_upgrade(user)
+    assert user.email == "already-set@example.com"
+
+
 async def test_full_upgrade_flow_flips_tier_to_vip(
     harness: Harness, session: AsyncSession, admin_id: uuid.UUID
 ) -> None:

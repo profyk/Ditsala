@@ -75,6 +75,11 @@ class AccountRecoveryRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Enum(
             "initiated", "liveness_passed", "liveness_failed",
             "next_of_kin_flagged", "completed", "aborted",
+            # ADR 0014 — the normal-tier phone-only recovery path's one
+            # verification step; there's no liveness re-check to pass
+            # (no enrollment exists), so this is that path's own
+            # terminal "ready to complete" state.
+            "phone_verified",
             name="account_recovery_status", native_enum=False,
         ),
         default="initiated",

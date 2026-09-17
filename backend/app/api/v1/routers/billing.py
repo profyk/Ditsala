@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from datetime import datetime, time
+from typing import Annotated
+
+from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from app.api.v1.deps import CurrentUserDep, SettingsDep, VipUpgradeServiceDep
+from app.core.security import hash_national_id
 from app.domain.billing.service import VipUpgradeError
 from app.schemas.billing import (
     VipKycDocumentStartRequest,
     VipKycSdkTokenResponse,
     VipUpgradeInitiationResponse,
+    VipUpgradeStartRequest,
 )
 from app.services.factory import get_payment_provider
 
@@ -19,10 +24,24 @@ def _as_http_error(exc: VipUpgradeError) -> HTTPException:
 
 @router.post("/upgrade/start", response_model=VipUpgradeInitiationResponse)
 async def start_vip_upgrade(
-    user: CurrentUserDep, service: VipUpgradeServiceDep
+    user: CurrentUserDep,
+    service: VipUpgradeServiceDep,
+    settings: SettingsDep,
+    body: Annotated[VipUpgradeStartRequest, Body(default_factory=VipUpgradeStartRequest)],
 ) -> VipUpgradeInitiationResponse:
     try:
-        initiation = await service.start_upgrade(user)
+        initiation = await service.start_upgrade(
+            user,
+            email=body.email,
+            date_of_birth=(
+                datetime.combine(body.date_of_birth, time.min) if body.date_of_birth else None
+            ),
+            national_id_hash=(
+                hash_national_id(body.national_id, pepper=settings.national_id_pepper)
+                if body.national_id
+                else None
+            ),
+        )
     except VipUpgradeError as exc:
         raise _as_http_error(exc) from exc
     return VipUpgradeInitiationResponse(

@@ -15,7 +15,9 @@ from app.core.security import (
     generate_numeric_code,
     hash_secret,
     is_breached_code,
+    is_weak_pin,
     validate_ditsala_code_strength,
+    validate_pin_strength,
     verify_secret,
 )
 from app.domain.onboarding.interfaces import (
@@ -127,6 +129,35 @@ class OnboardingService:
         await self.request_email_verification(user)
         return user
 
+    # --- ADR 0014: normal-tier phone-first signup, no email/KYC/next-of-kin ---
+
+    async def start_phone_signup(
+        self, *, phone: str, display_name: str, invite_code: str | None = None
+    ) -> User:
+        """Phone number + OTP + a 6-digit PIN is the entire signup for a
+        `normal` account (ADR 0014) — no email, DOB, or national ID
+        collected here; those are VIP-upgrade-time concerns. Lands
+        straight in `pending_phone`, skipping `pending_email` entirely
+        (there's no email step in this path to have come from)."""
+        invitation = await self._check_invite_only_mode(invite_code)
+        if await self._users.get_by_phone(phone) is not None:
+            raise OnboardingError("An account with this phone number already exists.")
+        user = await self._users.add(
+            User(
+                email=None,
+                phone=phone,
+                display_name=display_name,
+                date_of_birth=None,
+                national_id_hash=None,
+                account_state="pending_phone",
+            )
+        )
+        if invitation is not None:
+            invitation.status = "redeemed"
+            invitation.redeemed_by_user_id = user.id
+        await self.request_phone_verification(user)
+        return user
+
     async def _check_invite_only_mode(self, invite_code: str | None) -> Invitation | None:
         """
         §22/§28: `system_config.invite_only_mode` gates *who can start
@@ -149,6 +180,12 @@ class OnboardingService:
         return invitation
 
     async def request_email_verification(self, user: User) -> None:
+        if user.email is None:
+            # Only the email-first `start_signup` path ever reaches
+            # `pending_email` with an email set — a normal-tier phone
+            # signup (ADR 0014) never calls this. A None here means a
+            # caller bug, not a real state to silently paper over.
+            raise OnboardingError("This account has no email to verify.")
         await self._rate_limiter.hit(
             f"onboarding:email_code:{user.email}",
             limit=EMAIL_CODE_SEND_LIMIT,
@@ -216,15 +253,19 @@ class OnboardingService:
         if verification is not None:
             verification.status = "verified"
         user.phone_verified_at = datetime.now(UTC)
-        # Normal/VIP split (docs/adr/0012): a `normal` signup skips KYC
-        # entirely and goes straight to next-of-kin — full identity
-        # verification is a `vip`-only, paid-upgrade feature. Nothing
-        # currently signs up as `vip` directly (account_tier defaults to
-        # `normal`; VIP is only reachable via VipUpgradeService on an
-        # already-active account), so this branch is dead code today but
-        # correct if that ever changes.
+        # Normal/VIP split (ADR 0012, narrowed by ADR 0014): a `normal`
+        # signup skips KYC *and* next-of-kin, going straight to setting
+        # a PIN — full identity verification (and next-of-kin) are
+        # `vip`-only, paid-upgrade concerns now. `add_next_of_kin` still
+        # accepts being called later once `active`, for a normal-tier
+        # user who wants to add one voluntarily (see docs/SECURITY_GAPS.md
+        # for the real SOS-notification trade-off this implies until
+        # they do). Nothing signs up as `vip` directly (account_tier
+        # defaults to `normal`; VIP is only reachable via
+        # VipUpgradeService on an already-active account), so the `vip`
+        # branch is dead code today but correct if that ever changes.
         user.account_state = (
-            "pending_next_of_kin" if user.account_tier == "normal" else "pending_kyc_document"
+            "pending_code" if user.account_tier == "normal" else "pending_kyc_document"
         )
 
     # --- §9 step 4, §12: Smile ID document capture ---
@@ -328,14 +369,24 @@ class OnboardingService:
     async def set_ditsala_code(self, user: User, code: str) -> None:
         if user.account_state != "pending_code":
             raise OnboardingError(f"Cannot set the DITSALA Code in state {user.account_state!r}.")
-        if not validate_ditsala_code_strength(code):
-            raise OnboardingError(
-                f"The DITSALA Code must be at least {8} characters and include a number."
-            )
-        if await is_breached_code(code):
-            raise OnboardingError(
-                "This code has appeared in a known data breach — choose a different one."
-            )
+        # ADR 0014: normal tier uses a 6-digit PIN; VIP keeps the
+        # original alphanumeric-code rule + HIBP breach check unchanged.
+        if user.account_tier == "normal":
+            if not validate_pin_strength(code):
+                raise OnboardingError("Your PIN must be exactly 6 digits.")
+            if is_weak_pin(code):
+                raise OnboardingError(
+                    "That PIN is too easy to guess — avoid repeated or sequential digits."
+                )
+        else:
+            if not validate_ditsala_code_strength(code):
+                raise OnboardingError(
+                    f"The DITSALA Code must be at least {8} characters and include a number."
+                )
+            if await is_breached_code(code):
+                raise OnboardingError(
+                    "This code has appeared in a known data breach — choose a different one."
+                )
         user.ditsala_code_hash = hash_secret(code)
         user.code_set_at = datetime.now(UTC)
         # Stays in `pending_code` — device + Signal key registration (Phase 3)

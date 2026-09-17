@@ -201,7 +201,8 @@ class MeetingService:
                     stage_status=_initial_stage_status(meeting, role),
                 )
             )
-            await self._mark_attended(meeting_id, user.email)
+            if user.email is not None:
+                await self._mark_attended(meeting_id, user.email)
         if participant.admission_status == "removed":
             raise MeetingError("You have been removed from this meeting.")
         if participant.admission_status == "waiting":

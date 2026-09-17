@@ -6,7 +6,7 @@ import { Button } from "../../components/Button";
 import { Screen } from "../../components/Screen";
 import { ApiError, authApi } from "../../lib/api";
 import { useOnboarding } from "../../lib/onboarding-context";
-import { saveSession } from "../../lib/session";
+import { saveIdentity, saveSession } from "../../lib/session";
 
 /**
  * Device registration completes onboarding into `active`
@@ -30,6 +30,10 @@ export default function Complete() {
         push_token: null,
       });
       await saveSession(session.access_token, session.refresh_token);
+      // Cache the login identifier + tier locally (ADR 0014) so future
+      // app opens can offer a PIN unlock without asking for it again.
+      const me = await authApi.getMe(session.access_token);
+      await saveIdentity(me.identifier, me.account_tier);
       setAccountState("active");
       router.replace("/home");
     } catch (err) {

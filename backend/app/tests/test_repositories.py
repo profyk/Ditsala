@@ -50,6 +50,7 @@ async def test_user_repository_roundtrip(session: AsyncSession) -> None:
     assert fetched.email == user.email
     assert fetched.account_state == "pending_email"  # server_default, not app-set
 
+    assert user.email is not None
     by_email = await repo.get_by_email(user.email)
     assert by_email is not None
     assert by_email.id == user.id

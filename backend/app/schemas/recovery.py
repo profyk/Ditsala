@@ -9,6 +9,12 @@ class StartRecoveryRequest(BaseModel):
     phone: str
 
 
+class StartPhoneRecoveryRequest(BaseModel):
+    """ADR 0014 — normal-tier recovery: phone only, no email."""
+
+    phone: str
+
+
 class RecoveryRequestResponse(BaseModel):
     id: uuid.UUID
     status: str

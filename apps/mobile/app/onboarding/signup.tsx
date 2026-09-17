@@ -1,46 +1,44 @@
+import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 
 import { Button } from "../../components/Button";
+import { CountryCodePicker } from "../../components/CountryCodePicker";
 import { Screen } from "../../components/Screen";
 import { TextField } from "../../components/TextField";
 import { ApiError, onboardingApi } from "../../lib/api";
+import { DEFAULT_COUNTRY, type Country } from "../../lib/countries";
 import { useOnboarding } from "../../lib/onboarding-context";
-import { isValidDateOfBirth, isValidEmail, isValidPhone } from "../../lib/validation";
 
+/**
+ * ADR 0014 — the entire normal-tier signup: display name + a phone number
+ * with its country code. No email, no date of birth, no national ID, no
+ * KYC — those only apply to a paid VIP upgrade later, never at signup.
+ */
 export default function Signup() {
   const router = useRouter();
   const { setSession } = useOnboarding();
 
   const [displayName, setDisplayName] = useState("");
-  const [dateOfBirth, setDateOfBirth] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [nationalId, setNationalId] = useState("");
+  const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
+  const [localNumber, setLocalNumber] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const canSubmit =
-    displayName.trim().length > 0 &&
-    isValidDateOfBirth(dateOfBirth) &&
-    isValidEmail(email) &&
-    isValidPhone(phone) &&
-    nationalId.trim().length >= 4;
+  const digitsOnly = localNumber.replace(/\D/g, "");
+  const canSubmit = displayName.trim().length > 0 && digitsOnly.length >= 6 && digitsOnly.length <= 15;
 
   async function handleSubmit() {
     setError(null);
     setSubmitting(true);
     try {
-      const session = await onboardingApi.signup({
+      const session = await onboardingApi.signupPhone({
         display_name: displayName.trim(),
-        date_of_birth: dateOfBirth,
-        email: email.trim(),
-        phone: phone.trim(),
-        national_id: nationalId.trim(),
+        phone: `${country.dialCode}${digitsOnly}`,
       });
-      setSession(session.onboarding_token, session.account_state);
-      router.push("/onboarding/verify-email");
+      setSession(session.onboarding_token, session.account_state, "pin");
+      router.push("/onboarding/verify-phone");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create your account.");
     } finally {
@@ -52,8 +50,8 @@ export default function Signup() {
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Create your account</Text>
       <Text className="mb-8 text-base leading-6 text-text-secondary">
-        Free to join — no ID verification required. Upgrade to VIP any time for a verified badge
-        and a trusted, private space to speak with other VIP members.
+        Just your name and phone number — free to join. Upgrade to VIP any time for a verified
+        badge and a trusted, private space to speak with other VIP members.
       </Text>
 
       <TextField
@@ -63,36 +61,22 @@ export default function Signup() {
         autoCapitalize="words"
         testID="display-name-input"
       />
-      <TextField
-        label="Date of birth (YYYY-MM-DD)"
-        value={dateOfBirth}
-        onChangeText={setDateOfBirth}
-        placeholder="1990-01-01"
-        keyboardType="numbers-and-punctuation"
-        testID="date-of-birth-input"
-      />
-      <TextField
-        label="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        testID="email-input"
-      />
-      <TextField
-        label="Phone number"
-        value={phone}
-        onChangeText={setPhone}
-        placeholder="+27 82 123 4567"
-        keyboardType="phone-pad"
-        testID="phone-input"
-      />
-      <TextField
-        label="National ID number"
-        value={nationalId}
-        onChangeText={setNationalId}
-        testID="national-id-input"
-      />
+
+      <View className="mb-5">
+        <Text className="mb-2 text-sm font-medium text-text-secondary">Phone number</Text>
+        <View className="flex-row items-center">
+          <CountryCodePicker value={country} onChange={setCountry} testID="country-code-picker" />
+          <TextInput
+            value={localNumber}
+            onChangeText={setLocalNumber}
+            placeholder="82 123 4567"
+            placeholderTextColor={dark.textTertiary}
+            keyboardType="number-pad"
+            testID="phone-input"
+            className="flex-1 rounded border border-border bg-surface px-4 py-3 text-base text-text-primary"
+          />
+        </View>
+      </View>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 

@@ -35,14 +35,19 @@ ACCOUNT_TIERS = ("normal", "vip")
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    # Nullable (ADR 0014) — a normal-tier phone-first signup sets none of
+    # email/date_of_birth/national_id_hash; VIP upgrade is what actually
+    # collects them for real, alongside the KYC document capture it
+    # already requires. Postgres's unique index on each tolerates
+    # multiple NULLs, so no constraint conflict either way.
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     phone: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[str] = mapped_column(String(120))
-    date_of_birth: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    date_of_birth: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     # P1 — see app.domain.classification. Hash only, never plaintext.
-    national_id_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    national_id_hash: Mapped[str | None] = mapped_column(String(128), unique=True)
     account_state: Mapped[str] = mapped_column(
         Enum(*ACCOUNT_STATES, name="account_state", native_enum=False, validate_strings=True),
         default="pending_email",

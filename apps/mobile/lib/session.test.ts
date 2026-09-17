@@ -16,9 +16,11 @@ jest.mock("expo-secure-store", () => ({
 import {
   clearSession,
   getAccessToken,
+  getIdentity,
   getRefreshToken,
   hasStoredSession,
   saveAccessToken,
+  saveIdentity,
   saveSession,
 } from "./session";
 
@@ -53,5 +55,22 @@ describe("session storage", () => {
     expect(await getAccessToken()).toBeNull();
     expect(await getRefreshToken()).toBeNull();
     expect(await hasStoredSession()).toBe(false);
+  });
+});
+
+describe("stored identity (ADR 0014)", () => {
+  it("has no identity by default", async () => {
+    expect(await getIdentity()).toBeNull();
+  });
+
+  it("saveIdentity stores the identifier and tier", async () => {
+    await saveIdentity("+27821234567", "normal");
+    expect(await getIdentity()).toEqual({ identifier: "+27821234567", accountTier: "normal" });
+  });
+
+  it("clearSession also removes the stored identity", async () => {
+    await saveIdentity("+27821234567", "normal");
+    await clearSession();
+    expect(await getIdentity()).toBeNull();
   });
 });

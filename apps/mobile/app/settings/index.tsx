@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { Screen } from "../../components/Screen";
@@ -37,6 +38,20 @@ function SettingsRow({ testID, label, description, onPress, destructive }: Setti
  * endpoint, nothing is a placeholder that looks functional but isn't. */
 export default function Settings() {
   const router = useRouter();
+  // ADR 0014 (§14): normal-tier accounts have no explicit login/logout —
+  // "just exit" — so the routine "Log out" row only makes sense for vip.
+  // Defaults to hidden until we know the tier, rather than flashing it.
+  const [accountTier, setAccountTier] = useState<"normal" | "vip" | null>(null);
+
+  useEffect(() => {
+    getAccessToken().then((accessToken) => {
+      if (!accessToken) return;
+      authApi
+        .getMe(accessToken)
+        .then((me) => setAccountTier(me.account_tier))
+        .catch(() => undefined);
+    });
+  }, []);
 
   async function handleLogout() {
     const refreshToken = await getRefreshToken();
@@ -81,10 +96,13 @@ export default function Settings() {
       <Text className="mb-2 mt-8 text-xs font-medium uppercase tracking-widest text-text-tertiary">
         Session
       </Text>
-      <SettingsRow testID="settings-logout-row" label="Log out" onPress={handleLogout} />
+      {accountTier === "vip" ? (
+        <SettingsRow testID="settings-logout-row" label="Log out" onPress={handleLogout} />
+      ) : null}
       <SettingsRow
         testID="settings-logout-all-row"
         label="Log out everywhere"
+        description="Revoke every device — useful if one is lost or stolen"
         onPress={handleLogoutEverywhere}
         destructive
       />

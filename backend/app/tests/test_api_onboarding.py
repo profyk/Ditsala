@@ -214,7 +214,8 @@ async def test_normal_tier_signup_skips_kyc_via_api(
     client: AsyncClient, email_provider: StubEmailProvider
 ) -> None:
     """ADR 0012 — the real, unmodified signup flow (no DB-side tier
-    override) never enters a KYC state at all."""
+    override) never enters a KYC state at all. ADR 0014: skips
+    next-of-kin too, landing on pending_code."""
     signup = await client.post("/api/v1/onboarding/signup", json=_signup_payload())
     token = signup.json()["onboarding_token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -229,4 +230,4 @@ async def test_normal_tier_signup_skips_kyc_via_api(
     )
 
     assert r.status_code == 200, r.text
-    assert r.json()["account_state"] == "pending_next_of_kin"
+    assert r.json()["account_state"] == "pending_code"
