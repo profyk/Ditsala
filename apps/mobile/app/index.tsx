@@ -1,3 +1,4 @@
+import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Platform, Text, View } from "react-native";
@@ -112,17 +113,21 @@ export default function Welcome() {
   return (
     <Screen scroll={false}>
       <View className="flex-1 items-center justify-center">
-        <View className="mb-8 h-20 w-20 items-center justify-center rounded-full border border-accent/50 bg-accent-muted">
-          {/* Brand type scale calls for Fraunces here (packages/ui-tokens'
-              `fontFamily.display`) — not wired into this RN app yet (no
-              font asset loading set up), so this uses the system font's
-              own bold weight rather than silently claiming a typeface
-              that isn't actually loaded. See docs/SECURITY_GAPS.md. */}
-          <Text className="text-4xl font-bold text-accent">D</Text>
+        <View
+          className="mb-8 h-24 w-24 items-center justify-center rounded-3xl bg-accent"
+          style={{
+            shadowColor: dark.accent,
+            shadowOpacity: 0.5,
+            shadowRadius: 24,
+            shadowOffset: { width: 0, height: 12 },
+            elevation: 8,
+          }}
+        >
+          <Text className="text-5xl font-extrabold text-white">D</Text>
         </View>
-        <Text className="text-5xl font-semibold tracking-wide text-text-primary">DITSALA</Text>
-        <View className="mt-4 h-px w-12 bg-accent" />
-        <Text className="mt-4 text-lg text-text-primary">Speak with Confidence.</Text>
+        <Text className="text-4xl font-extrabold tracking-tight text-text-primary">DITSALA</Text>
+        <View className="mt-4 h-1 w-10 rounded-full bg-accent" />
+        <Text className="mt-4 text-lg font-medium text-text-primary">Speak with Confidence.</Text>
         <Text className="mt-1 text-base text-text-secondary">Your trusted circle.</Text>
       </View>
       <View className="mb-8">
@@ -132,6 +137,7 @@ export default function Welcome() {
             <>
               <TextField
                 label="DITSALA Code (PIN)"
+                icon="lock"
                 value={pin}
                 onChangeText={setPin}
                 secureTextEntry
@@ -152,6 +158,7 @@ export default function Welcome() {
               <Button
                 testID="unlock-button"
                 label="Unlock"
+                icon="lock"
                 onPress={handleBiometricUnlock}
                 loading={unlocking}
               />

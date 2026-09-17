@@ -94,10 +94,10 @@ export default function Login() {
   return (
     <Screen>
       <View className="mt-10 mb-2 flex-row items-center gap-3">
-        <View className="h-11 w-11 items-center justify-center rounded-full border border-accent/40 bg-accent-muted">
-          <Text className="text-lg font-bold text-accent">D</Text>
+        <View className="h-11 w-11 items-center justify-center rounded-2xl bg-accent">
+          <Text className="text-lg font-extrabold text-white">D</Text>
         </View>
-        <Text className="text-3xl font-semibold tracking-tight text-text-primary">Sign in</Text>
+        <Text className="text-3xl font-extrabold tracking-tight text-text-primary">Sign in</Text>
       </View>
       <Text className="mb-8 text-base leading-6 text-text-secondary">
         {awaitingLiveness
@@ -107,7 +107,7 @@ export default function Login() {
 
       {!awaitingLiveness ? (
         <>
-          <View className="mb-5 flex-row overflow-hidden rounded border border-border">
+          <View className="mb-5 flex-row overflow-hidden rounded-xl border border-border">
             <Pressable
               testID="login-mode-phone"
               onPress={() => setMode("phone")}
@@ -148,7 +148,7 @@ export default function Login() {
                   placeholderTextColor={dark.textTertiary}
                   keyboardType="number-pad"
                   testID="login-phone-input"
-                  className="flex-1 rounded border border-border bg-surface px-4 py-3 text-base text-text-primary"
+                  className="flex-1 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"
                 />
               </View>
             </View>
@@ -175,7 +175,7 @@ export default function Login() {
                 placeholder="••••••••"
                 placeholderTextColor={dark.textTertiary}
                 testID="login-code-input"
-                className="rounded border border-border bg-surface px-4 py-3 pr-16 text-base text-text-primary"
+                className="rounded-xl border border-border bg-surface px-4 py-3 pr-16 text-base text-text-primary"
               />
               <Pressable
                 testID="login-code-visibility-toggle"
