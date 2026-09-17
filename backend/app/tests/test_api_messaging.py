@@ -274,6 +274,7 @@ async def test_group_conversation_and_sender_keys(
 ) -> None:
     alice, alice_device, alice_token = await _make_user_with_device(session)
     bob, bob_device, bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
 
     r = await client.post(
         "/api/v1/messaging/conversations/group",

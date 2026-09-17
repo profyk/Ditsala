@@ -187,6 +187,13 @@ class MessagingService:
             raise MessagingError("This user has not completed key registration on any device.")
         return identity_key.device_id
 
+    async def list_device_ids_for_user(self, user_id: uuid.UUID) -> list[uuid.UUID]:
+        """Every device of this user with completed key registration —
+        real multi-device fan-out (docs/adr/0013) distributes a Sender
+        Key to each one, not just the most recent."""
+        identity_keys = await self._identity_keys.list_for_user(user_id)
+        return [k.device_id for k in identity_keys]
+
     # --- conversations ---
 
     async def start_direct_conversation(
@@ -226,6 +233,18 @@ class MessagingService:
     async def create_group_conversation(
         self, creator_id: uuid.UUID, member_ids: list[uuid.UUID], *, title: str | None = None
     ) -> Conversation:
+        # Same Circle-tier gate as a direct conversation (§22) — group
+        # messaging isn't exempt from "an accepted Circle contact
+        # request first" just because it's multi-party.
+        for member_id in member_ids:
+            if member_id == creator_id:
+                continue
+            contact = await self._contacts.get_by_pair(creator_id, member_id)
+            if contact is None or contact.tier not in ("verified", "trusted"):
+                raise MessagingError(
+                    "Every group member must be an accepted Circle contact first."
+                )
+
         conversation = await self._conversations.add(
             Conversation(type="group", created_by=creator_id, title=title)
         )

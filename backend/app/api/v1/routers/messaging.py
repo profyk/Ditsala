@@ -38,6 +38,7 @@ from app.schemas.messaging import (
     SetMutedRequest,
     SignedPrekeyRequest,
     StartDirectConversationRequest,
+    UserDevicesResponse,
     decode_b64,
     encode_b64,
 )
@@ -113,13 +114,22 @@ async def get_prekey_bundle(
 async def get_primary_device(
     user_id: uuid.UUID, _user: CurrentUserDep, service: MessagingServiceDep
 ) -> PrimaryDeviceResponse:
-    """V1 sends to a single device per recipient — see docs/adr/0013's
-    multi-device-fan-out gap note."""
+    """Legacy single-device lookup — `list_devices` below is what real
+    multi-device fan-out (docs/adr/0013) actually uses now."""
     try:
         device_id = await service.get_primary_device_id(user_id)
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
     return PrimaryDeviceResponse(device_id=device_id)
+
+
+@router.get("/keys/devices/{user_id}", response_model=UserDevicesResponse)
+async def list_devices(
+    user_id: uuid.UUID, _user: CurrentUserDep, service: MessagingServiceDep
+) -> UserDevicesResponse:
+    """Every device of this user with completed key registration — a
+    sender distributes a Sender Key to each one (docs/adr/0013)."""
+    return UserDevicesResponse(device_ids=await service.list_device_ids_for_user(user_id))
 
 
 # --- conversations ---
@@ -152,9 +162,12 @@ async def start_direct_conversation(
 async def create_group_conversation(
     body: CreateGroupConversationRequest, user: CurrentUserDep, service: MessagingServiceDep
 ) -> ConversationResponse:
-    conversation = await service.create_group_conversation(
-        user.id, body.member_ids, title=body.title
-    )
+    try:
+        conversation = await service.create_group_conversation(
+            user.id, body.member_ids, title=body.title
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
     return _conversation_response(conversation)
 
 

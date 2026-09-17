@@ -52,6 +52,10 @@ class PrimaryDeviceResponse(BaseModel):
     device_id: uuid.UUID
 
 
+class UserDevicesResponse(BaseModel):
+    device_ids: list[uuid.UUID]
+
+
 # --- conversations ---
 
 

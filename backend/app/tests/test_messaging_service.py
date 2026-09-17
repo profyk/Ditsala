@@ -217,6 +217,36 @@ async def test_get_primary_device_id_requires_some_registered_device(harness: Ha
         await harness.service.get_primary_device_id(user.id)
 
 
+async def test_list_device_ids_for_user_returns_every_registered_device(harness: Harness) -> None:
+    user, first_device = await _make_user_with_device(harness)
+    await harness.service.register_identity_key(
+        first_device, public_identity_key=b"first-device-key", registration_id=1
+    )
+
+    now = datetime.now(UTC)
+    second_device = await harness.devices.add(
+        Device(
+            user_id=user.id,
+            device_name="Second Device",
+            platform="android",
+            first_seen_at=now,
+            last_seen_at=now,
+            is_trusted=True,
+        )
+    )
+    await harness.service.register_identity_key(
+        second_device, public_identity_key=b"second-device-key", registration_id=2
+    )
+
+    device_ids = await harness.service.list_device_ids_for_user(user.id)
+    assert set(device_ids) == {first_device.id, second_device.id}
+
+
+async def test_list_device_ids_for_user_is_empty_when_none_registered(harness: Harness) -> None:
+    user, _device = await _make_user_with_device(harness)
+    assert await harness.service.list_device_ids_for_user(user.id) == []
+
+
 # --- conversations ---
 
 
@@ -255,6 +285,8 @@ async def test_group_conversation_creator_is_admin(harness: Harness) -> None:
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
     carol, _d3 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, alice.id, carol.id)
 
     conversation = await harness.service.create_group_conversation(
         alice.id, [bob.id, carol.id]
@@ -444,6 +476,7 @@ async def test_mute_archive_pin_flags(harness: Harness) -> None:
 async def test_sender_key_upload_and_list(harness: Harness) -> None:
     alice, alice_device = await _make_user_with_device(harness)
     bob, bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
 
     await harness.service.upload_sender_key(
@@ -548,6 +581,19 @@ async def test_direct_conversation_requires_an_accepted_contact(harness: Harness
         await harness.service.start_direct_conversation(alice.id, bob.id)
 
 
+async def test_group_conversation_requires_every_member_be_an_accepted_contact(
+    harness: Harness,
+) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    carol, _d3 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    # carol is not a Circle contact of alice's at all.
+
+    with pytest.raises(MessagingError, match="Circle contact"):
+        await harness.service.create_group_conversation(alice.id, [bob.id, carol.id])
+
+
 async def test_unverified_tier_contact_cannot_message_yet(harness: Harness) -> None:
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
@@ -586,6 +632,7 @@ async def test_group_conversation_can_be_created_with_a_title_and_renamed_by_an_
 ) -> None:
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
 
     conversation = await harness.service.create_group_conversation(
         alice.id, [bob.id], title="Weekend Trip"
@@ -621,6 +668,7 @@ async def test_list_conversation_members_is_enriched_and_membership_gated(
     alice, _d1 = await _make_user_with_device(harness)
     bob, _d2 = await _make_user_with_device(harness)
     outsider, _d3 = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
     conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
 
     members = await harness.service.list_conversation_members(

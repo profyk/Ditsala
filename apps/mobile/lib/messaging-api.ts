@@ -108,6 +108,14 @@ export const messagingApi = {
     return raw.device_id;
   },
 
+  listDevicesForUser: async (accessToken: string, userId: string): Promise<string[]> => {
+    const raw = await request<{ device_ids: string[] }>(`/messaging/keys/devices/${userId}`, {
+      method: "GET",
+      token: accessToken,
+    });
+    return raw.device_ids;
+  },
+
   getPrekeyBundle: async (
     accessToken: string,
     userId: string,
