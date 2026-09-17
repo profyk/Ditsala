@@ -183,7 +183,7 @@ export default function ChatScreen() {
             value={draft}
             onChangeText={setDraft}
             placeholder="Message"
-            placeholderTextColor="#6B6E76"
+            placeholderTextColor="#6E6E85"
             multiline
             className="flex-1 rounded-2xl border border-border bg-surface px-4 py-2 text-text-primary"
           />

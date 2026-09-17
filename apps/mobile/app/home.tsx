@@ -1,34 +1,39 @@
+import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
-import { Screen } from "../components/Screen";
+import { Avatar } from "../components/Avatar";
+import { Icon, type IconName } from "../components/Icon";
+import { TabScreen } from "../components/TabScreen";
 import { authApi, type CurrentUser } from "../lib/api";
 import { registerWithBackend } from "../lib/crypto/keystore";
 import { messagingSocket } from "../lib/messaging-ws";
 import { getAccessToken } from "../lib/session";
 
-interface NavTileProps {
+interface QuickActionProps {
   testID: string;
   label: string;
-  emoji: string;
+  sub: string;
+  icon: IconName;
   onPress: () => void;
-  danger?: boolean;
 }
 
-function NavTile({ testID, label, emoji, onPress, danger }: NavTileProps) {
+function QuickAction({ testID, label, sub, icon, onPress }: QuickActionProps) {
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
-      className={`flex-1 items-center rounded-lg border py-5 active:bg-surface-raised ${
-        danger ? "border-danger/40" : "border-border"
-      } bg-surface`}
+      className="flex-1 rounded-xl border border-border bg-surface p-4 active:bg-surface-raised"
     >
-      <Text className="mb-1 text-2xl">{emoji}</Text>
-      <Text className={`text-sm font-semibold ${danger ? "text-danger" : "text-text-primary"}`}>
-        {label}
-      </Text>
+      <View
+        className="mb-3 h-10 w-10 items-center justify-center rounded-full"
+        style={{ backgroundColor: dark.accentMuted }}
+      >
+        <Icon name={icon} size={20} color={dark.accent} />
+      </View>
+      <Text className="text-base font-semibold text-text-primary">{label}</Text>
+      <Text className="text-xs text-text-tertiary">{sub}</Text>
     </Pressable>
   );
 }
@@ -69,58 +74,86 @@ export default function Home() {
   }, [load]);
 
   return (
-    <Screen>
-      <View className="mb-8 mt-8 flex-row items-center gap-3">
-        <Pressable
-          testID="home-avatar"
-          onPress={() => router.push("/account/profile")}
-          className="h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-border bg-surface"
-        >
-          {me?.avatar_url ? (
-            <Image source={{ uri: me.avatar_url }} className="h-14 w-14" />
-          ) : (
-            <Text className="text-xl font-semibold text-text-tertiary">
-              {(me?.display_name ?? "?").charAt(0).toUpperCase()}
-            </Text>
-          )}
+    <TabScreen>
+      <View className="mb-6 mt-4 flex-row items-center gap-3">
+        <Pressable testID="home-avatar" onPress={() => router.push("/account/profile")}>
+          <Avatar
+            id={me?.id ?? "me"}
+            name={me?.display_name ?? "?"}
+            imageUrl={me?.avatar_url}
+            size={52}
+            ring
+          />
         </Pressable>
         <View className="flex-1">
-          <Text className="text-2xl font-semibold text-text-primary">
-            {me ? `Welcome back, ${me.display_name.split(" ")[0]}` : "Welcome back"}
+          <Text className="text-xs font-medium uppercase tracking-widest text-text-tertiary">
+            Welcome back
           </Text>
-          <Text className="text-base text-text-secondary">Your trusted circle, in one place.</Text>
+          <Text className="text-xl font-bold text-text-primary">
+            {me ? me.display_name.split(" ")[0] : "…"}
+          </Text>
         </View>
       </View>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
+      <Pressable
+        testID="sos-nav-button"
+        onPress={() => router.push("/sos")}
+        className="mb-6 flex-row items-center gap-4 rounded-2xl bg-danger p-5 active:opacity-90"
+        style={{
+          shadowColor: dark.danger,
+          shadowOpacity: 0.4,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 6,
+        }}
+      >
+        <View className="h-12 w-12 items-center justify-center rounded-full bg-white/20">
+          <Icon name="shield" size={24} color="#FFFFFF" />
+        </View>
+        <View className="flex-1">
+          <Text className="text-lg font-bold text-white">Emergency SOS</Text>
+          <Text className="text-sm text-white/85">Alert your trusted Circle instantly</Text>
+        </View>
+        <Icon name="chevron-right" size={20} color="#FFFFFF" />
+      </Pressable>
+
+      <Text className="mb-3 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Quick actions
+      </Text>
       <View className="mb-3 flex-row gap-3">
-        <NavTile testID="sos-nav-button" label="SOS" emoji="🆘" danger onPress={() => router.push("/sos")} />
-        <NavTile testID="circle-nav-button" label="Circle" emoji="🤝" onPress={() => router.push("/circle")} />
-      </View>
-      <View className="mb-8 flex-row gap-3">
-        <NavTile
+        <QuickAction
+          testID="circle-nav-button"
+          label="Circle"
+          sub="Your trusted contacts"
+          icon="circle"
+          onPress={() => router.push("/circle")}
+        />
+        <QuickAction
           testID="messages-nav-button"
           label="Messages"
-          emoji="💬"
+          sub="End-to-end encrypted"
+          icon="messages"
           onPress={() => router.push("/messages")}
         />
-        <NavTile
+      </View>
+      <View className="mb-8 flex-row gap-3">
+        <QuickAction
           testID="meet-nav-button"
           label="Meet"
-          emoji="🎥"
+          sub="Schedule a call"
+          icon="video"
           onPress={() => router.push("/meet/schedule")}
         />
+        <QuickAction
+          testID="location-nav-button"
+          label="Location"
+          sub="Share where you are"
+          icon="location"
+          onPress={() => router.push("/location")}
+        />
       </View>
-
-      <Pressable
-        testID="settings-nav-button"
-        onPress={() => router.push("/settings")}
-        className="flex-row items-center justify-between rounded-lg border border-border bg-surface p-4 active:bg-surface-raised"
-      >
-        <Text className="text-base text-text-primary">Settings</Text>
-        <Text className="text-text-tertiary">›</Text>
-      </Pressable>
-    </Screen>
+    </TabScreen>
   );
 }

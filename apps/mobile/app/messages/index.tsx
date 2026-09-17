@@ -1,8 +1,11 @@
+import { dark } from "@ditsala/ui-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { FlatList, Image, Pressable, Text, View } from "react-native";
+import { FlatList, Pressable, Text, View } from "react-native";
 
-import { Screen } from "../../components/Screen";
+import { Avatar } from "../../components/Avatar";
+import { Icon } from "../../components/Icon";
+import { TabScreen } from "../../components/TabScreen";
 import { authApi } from "../../lib/api";
 import { type Conversation, type ConversationMember, messagingApi } from "../../lib/messaging-api";
 import { getAccessToken } from "../../lib/session";
@@ -84,31 +87,24 @@ export default function MessagesList() {
   );
 
   return (
-    <Screen>
-      <Text className="mb-6 mt-8 text-3xl font-semibold text-text-primary">Messages</Text>
+    <TabScreen>
+      <Text className="mb-6 mt-4 text-2xl font-bold text-text-primary">Messages</Text>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
       <FlatList
+        scrollEnabled={false}
         data={rows}
         keyExtractor={(item) => item.conversation.id}
         renderItem={({ item }) => (
           <Pressable
             testID={`conversation-row-${item.conversation.id}`}
             onPress={() => router.push(`/messages/${item.conversation.id}`)}
-            className="mb-2 flex-row items-center gap-3 rounded-lg border border-border bg-surface p-3 active:bg-surface-raised"
+            className="mb-2 flex-row items-center gap-3 rounded-xl border border-border bg-surface p-3 active:bg-surface-raised"
           >
-            <View className="h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-surface-raised">
-              {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} className="h-12 w-12" />
-              ) : (
-                <Text className="text-lg font-semibold text-text-tertiary">
-                  {item.title.charAt(0).toUpperCase()}
-                </Text>
-              )}
-            </View>
+            <Avatar id={item.conversation.id} name={item.title} imageUrl={item.avatarUrl} size={48} />
             <View className="flex-1">
-              <Text className="text-base font-medium text-text-primary" numberOfLines={1}>
+              <Text className="text-base font-semibold text-text-primary" numberOfLines={1}>
                 {item.title}
               </Text>
               <Text className="text-sm text-text-tertiary">
@@ -122,12 +118,23 @@ export default function MessagesList() {
         )}
         ListEmptyComponent={
           !loading ? (
-            <Text className="text-sm text-text-tertiary">
-              No conversations yet — message someone from your Circle to start one.
-            </Text>
+            <View className="items-center rounded-xl border border-dashed border-border py-12">
+              <View
+                className="mb-3 h-14 w-14 items-center justify-center rounded-full"
+                style={{ backgroundColor: dark.accentMuted }}
+              >
+                <Icon name="messages" size={26} color={dark.accent} />
+              </View>
+              <Text className="mb-1 text-base font-semibold text-text-primary">
+                No conversations yet
+              </Text>
+              <Text className="px-8 text-center text-sm text-text-tertiary">
+                Message someone from your Circle to start one.
+              </Text>
+            </View>
           ) : null
         }
       />
-    </Screen>
+    </TabScreen>
   );
 }
