@@ -91,11 +91,18 @@ export default function Login() {
       {!awaitingLiveness ? (
         <>
           <TextField
-            label="Email or phone"
+            label="Email or phone (with country code)"
             value={identifier}
             onChangeText={setIdentifier}
             autoCapitalize="none"
-            placeholder="you@example.com"
+            placeholder="+27 71 234 5678 or you@example.com"
+            error={
+              identifier.trim().length > 0 &&
+              /^\d+$/.test(identifier.trim()) &&
+              !identifier.trim().startsWith("+")
+                ? "Phone numbers need a country code, e.g. +27…"
+                : undefined
+            }
             testID="login-identifier-input"
           />
           <TextField
