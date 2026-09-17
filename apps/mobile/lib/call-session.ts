@@ -2,10 +2,22 @@
  * WebRTC peer connection lifecycle for a single call
  * (docs/DITSALA_MASTER_SPEC.md §27) — media is peer-to-peer, DTLS-SRTP
  * end-to-end, with coturn as TURN relay only (`GET /calls/ice-servers`).
- * This is real react-native-webrtc usage, not a stub: offer/answer/ICE
- * negotiation, local/remote stream wiring, mute, and the voice<->video
- * switch (§27, "clients can switch anytime") via track add/remove +
- * renegotiation are all implemented against the library's actual API.
+ * Real usage on both platforms, not a stub: offer/answer/ICE negotiation,
+ * local/remote stream wiring, mute, and the voice<->video switch (§27,
+ * "clients can switch anytime") via track add/remove + renegotiation.
+ *
+ * `react-native-webrtc` is native-only — importing it in a web bundle
+ * throws at module-load time (its index re-exports read straight off
+ * `NativeModules`, which is undefined in a browser). Metro's platform-
+ * extension file swapping (`.web.ts`) turned out unreliable for this
+ * project's config — a `call-session.web.ts` twin still ended up bundled
+ * alongside the native file rather than replacing it, so this file
+ * branches on `Platform.OS` at runtime instead: `require("react-native-
+ * webrtc")` only ever executes on native, and the web branch below uses
+ * the browser's own WebRTC globals (`RTCPeerConnection`,
+ * `navigator.mediaDevices`, `RTCIceCandidate`) — the exact W3C spec
+ * react-native-webrtc itself mirrors, so this is genuine web calling
+ * support, not a stub.
  *
  * Not implemented: "polite peer" glare resolution for two simultaneous
  * renegotiations colliding (the W3C Perfect Negotiation pattern) — with
@@ -16,16 +28,16 @@
  * device (see docs/adr/0007-calls-native-module-verification-gap.md).
  */
 
-import {
-  mediaDevices,
-  MediaStream,
-  RTCIceCandidate,
-  RTCPeerConnection,
-  RTCSessionDescription,
-} from "react-native-webrtc";
+import { Platform } from "react-native";
 
 import { callsApi, type CallType, type IceServer } from "./calls-api";
 import { messagingSocket, type MessagingWsEvent } from "./messaging-ws";
+
+// Must stay a conditional `require`, not a static import: this is what
+// keeps react-native-webrtc's native-only module out of the web bundle's
+// synchronous evaluation path (see the file header comment).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const nativeWebRtc: any = Platform.OS === "web" ? null : require("react-native-webrtc");
 
 export type CallConnectionState = "connecting" | "connected" | "failed" | "ended";
 
@@ -42,14 +54,15 @@ interface SignalPayload {
 }
 
 export class CallSession {
-  private pc: RTCPeerConnection | null = null;
-  private localStream: MediaStream | null = null;
+  private pc: any = null;
+  private localStream: any = null;
   private unsubscribeWs: (() => void) | null = null;
   private readonly accessToken: string;
   private readonly callId: string;
   private readonly isInitiator: boolean;
   private readonly iceServers: IceServer[];
   private readonly callbacks: CallSessionCallbacks;
+  private readonly isWeb = Platform.OS === "web";
 
   constructor(
     opts: { accessToken: string; callId: string; isInitiator: boolean; iceServers: IceServer[] },
@@ -62,37 +75,47 @@ export class CallSession {
     this.callbacks = callbacks;
   }
 
+  private async getUserMedia(constraints: MediaStreamConstraints) {
+    if (this.isWeb) return navigator.mediaDevices.getUserMedia(constraints);
+    return nativeWebRtc.mediaDevices.getUserMedia(constraints);
+  }
+
+  private newPeerConnection(config: RTCConfiguration): any {
+    return this.isWeb ? new RTCPeerConnection(config) : new nativeWebRtc.RTCPeerConnection(config);
+  }
+
   async start(callType: CallType): Promise<void> {
-    this.localStream = await mediaDevices.getUserMedia({
+    this.localStream = await this.getUserMedia({
       audio: true,
       video: callType === "video" ? { facingMode: "user" } : false,
     });
     this.callbacks.onLocalStream?.(this.localStream);
 
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    const pc = this.newPeerConnection({ iceServers: this.iceServers });
     this.pc = pc;
     for (const track of this.localStream.getTracks()) {
       pc.addTrack(track, this.localStream);
     }
 
-    // The `on<event>` setters, not `addEventListener` — react-native-webrtc's
-    // event-target-shim types the latter's generic overloads in a way
-    // that doesn't resolve cleanly under this project's TS config, a
-    // known friction with that shim library. The setters are typed with
-    // a generic `Event<string>`, so the richer per-event fields
-    // (`.candidate`, `.streams`) still need a narrow, local cast below.
+    // Native (react-native-webrtc): the `on<event>` setters, not
+    // `addEventListener` — its event-target-shim types the latter's
+    // generic overloads in a way that doesn't resolve cleanly under this
+    // project's TS config. The setters are typed with a generic
+    // `Event<string>`, so the richer per-event fields (`.candidate`,
+    // `.streams`) need a narrow, local cast below on both platforms
+    // (kept uniform since `pc` itself is untyped `any` here).
     pc.onicecandidate = (event: unknown) => {
-      const candidate = (event as { candidate: RTCIceCandidate | null }).candidate;
+      const candidate = (event as { candidate: { toJSON(): unknown } | null }).candidate;
       if (candidate) {
         void callsApi.sendSignal(this.accessToken, this.callId, {
           kind: "ice-candidate",
-          candidate: candidate.toJSON(),
+          candidate: candidate.toJSON() as SignalPayload["candidate"],
         });
       }
     };
     pc.ontrack = (event: unknown) => {
-      const streams = (event as { streams: MediaStream[] }).streams;
-      this.callbacks.onRemoteStream?.(streams[0] ?? null);
+      const streams = (event as { streams: unknown[] }).streams;
+      this.callbacks.onRemoteStream?.((streams[0] as MediaStream | undefined) ?? null);
     };
     pc.onconnectionstatechange = () => {
       switch (pc.connectionState) {
@@ -133,9 +156,7 @@ export class CallSession {
     const payload = event.payload as unknown as SignalPayload;
 
     if (payload.kind === "offer" && payload.sdp) {
-      await this.pc.setRemoteDescription(
-        new RTCSessionDescription({ sdp: payload.sdp, type: "offer" })
-      );
+      await this.setRemoteDescription({ sdp: payload.sdp, type: "offer" });
       const answer = await this.pc.createAnswer();
       await this.pc.setLocalDescription(answer);
       await callsApi.sendSignal(this.accessToken, this.callId, {
@@ -143,16 +164,26 @@ export class CallSession {
         sdp: answer.sdp,
       });
     } else if (payload.kind === "answer" && payload.sdp) {
-      await this.pc.setRemoteDescription(
-        new RTCSessionDescription({ sdp: payload.sdp, type: "answer" })
-      );
+      await this.setRemoteDescription({ sdp: payload.sdp, type: "answer" });
     } else if (payload.kind === "ice-candidate" && payload.candidate) {
-      await this.pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+      await this.addIceCandidate(payload.candidate);
     }
   }
 
+  private async setRemoteDescription(desc: { sdp: string; type: "offer" | "answer" }) {
+    // Native still needs the wrapper class; modern browsers deprecate
+    // `new RTCSessionDescription(...)` in favor of a plain init object.
+    if (this.isWeb) return this.pc.setRemoteDescription(desc);
+    return this.pc.setRemoteDescription(new nativeWebRtc.RTCSessionDescription(desc));
+  }
+
+  private async addIceCandidate(candidate: NonNullable<SignalPayload["candidate"]>) {
+    if (this.isWeb) return this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    return this.pc.addIceCandidate(new nativeWebRtc.RTCIceCandidate(candidate));
+  }
+
   setMuted(muted: boolean): void {
-    this.localStream?.getAudioTracks().forEach((track) => {
+    this.localStream?.getAudioTracks().forEach((track: MediaStreamTrack) => {
       track.enabled = !muted;
     });
   }
@@ -171,7 +202,7 @@ export class CallSession {
     if (enabled === currentlyEnabled) return;
 
     if (enabled) {
-      const stream = await mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      const stream = await this.getUserMedia({ video: { facingMode: "user" } });
       const [videoTrack] = stream.getVideoTracks();
       this.localStream.addTrack(videoTrack);
       this.pc.addTrack(videoTrack, this.localStream);
@@ -179,7 +210,7 @@ export class CallSession {
       for (const track of this.localStream.getVideoTracks()) {
         this.localStream.removeTrack(track);
         track.stop();
-        const sender = this.pc.getSenders().find((s) => s.track?.id === track.id);
+        const sender = this.pc.getSenders().find((s: any) => s.track?.id === track.id);
         if (sender) this.pc.removeTrack(sender);
       }
     }
@@ -192,7 +223,7 @@ export class CallSession {
   end(): void {
     this.unsubscribeWs?.();
     this.unsubscribeWs = null;
-    this.localStream?.getTracks().forEach((track) => track.stop());
+    this.localStream?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
     this.localStream = null;
     this.pc?.close();
     this.pc = null;

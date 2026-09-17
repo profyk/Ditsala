@@ -17,7 +17,6 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import type { MediaStream } from "react-native-webrtc";
 
 import { callsApi, type CallType, type IceServer } from "./calls-api";
 import { CallSession, type CallConnectionState } from "./call-session";
