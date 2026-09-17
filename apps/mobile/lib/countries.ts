@@ -54,3 +54,18 @@ export const COUNTRIES: Country[] = [
 ];
 
 export const DEFAULT_COUNTRY: Country = COUNTRIES[0];
+
+/**
+ * Converts a country + a locally-typed number into E.164. Most countries'
+ * local-format numbers start with a trunk "0" that's dropped once the
+ * country code is prepended (South Africa "071 888 0296" -> "+27 71 888
+ * 0296", same convention in the UK and many others) — naively
+ * concatenating `dialCode + digits` without stripping it produces a
+ * phone number that silently doesn't match what the user actually has
+ * (an extra "0" right after the country code), which would fail to
+ * match against the stored value on every subsequent login.
+ */
+export function toE164(country: Country, localNumber: string): string {
+  const digits = localNumber.replace(/\D/g, "").replace(/^0+/, "");
+  return `${country.dialCode}${digits}`;
+}

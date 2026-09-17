@@ -8,7 +8,7 @@ import { CountryCodePicker } from "../../components/CountryCodePicker";
 import { Screen } from "../../components/Screen";
 import { TextField } from "../../components/TextField";
 import { ApiError, onboardingApi } from "../../lib/api";
-import { DEFAULT_COUNTRY, type Country } from "../../lib/countries";
+import { DEFAULT_COUNTRY, toE164, type Country } from "../../lib/countries";
 import { useOnboarding } from "../../lib/onboarding-context";
 
 /**
@@ -35,7 +35,7 @@ export default function Signup() {
     try {
       const session = await onboardingApi.signupPhone({
         display_name: displayName.trim(),
-        phone: `${country.dialCode}${digitsOnly}`,
+        phone: toE164(country, localNumber),
       });
       setSession(session.onboarding_token, session.account_state, "pin");
       router.push("/onboarding/verify-phone");
