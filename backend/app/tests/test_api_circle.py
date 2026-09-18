@@ -188,3 +188,19 @@ async def test_create_invitation(client: AsyncClient, session: AsyncSession) -> 
 async def test_circle_requires_authentication(client: AsyncClient) -> None:
     r = await client.get("/api/v1/circle/contacts")
     assert r.status_code == 401
+
+
+async def test_match_contacts(client: AsyncClient, session: AsyncSession) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, _bob_token = await _make_user_with_device(session)
+
+    r = await client.post(
+        "/api/v1/circle/contacts/match",
+        json={"phones": [bob.phone, "+27800000000"]},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["user_id"] == str(bob.id)
+    assert body[0]["display_name"] == bob.display_name

@@ -55,6 +55,12 @@
         {
           "photosPermission": "DITSALA needs access to your photos to set a profile picture."
         }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "DITSALA checks which of your contacts already have an account, so you can add them to your Circle — your contact list is never uploaded or stored, only phone numbers are checked against DITSALA's own accounts."
+        }
       ]
     ],
     "owner": "profy",

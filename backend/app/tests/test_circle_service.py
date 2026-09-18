@@ -12,7 +12,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
-from app.domain.circle.service import CircleError, CircleService
+from app.domain.circle.service import CONTACT_MATCH_LIMIT, CircleError, CircleService
+from app.domain.ratelimit.interfaces import RateLimitExceeded
 from app.models.accounts import User
 from app.repositories.admin import SystemConfigRepository
 from app.repositories.circle import (
@@ -64,15 +65,17 @@ def harness(session: AsyncSession) -> Harness:
     )
 
 
-async def _make_user(harness: Harness) -> User:
+async def _make_user(
+    harness: Harness, *, phone: str | None = None, account_state: str = "active"
+) -> User:
     return await harness.users.add(
         User(
             email=f"{uuid.uuid4()}@example.com",
-            phone=f"+27{uuid.uuid4().int % 10**9}",
+            phone=phone or f"+27{uuid.uuid4().int % 10**9}",
             display_name="Circle Test User",
             date_of_birth=datetime(1990, 1, 1),
             national_id_hash=uuid.uuid4().hex,
-            account_state="active",
+            account_state=account_state,
         )
     )
 
@@ -274,3 +277,52 @@ async def test_create_invitation(harness: Harness) -> None:
     assert invitation.status == "sent"
     assert len(invitation.invite_code) == 10
     assert invitation.expires_at is not None
+
+
+# --- §22: phone contact matching ---
+
+
+async def test_match_contacts_finds_active_users_by_phone(harness: Harness) -> None:
+    alice = await _make_user(harness)
+    bob = await _make_user(harness, phone="+27831112222")
+
+    matches = await harness.service.match_contacts(
+        requesting_user_id=alice.id, phones=["+27831112222", "+27839998888"]
+    )
+    assert [m.id for m in matches] == [bob.id]
+
+
+async def test_match_contacts_excludes_requesters_own_number(harness: Harness) -> None:
+    alice = await _make_user(harness, phone="+27831112222")
+
+    matches = await harness.service.match_contacts(
+        requesting_user_id=alice.id, phones=["+27831112222"]
+    )
+    assert matches == []
+
+
+async def test_match_contacts_excludes_inactive_accounts(harness: Harness) -> None:
+    alice = await _make_user(harness)
+    await _make_user(harness, phone="+27831112222", account_state="pending_code")
+
+    matches = await harness.service.match_contacts(
+        requesting_user_id=alice.id, phones=["+27831112222"]
+    )
+    assert matches == []
+
+
+async def test_match_contacts_rejects_too_many_phones(harness: Harness) -> None:
+    alice = await _make_user(harness)
+    with pytest.raises(CircleError, match="Cannot match more than"):
+        await harness.service.match_contacts(
+            requesting_user_id=alice.id,
+            phones=[f"+2783{i:07d}" for i in range(1001)],
+        )
+
+
+async def test_match_contacts_is_rate_limited(harness: Harness) -> None:
+    alice = await _make_user(harness)
+    for _ in range(CONTACT_MATCH_LIMIT):
+        await harness.service.match_contacts(requesting_user_id=alice.id, phones=["+27831112222"])
+    with pytest.raises(RateLimitExceeded):
+        await harness.service.match_contacts(requesting_user_id=alice.id, phones=["+27831112222"])

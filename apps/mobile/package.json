@@ -8,6 +8,7 @@
     "expo": "~57.0.22",
     "expo-camera": "~57.0.5",
     "expo-constants": "~57.0.18",
+    "expo-contacts": "^57.0.5",
     "expo-image-picker": "^57.0.18",
     "expo-linking": "~57.0.10",
     "expo-local-authentication": "~57.0.3",

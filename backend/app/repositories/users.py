@@ -24,6 +24,18 @@ class UserRepository(Repository[User]):
         result = await self.session.execute(self._select().where(User.phone == phone))
         return result.scalar_one_or_none()
 
+    async def list_by_phones(self, phones: list[str]) -> list[User]:
+        """Bulk contact-matching lookup (§22 `phone_match` channel) — a
+        single `WHERE phone IN (...)` rather than N calls to
+        `get_by_phone`. Only `active` accounts match: a `pending_*` or
+        `banned` row existing shouldn't be observable through this path."""
+        if not phones:
+            return []
+        result = await self.session.execute(
+            self._select().where(User.phone.in_(phones), User.account_state == "active")
+        )
+        return list(result.scalars().all())
+
     async def search(
         self,
         *,

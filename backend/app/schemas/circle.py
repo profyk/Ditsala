@@ -3,13 +3,32 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.domain.circle.service import ContactRequestWithProfiles, ContactWithProfile
+from app.domain.circle.service import (
+    CONTACT_MATCH_MAX_PHONES,
+    ContactRequestWithProfiles,
+    ContactWithProfile,
+)
+from app.models.accounts import User
 from app.models.circle import ContactRequest, Invitation, Report
 
 
 class SendContactRequestRequest(BaseModel):
     to_user_id: uuid.UUID
     channel: str = Field(pattern="^(qr|invite_link|phone_match)$")
+
+
+class MatchContactsRequest(BaseModel):
+    phones: list[str] = Field(min_length=1, max_length=CONTACT_MATCH_MAX_PHONES)
+
+
+class MatchedContactResponse(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    avatar_url: str | None
+
+    @classmethod
+    def from_user(cls, user: User) -> "MatchedContactResponse":
+        return cls(user_id=user.id, display_name=user.display_name, avatar_url=None)
 
 
 class ContactRequestResponse(BaseModel):

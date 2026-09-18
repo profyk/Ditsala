@@ -46,7 +46,18 @@ export interface Invitation {
   expires_at: string;
 }
 
+export interface MatchedContact {
+  user_id: string;
+  display_name: string;
+  avatar_url: string | null;
+}
+
 export const circleApi = {
+  // --- §22: phone contact matching ---
+
+  matchContacts: (accessToken: string, phones: string[]) =>
+    request<MatchedContact[]>("/circle/contacts/match", { token: accessToken, body: { phones } }),
+
   // --- §22: contact requests ---
 
   sendContactRequest: (accessToken: string, toUserId: string, channel: ContactRequestChannel) =>

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.security import generate_invite_code
 from app.domain.ratelimit.interfaces import RateLimiter
+from app.models.accounts import User
 from app.models.circle import Block, Contact, ContactRequest, Invitation, Report
 from app.repositories.admin import SystemConfigRepository
 from app.repositories.circle import (
@@ -29,6 +30,17 @@ CONTACT_REQUEST_LIMIT = 30
 CONTACT_REQUEST_WINDOW_SECONDS = 24 * 3600
 INVITATION_LIMIT = 10
 INVITATION_WINDOW_SECONDS = 24 * 3600
+
+# Phone-contact matching (§22 `phone_match`) reveals, for any phone number
+# a caller submits, whether it's a registered DITSALA account — the same
+# enumeration exposure every phone-based contact-discovery feature has
+# (WhatsApp/Telegram included; this isn't a DITSALA-specific weakness).
+# A tighter per-call limit than CONTACT_REQUEST_LIMIT since this is
+# normally a one-time-per-device-contacts-sync action, not something a
+# legitimate user does repeatedly — see docs/SECURITY_GAPS.md.
+CONTACT_MATCH_LIMIT = 5
+CONTACT_MATCH_WINDOW_SECONDS = 3600
+CONTACT_MATCH_MAX_PHONES = 1000
 
 
 class CircleError(Exception):
@@ -74,6 +86,26 @@ class CircleService:
         self._rate_limiter = rate_limiter
 
     # --- §22: contact requests ---
+
+    async def match_contacts(
+        self, *, requesting_user_id: uuid.UUID, phones: list[str]
+    ) -> list[User]:
+        """The `phone_match` channel's lookup half — `send_contact_request`
+        already handles the send. Rate-limited per caller (not per phone
+        submitted — see CONTACT_MATCH_LIMIT's comment) and capped in size
+        so one call can't be used to sweep a large slice of the phone
+        number space. The requester's own number is excluded so their own
+        entry in their own device contacts never comes back as a match."""
+        await self._rate_limiter.hit(
+            f"circle:contact_match:{requesting_user_id}",
+            limit=CONTACT_MATCH_LIMIT,
+            window_seconds=CONTACT_MATCH_WINDOW_SECONDS,
+        )
+        if len(phones) > CONTACT_MATCH_MAX_PHONES:
+            raise CircleError(f"Cannot match more than {CONTACT_MATCH_MAX_PHONES} numbers at once.")
+        deduped = {p for p in phones if p}
+        matches = await self._users.list_by_phones(list(deduped))
+        return [u for u in matches if u.id != requesting_user_id]
 
     async def send_contact_request(
         self, *, from_user_id: uuid.UUID, to_user_id: uuid.UUID, channel: str

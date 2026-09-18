@@ -11,6 +11,8 @@ from app.schemas.circle import (
     ContactResponse,
     CreateInvitationRequest,
     InvitationResponse,
+    MatchContactsRequest,
+    MatchedContactResponse,
     ReportResponse,
     ReportUserRequest,
     SendContactRequestRequest,
@@ -27,6 +29,17 @@ def _as_http_error(exc: CircleError) -> HTTPException:
 
 
 # --- §22: contact requests ---
+
+
+@router.post("/contacts/match", response_model=list[MatchedContactResponse])
+async def match_contacts(
+    body: MatchContactsRequest, user: CurrentUserDep, service: CircleServiceDep
+) -> list[MatchedContactResponse]:
+    try:
+        matches = await service.match_contacts(requesting_user_id=user.id, phones=body.phones)
+    except CircleError as exc:
+        raise _as_http_error(exc) from exc
+    return [MatchedContactResponse.from_user(u) for u in matches]
 
 
 @router.post("/requests", response_model=ContactRequestResponse, status_code=201)

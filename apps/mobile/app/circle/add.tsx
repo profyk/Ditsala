@@ -124,14 +124,22 @@ export default function AddToCircle() {
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Add to Circle</Text>
       <Text className="mb-8 text-base text-text-secondary">
-        Scan someone&apos;s Circle QR code, or share your own link with them.
+        Find people you know, scan someone&apos;s Circle QR code, or share your own link.
       </Text>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
       <Button
+        testID="find-contacts-nav-button"
+        label="Find contacts on DITSALA"
+        icon="search"
+        onPress={() => router.push("/circle/find-contacts")}
+      />
+      <View className="h-3" />
+      <Button
         testID="scan-qr-button"
         label="Scan a QR code"
+        variant="secondary"
         onPress={handleStartScan}
         loading={busy}
       />
