@@ -1,7 +1,10 @@
+import { dark } from "@ditsala/ui-tokens";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
 
+import { Avatar } from "../../components/Avatar";
+import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
 import { decryptIncomingMessage, encryptOutgoingMessage } from "../../lib/crypto/chat-crypto";
 import { randomId } from "../../lib/id";
@@ -128,18 +131,29 @@ export default function ChatScreen() {
     }
   }
 
+  const otherMember = members.find((m) => m.user_id !== ownUserId);
   const title =
     conversation?.type === "group"
       ? (conversation.title ?? members.map((m) => m.display_name).join(", "))
-      : (members.find((m) => m.user_id !== ownUserId)?.display_name ?? "Chat");
+      : (otherMember?.display_name ?? "Chat");
 
   return (
     <Screen scroll={false}>
       <View className="mb-3 mt-8 flex-row items-center gap-3">
-        <Pressable testID="chat-back-button" onPress={() => router.back()} className="p-1">
-          <Text className="text-xl text-accent">‹</Text>
+        <Pressable
+          testID="chat-back-button"
+          onPress={() => router.back()}
+          className="h-9 w-9 items-center justify-center rounded-full active:bg-surface-raised"
+        >
+          <Icon name="chevron-left" size={20} color={dark.textPrimary} />
         </Pressable>
-        <Text className="flex-1 text-xl font-semibold text-text-primary" numberOfLines={1}>
+        <Avatar
+          id={conversation?.id ?? "chat"}
+          name={title}
+          imageUrl={conversation?.type === "direct" ? otherMember?.avatar_url : null}
+          size={38}
+        />
+        <Text className="flex-1 text-lg font-bold text-text-primary" numberOfLines={1}>
           {title}
         </Text>
       </View>
@@ -160,20 +174,34 @@ export default function ChatScreen() {
           return (
             <View className={`mb-2 max-w-[80%] ${isOwn ? "self-end" : "self-start"}`}>
               <View
-                className={`rounded-2xl px-4 py-2 ${
+                className={`rounded-2xl px-4 py-2.5 ${
                   isOwn ? "bg-accent" : "border border-border bg-surface"
                 }`}
               >
-                <Text className={isOwn ? "text-background" : "text-text-primary"}>
-                  {item.plaintext ?? "🔒 Couldn't decrypt this message"}
+                <Text className={isOwn ? "text-white" : "text-text-primary"}>
+                  {item.plaintext ?? "Couldn't decrypt this message"}
                 </Text>
               </View>
-              <Text className="mt-1 text-xs text-text-tertiary">
+              <Text className={`mt-1 text-xs text-text-tertiary ${isOwn ? "text-right" : ""}`}>
                 {formatTime(item.created_at)}
               </Text>
             </View>
           );
         }}
+        ListEmptyComponent={
+          <View className="flex-1 items-center justify-center py-16">
+            <View
+              className="mb-3 h-14 w-14 items-center justify-center rounded-full"
+              style={{ backgroundColor: dark.accentMuted }}
+            >
+              <Icon name="messages" size={26} color={dark.accent} />
+            </View>
+            <Text className="text-base font-semibold text-text-primary">Say hello</Text>
+            <Text className="mt-1 text-center text-sm text-text-tertiary">
+              Every message here is end-to-end encrypted.
+            </Text>
+          </View>
+        }
       />
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -183,17 +211,17 @@ export default function ChatScreen() {
             value={draft}
             onChangeText={setDraft}
             placeholder="Message"
-            placeholderTextColor="#6E6E85"
+            placeholderTextColor={dark.textTertiary}
             multiline
-            className="flex-1 rounded-2xl border border-border bg-surface px-4 py-2 text-text-primary"
+            className="flex-1 rounded-2xl border border-border bg-surface px-4 py-2.5 text-text-primary"
           />
           <Pressable
             testID="chat-send-button"
             onPress={handleSend}
             disabled={sending || draft.trim().length === 0}
-            className="h-10 w-10 items-center justify-center rounded-full bg-accent disabled:opacity-50"
+            className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
           >
-            <Text className="text-lg text-background">↑</Text>
+            <Icon name="send" size={18} color="#FFFFFF" />
           </Pressable>
         </View>
       </KeyboardAvoidingView>

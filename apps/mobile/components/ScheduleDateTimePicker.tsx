@@ -180,7 +180,7 @@ export function ScheduleDateTimePicker({ value, onChange, testID }: ScheduleDate
                             <Text
                               className={
                                 isSelected
-                                  ? "font-semibold text-background"
+                                  ? "font-semibold text-white"
                                   : disabled
                                     ? "text-text-tertiary"
                                     : "text-text-primary"
