@@ -77,7 +77,7 @@ export default function KycDocument() {
                 testID={`document-type-${type}`}
                 onPress={() => setDocumentType(type)}
                 className={[
-                  "flex-1 items-center rounded border py-3",
+                  "flex-1 items-center rounded-xl border py-3",
                   documentType === type
                     ? "border-accent bg-accent-muted"
                     : "border-border bg-surface",

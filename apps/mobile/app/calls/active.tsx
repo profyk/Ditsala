@@ -100,7 +100,7 @@ export default function ActiveCall() {
       )}
 
       {isVideo && activeCall.localStream ? (
-        <View className="absolute right-4 top-16 h-40 w-28 overflow-hidden rounded border border-border">
+        <View className="absolute right-4 top-16 h-40 w-28 overflow-hidden rounded-xl border border-border">
           {Platform.OS === "web" ? (
             <WebVideoStream stream={activeCall.localStream as unknown as MediaStream} mirror />
           ) : (

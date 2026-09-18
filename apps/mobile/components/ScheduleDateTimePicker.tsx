@@ -112,7 +112,7 @@ export function ScheduleDateTimePicker({ value, onChange, testID }: ScheduleDate
       <Pressable
         testID={testID}
         onPress={openPicker}
-        className="mb-5 rounded border border-border bg-surface px-4 py-3"
+        className="mb-5 rounded-xl border border-border bg-surface px-4 py-3"
       >
         <Text className="mb-1 text-sm font-medium text-text-secondary">Date & time</Text>
         <Text className="text-base text-text-primary">

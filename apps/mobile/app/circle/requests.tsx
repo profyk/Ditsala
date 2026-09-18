@@ -73,7 +73,7 @@ export default function CircleRequests() {
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-xl border border-border bg-surface p-4">
             <Text className="mb-3 text-base text-text-primary">
               {item.from_user_display_name}
             </Text>
@@ -109,7 +109,7 @@ export default function CircleRequests() {
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-xl border border-border bg-surface p-4">
             <Text className="text-base text-text-primary">{item.to_user_display_name}</Text>
             <Text className="text-sm text-text-tertiary">Waiting for a response</Text>
           </View>

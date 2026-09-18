@@ -33,7 +33,7 @@ export function CountryCodePicker({ value, onChange, testID }: CountryCodePicker
       <Pressable
         testID={testID}
         onPress={() => setOpen(true)}
-        className="mr-2 flex-row items-center rounded border border-border bg-surface px-3 py-3"
+        className="mr-2 flex-row items-center rounded-xl border border-border bg-surface px-3 py-3"
       >
         <Text className="text-base text-text-primary">
           {value.flag} {value.dialCode}
@@ -50,7 +50,7 @@ export function CountryCodePicker({ value, onChange, testID }: CountryCodePicker
             placeholder="Search by country or code"
             placeholderTextColor={dark.textTertiary}
             autoCapitalize="none"
-            className="mb-4 rounded border border-border bg-surface px-4 py-3 text-base text-text-primary"
+            className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"
           />
           <FlatList
             data={filtered}

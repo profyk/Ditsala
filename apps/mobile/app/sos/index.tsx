@@ -1,9 +1,11 @@
+import { dark } from "@ditsala/ui-tokens";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 
 import { Button } from "../../components/Button";
+import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
 import { sosApi, type SosEvent } from "../../lib/sos-api";
 import { triggerSosWithRetry, type SosTriggerHandle, type SosTriggerStatus } from "../../lib/sos-queue";
@@ -121,29 +123,49 @@ export default function Sos() {
     return (
       <Screen scroll={false}>
         <View className="flex-1 items-center justify-center">
-          <Text className="mb-4 text-2xl font-semibold text-danger">SOS triggered</Text>
-          <Text className="mb-2 text-6xl font-bold text-text-primary">{secondsLeft}</Text>
-          <Text className="mb-12 text-base text-text-secondary">
+          <View
+            className="mb-6 h-40 w-40 items-center justify-center rounded-full border-4 border-danger"
+            style={{
+              shadowColor: dark.danger,
+              shadowOpacity: 0.5,
+              shadowRadius: 30,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: 10,
+            }}
+          >
+            <Text className="text-7xl font-extrabold text-danger">{secondsLeft}</Text>
+          </View>
+          <Text className="mb-3 text-2xl font-extrabold text-danger">SOS triggered</Text>
+          <Text className="mb-10 max-w-xs text-center text-base text-text-secondary">
             Your Circle will be notified automatically unless you cancel.
           </Text>
-          <Button testID="sos-cancel-button" label="Cancel SOS" onPress={handleCancel} />
+          <Button testID="sos-cancel-button" label="Cancel SOS" variant="secondary" onPress={handleCancel} />
         </View>
       </Screen>
     );
   }
 
   if (activeEvent && (activeEvent.status === "escalated" || activeEvent.status === "cancelled")) {
+    const escalated = activeEvent.status === "escalated";
     return (
-      <Screen>
-        <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">
-          {activeEvent.status === "escalated" ? "Circle notified" : "SOS cancelled"}
-        </Text>
-        <Text className="mb-8 text-base text-text-secondary">
-          {activeEvent.status === "escalated"
-            ? "Your trusted Circle and next of kin have been notified with your last known location."
-            : "No one was notified."}
-        </Text>
-        <Button label="Done" onPress={() => setActiveEvent(null)} />
+      <Screen scroll={false}>
+        <View className="flex-1 items-center justify-center">
+          <View
+            className="mb-6 h-20 w-20 items-center justify-center rounded-full"
+            style={{ backgroundColor: escalated ? `${dark.danger}22` : dark.accentMuted }}
+          >
+            <Icon name={escalated ? "shield" : "check"} size={32} color={escalated ? dark.danger : dark.accent} />
+          </View>
+          <Text className="mb-3 text-2xl font-extrabold text-text-primary">
+            {escalated ? "Circle notified" : "SOS cancelled"}
+          </Text>
+          <Text className="mb-10 max-w-xs text-center text-base text-text-secondary">
+            {escalated
+              ? "Your trusted Circle and next of kin have been notified with your last known location."
+              : "No one was notified."}
+          </Text>
+          <Button label="Done" onPress={() => setActiveEvent(null)} />
+        </View>
       </Screen>
     );
   }
@@ -151,7 +173,13 @@ export default function Sos() {
   return (
     <Screen scroll={false}>
       <View className="flex-1 items-center justify-center">
-        <Text className="mb-2 text-3xl font-semibold text-text-primary">Emergency SOS</Text>
+        <View
+          className="mb-8 h-24 w-24 items-center justify-center rounded-full"
+          style={{ backgroundColor: `${dark.danger}1A` }}
+        >
+          <Icon name="shield" size={44} color={dark.danger} />
+        </View>
+        <Text className="mb-2 text-3xl font-extrabold text-text-primary">Emergency SOS</Text>
         <Text className="mb-12 max-w-xs text-center text-base text-text-secondary">
           Alerts your trusted Circle and next of kin with your location. You&apos;ll have a
           few seconds to cancel first.
@@ -167,6 +195,8 @@ export default function Sos() {
         <Button
           testID="sos-trigger-button"
           label="Trigger SOS"
+          icon="shield"
+          variant="danger"
           onPress={handleTrigger}
           loading={triggerStatus === "sending" || triggerStatus === "retrying"}
         />

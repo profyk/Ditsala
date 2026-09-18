@@ -131,7 +131,7 @@ export default function LocationScreen() {
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-xl border border-border bg-surface p-4">
             <Text className="mb-3 text-sm text-text-tertiary">
               Until {new Date(item.expires_at).toLocaleString()}
             </Text>
@@ -154,7 +154,7 @@ export default function LocationScreen() {
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-xl border border-border bg-surface p-4">
             <Text className="text-sm text-text-tertiary">
               Until {new Date(item.expires_at).toLocaleString()}
             </Text>
@@ -175,7 +175,7 @@ export default function LocationScreen() {
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
         renderItem={({ item }) => (
-          <View className="mb-3 rounded border border-border bg-surface p-4">
+          <View className="mb-3 rounded-xl border border-border bg-surface p-4">
             <Text className="mb-3 text-base text-text-primary">{item.contact_display_name}</Text>
             <View className="flex-row gap-2">
               {DURATION_PRESETS.map((preset) => (

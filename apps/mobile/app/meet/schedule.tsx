@@ -139,7 +139,7 @@ export default function ScheduleMeeting() {
         testID="meeting-password-input"
       />
 
-      <View className="mb-6 flex-row items-center justify-between rounded border border-border bg-surface px-4 py-3">
+      <View className="mb-6 flex-row items-center justify-between rounded-xl border border-border bg-surface px-4 py-3">
         <View className="flex-1 pr-3">
           <Text className="text-base text-text-primary">Waiting room</Text>
           <Text className="text-sm text-text-tertiary">

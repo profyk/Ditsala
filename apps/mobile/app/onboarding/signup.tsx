@@ -73,7 +73,7 @@ export default function Signup() {
             placeholderTextColor={dark.textTertiary}
             keyboardType="number-pad"
             testID="phone-input"
-            className="flex-1 rounded border border-border bg-surface px-4 py-3 text-base text-text-primary"
+            className="flex-1 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"
           />
         </View>
       </View>

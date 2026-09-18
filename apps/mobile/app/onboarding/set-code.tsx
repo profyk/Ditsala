@@ -51,6 +51,7 @@ export default function SetCode() {
 
       <TextField
         label="DITSALA Code"
+        icon="lock"
         value={code}
         onChangeText={setCode}
         secureTextEntry
@@ -62,6 +63,7 @@ export default function SetCode() {
       />
       <TextField
         label="Confirm DITSALA Code"
+        icon="lock"
         value={confirmCode}
         onChangeText={setConfirmCode}
         secureTextEntry
