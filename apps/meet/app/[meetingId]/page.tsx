@@ -1,9 +1,10 @@
 "use client";
 
 import { LiveKitRoom, VideoConference } from "@livekit/components-react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { MeetingToolsBar } from "@/components/MeetingToolsBar";
 import {
   type JoinInfoResponse,
   type JoinMeetingResponse,
@@ -41,6 +42,11 @@ function formatScheduledTime(iso: string): string {
 export default function MeetingRoom() {
   const params = useParams<{ meetingId: string }>();
   const meetingId = params.meetingId;
+  const searchParams = useSearchParams();
+  // §9 host-link handoff (docs/DITSALA_MEET_SPEC.md) — set by the mobile
+  // app's "My Meetings" list, see backend/app/core/security.py's
+  // create_meet_host_token. Present only when a host opened this link.
+  const hostToken = searchParams.get("hj");
 
   const [stage, setStage] = useState<Stage>("loading");
   const [joinInfo, setJoinInfo] = useState<JoinInfoResponse | null>(null);
@@ -64,8 +70,23 @@ export default function MeetingRoom() {
   }
 
   useEffect(() => {
+    if (hostToken) {
+      // The host bypasses join-info entirely — they always can join their
+      // own meeting (server-enforced in _check_joinable's is_host bypass).
+      meetingsApi
+        .hostJoin(meetingId, hostToken)
+        .then((result) => {
+          setJoin(result);
+          setStage(result.access ? "in-call" : "waiting");
+        })
+        .catch((err) => {
+          setError(err instanceof ApiError ? err.message : "This meeting link isn't valid.");
+          setStage("error");
+        });
+      return;
+    }
     loadJoinInfo();
-  }, [meetingId]);
+  }, [meetingId, hostToken]);
 
   // While "not-yet" (too early relative to the scheduled start), quietly
   // recheck every so often — the moment the host's early-join window
@@ -172,6 +193,12 @@ export default function MeetingRoom() {
         style={{ height: "100vh" }}
         onDisconnected={() => setStage("form")}
       >
+        <MeetingToolsBar
+          meetingId={meetingId}
+          participantId={join.participant_id}
+          role={join.role}
+          hostToken={hostToken}
+        />
         <VideoConference />
       </LiveKitRoom>
     );

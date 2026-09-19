@@ -7,6 +7,7 @@ from app.models.meetings import (
     BreakoutRoomParticipant,
     Meeting,
     MeetingAiNote,
+    MeetingDocument,
     MeetingMessage,
     MeetingParticipant,
     MeetingPoll,
@@ -100,6 +101,18 @@ class MeetingRecordingRepository(Repository[MeetingRecording]):
             self._select()
             .where(MeetingRecording.meeting_id == meeting_id)
             .order_by(MeetingRecording.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+class MeetingDocumentRepository(Repository[MeetingDocument]):
+    model = MeetingDocument
+
+    async def list_for_meeting(self, meeting_id: uuid.UUID) -> list[MeetingDocument]:
+        result = await self.session.execute(
+            self._select()
+            .where(MeetingDocument.meeting_id == meeting_id)
+            .order_by(MeetingDocument.created_at.desc())
         )
         return list(result.scalars().all())
 

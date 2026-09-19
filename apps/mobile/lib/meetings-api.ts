@@ -46,6 +46,13 @@ export const meetingsApi = {
 
   list: (accessToken: string) =>
     request<MeetingResponse[]>("/meetings", { method: "GET", token: accessToken }),
+
+  // Mints the short-lived meet-host token (backend/app/core/security.py's
+  // create_meet_host_token) that lets "My Meetings" open a scheduled
+  // meeting directly into the Ditsala Meet web app as its host, instead of
+  // the guest-join form.
+  hostJoinLink: (accessToken: string, meetingId: string) =>
+    request<{ token: string }>(`/meetings/${meetingId}/host-link`, { token: accessToken }),
 };
 
 export function meetingJoinLink(meetingId: string): string {

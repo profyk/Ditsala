@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from typing import Annotated
 
 import jwt
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
-from app.core.security import decode_access_token, decode_onboarding_token
+from app.core.security import decode_access_token, decode_meet_host_token, decode_onboarding_token
 from app.domain.account.profile_service import ProfileService
 from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
@@ -57,6 +58,7 @@ from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
     MeetingAiNoteRepository,
+    MeetingDocumentRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -213,6 +215,42 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+async def get_meeting_actor(
+    meeting_id: uuid.UUID,
+    settings: SettingsDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> uuid.UUID:
+    """Resolves to a user id for meeting-management actions (recording,
+    document upload/delete) from either a normal access token or a
+    short-lived meet-host token (`POST /meetings/{id}/host-link`). The
+    fallback exists because `apps/meet` is a separate origin with no session
+    of its own — a host opening their meeting from the mobile app's "My
+    Meetings" list authenticates there via the scoped token, not a real
+    access token, so these host-only actions need to accept both. A
+    meet-host token minted for one meeting is rejected outright for any
+    other meeting_id, even though it decodes fine — the FastAPI path param
+    is trusted, the token's own embedded meeting_id is not."""
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing credentials.")
+    token = authorization.removeprefix("Bearer ")
+    try:
+        return decode_access_token(token, jwt_secret=settings.jwt_secret).user_id
+    except jwt.InvalidTokenError:
+        pass
+    try:
+        token_meeting_id, user_id = decode_meet_host_token(token, jwt_secret=settings.jwt_secret)
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Invalid or expired credentials."
+        ) from exc
+    if token_meeting_id != meeting_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This link isn't valid for this meeting.")
+    return user_id
+
+
+MeetingActorDep = Annotated[uuid.UUID, Depends(get_meeting_actor)]
 
 
 async def get_current_device(
@@ -386,7 +424,9 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
         registrations=MeetingRegistrationRepository(session),
+        documents=MeetingDocumentRepository(session),
         room_provider=LiveKitRoomProvider.from_settings(settings),
+        storage_provider=get_storage_provider(settings),
     )
 
 

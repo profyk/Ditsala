@@ -163,6 +163,36 @@ def decode_onboarding_token(token: str, *, jwt_secret: str) -> uuid.UUID:
     return uuid.UUID(payload["sub"])
 
 
+_MEET_HOST_TOKEN_TYPE = "meet_host"
+MEET_HOST_TOKEN_TTL_MINUTES = 5
+
+
+def create_meet_host_token(meeting_id: uuid.UUID, user_id: uuid.UUID, *, jwt_secret: str) -> str:
+    """A short-lived, single-meeting-scoped credential (docs/DITSALA_MEET_SPEC.md
+    §9) — `apps/meet` runs on its own origin with no session of its own, so a
+    host opening their meeting from the mobile app needs some way to prove who
+    they are there. Same reasoning as `create_onboarding_token`: a raw
+    access token in a URL would be a much bigger blast radius if it ever
+    leaked (full API access for its whole TTL) than a token that's only ever
+    good for joining one specific meeting for a few minutes."""
+    payload = {
+        "sub": str(user_id),
+        "meeting_id": str(meeting_id),
+        "type": _MEET_HOST_TOKEN_TYPE,
+        "exp": datetime.now(UTC) + timedelta(minutes=MEET_HOST_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+def decode_meet_host_token(token: str, *, jwt_secret: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """Returns (meeting_id, user_id). Raises jwt.InvalidTokenError (or a
+    subclass) on anything wrong — callers turn that into a 401/403."""
+    payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+    if payload.get("type") != _MEET_HOST_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Not a meet-host token.")
+    return uuid.UUID(payload["meeting_id"]), uuid.UUID(payload["sub"])
+
+
 # --- §16-17: sessions, devices, two-factor login ---
 
 ACCESS_TOKEN_TYPE = "access"

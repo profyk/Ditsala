@@ -17,6 +17,12 @@ def _as_http_error(exc: SosError) -> HTTPException:
 async def trigger_sos(
     body: TriggerSosRequest, user: CurrentUserDep, service: SosServiceDep
 ) -> SosEventResponse:
+    # Emergency SOS is a VIP-tier feature — the mobile app hides the entry
+    # point for normal tier, this is the server-side enforcement of the
+    # same rule (defense in depth, matching the tier gate every other
+    # VIP-only path already has).
+    if user.account_tier != "vip":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Emergency SOS is a VIP feature.")
     event = await service.trigger(
         user_id=user.id, last_known_location_ref=body.last_known_location_ref
     )

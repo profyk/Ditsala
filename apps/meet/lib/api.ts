@@ -72,6 +72,27 @@ export interface JoinInfoResponse {
   joinable_now: boolean;
 }
 
+export interface RecordingResponse {
+  id: string;
+  meeting_id: string;
+  egress_id: string;
+  storage_key: string | null;
+  duration_seconds: number | null;
+  status: "processing" | "ready" | "failed";
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+export interface MeetingDocumentResponse {
+  id: string;
+  meeting_id: string;
+  uploaded_by_participant_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export const meetingsApi = {
   get: (meetingId: string, accessToken: string) =>
     request<MeetingResponse>(`/meetings/${meetingId}`, { method: "GET", token: accessToken }),
@@ -109,4 +130,74 @@ export const meetingsApi = {
     request<JoinMeetingResponse>(`/meetings/${meetingId}/participants/${participantId}/status`, {
       method: "GET",
     }),
+
+  // §9 host-link handoff — apps/meet has no session of its own, so a host
+  // arriving from the mobile app's "My Meetings" list authenticates here
+  // with this short-lived, meeting-scoped token instead of a real access
+  // token (see backend/app/core/security.py's create_meet_host_token).
+  hostJoin: (meetingId: string, hostToken: string) =>
+    request<JoinMeetingResponse>(`/meetings/${meetingId}/host-join`, {
+      body: { token: hostToken },
+    }),
+
+  // Recording + document endpoints accept either a real access token or
+  // the meet-host token as `token` — both work via MeetingActorDep on the
+  // backend.
+  startRecording: (meetingId: string, token: string) =>
+    request<RecordingResponse>(`/meetings/${meetingId}/recordings/start`, { token }),
+
+  stopRecording: (meetingId: string, recordingId: string, token: string) =>
+    request<RecordingResponse>(`/meetings/${meetingId}/recordings/${recordingId}/stop`, {
+      token,
+    }),
+
+  listRecordings: (meetingId: string, token: string) =>
+    request<RecordingResponse[]>(`/meetings/${meetingId}/recordings`, {
+      method: "GET",
+      token,
+    }),
+
+  requestDocumentUpload: (
+    meetingId: string,
+    token: string,
+    file: { filename: string; content_type: string; size_bytes: number }
+  ) =>
+    request<{ document_id: string; upload_url: string }>(`/meetings/${meetingId}/documents/upload`, {
+      token,
+      body: file,
+    }),
+
+  // Public given a valid participant_id — guests have no DITSALA account
+  // or JWT, so this is how they see documents shared in a meeting they're
+  // actually in (see MeetingService.list_documents's docstring).
+  listDocuments: (meetingId: string, participantId: string) =>
+    request<MeetingDocumentResponse[]>(
+      `/meetings/${meetingId}/documents?participant_id=${participantId}`,
+      { method: "GET" }
+    ),
+
+  documentDownloadUrl: (meetingId: string, documentId: string, participantId: string) =>
+    request<{ download_url: string }>(
+      `/meetings/${meetingId}/documents/${documentId}/download?participant_id=${participantId}`,
+      { method: "GET" }
+    ),
+
+  deleteDocument: (meetingId: string, documentId: string, token: string) =>
+    request<void>(`/meetings/${meetingId}/documents/${documentId}`, {
+      method: "DELETE",
+      token,
+    }),
 };
+
+/** PUTs a File directly to a presigned storage URL — same client-side
+ * upload pattern messaging media already uses, just for meeting documents. */
+export async function uploadFileToPresignedUrl(uploadUrl: string, file: File): Promise<void> {
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  if (!response.ok) {
+    throw new ApiError("Could not upload the file.", response.status);
+  }
+}

@@ -70,7 +70,13 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides.clear()
 
 
-async def _make_user_with_device(session: AsyncSession) -> tuple[User, Device, str]:
+async def _make_user_with_device(
+    session: AsyncSession, *, account_tier: str = "vip"
+) -> tuple[User, Device, str]:
+    # SOS is VIP-only (backend/app/api/v1/routers/sos.py) — defaults to vip
+    # here so the existing behavior tests (cancel/escalate/rate-limit) keep
+    # exercising SosService itself; test_trigger_forbidden_for_normal_tier
+    # below is the one that actually asserts the gate.
     user = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -78,6 +84,7 @@ async def _make_user_with_device(session: AsyncSession) -> tuple[User, Device, s
         date_of_birth=datetime(1990, 1, 1),
         national_id_hash=uuid.uuid4().hex,
         account_state="active",
+        account_tier=account_tier,
     )
     session.add(user)
     await session.flush()
@@ -115,6 +122,20 @@ async def test_trigger_and_cancel_sos(client: AsyncClient, session: AsyncSession
     r = await client.get("/api/v1/sos", headers=_auth(alice_token))
     assert r.status_code == 200, r.text
     assert len(r.json()) == 1
+
+
+async def test_trigger_forbidden_for_normal_tier(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session, account_tier="normal")
+
+    r = await client.post("/api/v1/sos/trigger", json={}, headers=_auth(alice_token))
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == "Emergency SOS is a VIP feature."
+
+    r = await client.get("/api/v1/sos", headers=_auth(alice_token))
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 0
 
 
 async def test_escalate_notifies_trusted_circle(

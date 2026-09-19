@@ -103,6 +103,12 @@ export default function ScheduleMeeting() {
           <View className="w-full">
             <Button label="Share invite" onPress={() => handleShare(created)} />
             <View className="h-3" />
+            <Button
+              label="View my meetings"
+              variant="secondary"
+              onPress={() => router.replace("/meet")}
+            />
+            <View className="h-3" />
             <Button label="Done" variant="secondary" onPress={() => router.replace("/home")} />
           </View>
         </View>

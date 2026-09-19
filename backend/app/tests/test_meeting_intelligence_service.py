@@ -31,6 +31,7 @@ from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
     MeetingAiNoteRepository,
+    MeetingDocumentRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -109,6 +110,15 @@ def harness(session: AsyncSession) -> Harness:
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
         registrations=MeetingRegistrationRepository(session),
+        documents=MeetingDocumentRepository(session),
+        storage_provider=S3StorageProvider(
+            bucket="test-bucket",
+            region="us-east-1",
+            access_key_id="test",
+            secret_access_key="test",
+            endpoint_url="",
+            url_ttl_minutes=15,
+        ),
     )
     transcription = StubTranscriptionProvider(
         [

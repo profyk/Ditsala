@@ -48,6 +48,11 @@ export default function Home() {
   const router = useRouter();
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // SOS is a VIP-tier feature (backend/app/api/v1/routers/sos.py enforces
+  // this too) — default to hidden until the tier is known, same "don't
+  // flash it" pattern settings/index.tsx already uses for the tier-gated
+  // "Log out" row.
+  const isVip = me?.account_tier === "vip";
 
   const load = useCallback(async () => {
     const accessToken = await getAccessToken();
@@ -97,32 +102,34 @@ export default function Home() {
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
-      <Pressable
-        testID="sos-nav-button"
-        onPress={() => router.push("/sos")}
-        className="mb-6 flex-row items-center gap-4 rounded-2xl bg-danger p-5 active:opacity-90"
-        style={{
-          shadowColor: dark.danger,
-          shadowOpacity: 0.4,
-          shadowRadius: 16,
-          shadowOffset: { width: 0, height: 8 },
-          elevation: 6,
-        }}
-      >
-        <View className="h-12 w-12 items-center justify-center rounded-full bg-white/20">
-          <Icon name="shield" size={24} color="#FFFFFF" />
-        </View>
-        <View className="flex-1">
-          <Text className="text-lg font-bold text-white">Emergency SOS</Text>
-          <Text className="text-sm text-white/85">Alert your trusted Circle instantly</Text>
-        </View>
-        <Icon name="chevron-right" size={20} color="#FFFFFF" />
-      </Pressable>
+      {isVip ? (
+        <Pressable
+          testID="sos-nav-button"
+          onPress={() => router.push("/sos")}
+          className="mb-6 flex-row items-center gap-4 rounded-2xl bg-danger p-5 active:opacity-90"
+          style={{
+            shadowColor: dark.danger,
+            shadowOpacity: 0.4,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 8 },
+            elevation: 6,
+          }}
+        >
+          <View className="h-12 w-12 items-center justify-center rounded-full bg-white/20">
+            <Icon name="shield" size={24} color="#FFFFFF" />
+          </View>
+          <View className="flex-1">
+            <Text className="text-lg font-bold text-white">Emergency SOS</Text>
+            <Text className="text-sm text-white/85">Alert your trusted Circle instantly</Text>
+          </View>
+          <Icon name="chevron-right" size={20} color="#FFFFFF" />
+        </Pressable>
+      ) : null}
 
       <Text className="mb-3 text-xs font-medium uppercase tracking-widest text-text-tertiary">
         Quick actions
       </Text>
-      <View className="mb-3 flex-row gap-3">
+      <View className="mb-8 flex-row gap-3">
         <QuickAction
           testID="circle-nav-button"
           label="Circle"
@@ -139,13 +146,6 @@ export default function Home() {
         />
       </View>
       <View className="mb-8 flex-row gap-3">
-        <QuickAction
-          testID="meet-nav-button"
-          label="Meet"
-          sub="Schedule a call"
-          icon="video"
-          onPress={() => router.push("/meet/schedule")}
-        />
         <QuickAction
           testID="location-nav-button"
           label="Location"

@@ -1,10 +1,20 @@
 import uuid
 
+import jwt
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.v1.deps import CurrentUserDep, MeetingIntelligenceServiceDep, MeetingServiceDep
+from app.api.v1.deps import (
+    CurrentUserDep,
+    MeetingActorDep,
+    MeetingIntelligenceServiceDep,
+    MeetingServiceDep,
+    SessionDep,
+    SettingsDep,
+)
+from app.core.security import create_meet_host_token, decode_meet_host_token
 from app.domain.meetings.service import JoinResult, MeetingError
 from app.models.meetings import MeetingParticipant
+from app.repositories.users import UserRepository
 from app.schemas.meetings import (
     AiNoteResponse,
     AskQuestionAboutMeetingRequest,
@@ -22,6 +32,11 @@ from app.schemas.meetings import (
     JoinMeetingRequest,
     JoinMeetingResponse,
     LockMeetingRequest,
+    MeetHostJoinRequest,
+    MeetHostLinkResponse,
+    MeetingDocumentDownloadResponse,
+    MeetingDocumentResponse,
+    MeetingDocumentUploadResponse,
     MeetingResponse,
     MeetingSearchResultResponse,
     MessageResponse,
@@ -35,6 +50,7 @@ from app.schemas.meetings import (
     RecordingResponse,
     RegisterForMeetingRequest,
     RegistrationResponse,
+    RequestDocumentUploadRequest,
     RoomAccessTokenResponse,
     SendMessageRequest,
     TranscriptSegmentResponse,
@@ -167,6 +183,50 @@ async def guest_join_meeting(
             password=body.password,
             guest_email=body.guest_email,
         )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return _join_response(result)
+
+
+@router.post("/{meeting_id}/host-link", response_model=MeetHostLinkResponse)
+async def create_host_link(
+    meeting_id: uuid.UUID, user: CurrentUserDep, settings: SettingsDep, service: MeetingServiceDep
+) -> MeetHostLinkResponse:
+    """Mints a short-lived, meeting-scoped token (§9) so the mobile app can
+    hand a host off into `apps/meet` — a separate origin with no session of
+    its own — without putting the real access token in a URL."""
+    try:
+        await service.assert_host_or_cohost(meeting_id, user.id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    token = create_meet_host_token(meeting_id, user.id, jwt_secret=settings.jwt_secret)
+    return MeetHostLinkResponse(token=token)
+
+
+@router.post("/{meeting_id}/host-join", response_model=JoinMeetingResponse)
+async def host_join_meeting(
+    meeting_id: uuid.UUID,
+    body: MeetHostJoinRequest,
+    settings: SettingsDep,
+    session: SessionDep,
+    service: MeetingServiceDep,
+) -> JoinMeetingResponse:
+    """Public — the token itself, not a header, is the credential (mirrors
+    `get_participant_status`'s "public by design" reasoning): a host opening
+    their meeting from `apps/meet` has no session on that origin yet."""
+    try:
+        token_meeting_id, user_id = decode_meet_host_token(
+            body.token, jwt_secret=settings.jwt_secret
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired link.") from exc
+    if token_meeting_id != meeting_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This link isn't valid for this meeting.")
+    user = await UserRepository(session).get(user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired link.")
+    try:
+        result = await service.join(meeting_id=meeting_id, user=user, password=None)
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return _join_response(result)
@@ -343,14 +403,19 @@ async def raise_hand(
 
 
 # ---- Phase 2: recording -------------------------------------------------------
+# Recording is authenticated via MeetingActorDep, not CurrentUserDep directly
+# — it accepts either a real access token or the short-lived meet-host token
+# (see `get_meeting_actor`), since apps/meet has no session of its own.
 
 
 @router.post("/{meeting_id}/recordings/start", response_model=RecordingResponse)
 async def start_recording(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> RecordingResponse:
     try:
-        recording = await service.start_recording(meeting_id=meeting_id, acting_user_id=user.id)
+        recording = await service.start_recording(
+            meeting_id=meeting_id, acting_user_id=acting_user_id
+        )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return RecordingResponse.model_validate(recording)
@@ -360,12 +425,12 @@ async def start_recording(
 async def stop_recording(
     meeting_id: uuid.UUID,
     recording_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> RecordingResponse:
     try:
         recording = await service.stop_recording(
-            meeting_id=meeting_id, acting_user_id=user.id, recording_id=recording_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, recording_id=recording_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -374,13 +439,88 @@ async def stop_recording(
 
 @router.get("/{meeting_id}/recordings", response_model=list[RecordingResponse])
 async def list_recordings(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> list[RecordingResponse]:
     try:
-        recordings = await service.list_recordings(meeting_id=meeting_id, acting_user_id=user.id)
+        recordings = await service.list_recordings(
+            meeting_id=meeting_id, acting_user_id=acting_user_id
+        )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return [RecordingResponse.model_validate(r) for r in recordings]
+
+
+# ---- Meeting documents — host/co-host share files, every participant
+# (including guests) can view them ----------------------------------------
+
+
+@router.post("/{meeting_id}/documents/upload", response_model=MeetingDocumentUploadResponse)
+async def request_document_upload(
+    meeting_id: uuid.UUID,
+    body: RequestDocumentUploadRequest,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> MeetingDocumentUploadResponse:
+    try:
+        document, upload_url = await service.request_document_upload(
+            meeting_id=meeting_id,
+            acting_user_id=acting_user_id,
+            filename=body.filename,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingDocumentUploadResponse(document_id=document.id, upload_url=upload_url)
+
+
+@router.get("/{meeting_id}/documents", response_model=list[MeetingDocumentResponse])
+async def list_documents(
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
+) -> list[MeetingDocumentResponse]:
+    """Public given a valid participant_id — see `MeetingService.list_documents`'s
+    docstring for why this is safe without auth (guests have no JWT)."""
+    try:
+        documents = await service.list_documents(
+            meeting_id=meeting_id, participant_id=participant_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return [MeetingDocumentResponse.model_validate(d) for d in documents]
+
+
+@router.get(
+    "/{meeting_id}/documents/{document_id}/download",
+    response_model=MeetingDocumentDownloadResponse,
+)
+async def get_document_download_url(
+    meeting_id: uuid.UUID,
+    document_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    service: MeetingServiceDep,
+) -> MeetingDocumentDownloadResponse:
+    try:
+        url = await service.get_document_download_url(
+            meeting_id=meeting_id, participant_id=participant_id, document_id=document_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingDocumentDownloadResponse(download_url=url)
+
+
+@router.delete("/{meeting_id}/documents/{document_id}", status_code=204)
+async def delete_document(
+    meeting_id: uuid.UUID,
+    document_id: uuid.UUID,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> None:
+    try:
+        await service.delete_document(
+            meeting_id=meeting_id, acting_user_id=acting_user_id, document_id=document_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
 
 
 # ---- Phase 2: chat -------------------------------------------------------------

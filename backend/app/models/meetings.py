@@ -153,6 +153,25 @@ class MeetingRecording(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class MeetingDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A file the host/co-host shares for participants — including guests
+    with no DITSALA account — to view during or after the meeting. Same
+    presigned-URL storage pattern as `MediaObject` in messaging."""
+
+    __tablename__ = "meeting_documents"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by_participant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_participants.id", ondelete="CASCADE")
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String(512))
+
+
 class MeetingMessage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "meeting_messages"
 

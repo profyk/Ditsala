@@ -14,12 +14,14 @@ from typing import Any
 
 from app.core.security import hash_secret, verify_secret
 from app.domain.meetings.interfaces import RecordingHandle, RoomAccessToken, RoomProvider
+from app.domain.messaging.interfaces import StorageProvider
 from app.models.accounts import User
 from app.models.meetings import (
     LARGE_AUDIENCE_MEETING_TYPES,
     BreakoutRoom,
     BreakoutRoomParticipant,
     Meeting,
+    MeetingDocument,
     MeetingMessage,
     MeetingParticipant,
     MeetingPoll,
@@ -31,6 +33,7 @@ from app.models.meetings import (
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
+    MeetingDocumentRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -40,6 +43,8 @@ from app.repositories.meetings import (
     MeetingRegistrationRepository,
     MeetingRepository,
 )
+
+MAX_MEETING_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 
 _HOST_ROLES = ("host", "co_host")
 # §9 Phase 4 — a shared meeting link's recipient shouldn't be let straight
@@ -117,6 +122,8 @@ class MeetingService:
         breakout_rooms: BreakoutRoomRepository,
         breakout_room_participants: BreakoutRoomParticipantRepository,
         registrations: MeetingRegistrationRepository,
+        documents: MeetingDocumentRepository,
+        storage_provider: StorageProvider,
     ) -> None:
         self._meetings = meetings
         self._participants = participants
@@ -129,6 +136,8 @@ class MeetingService:
         self._breakout_rooms = breakout_rooms
         self._breakout_room_participants = breakout_room_participants
         self._registrations = registrations
+        self._documents = documents
+        self._storage = storage_provider
 
     # ---- Phase 1: create / join / end -----------------------------------
 
@@ -320,7 +329,14 @@ class MeetingService:
             raise MeetingError(f"Cannot join a meeting that has {meeting.status}.")
         if meeting.locked_at is not None:
             raise MeetingError("This meeting is locked.")
-        if meeting.password_hash is not None:
+        # The host doesn't need their own meeting's password — the password
+        # gates strangers, and `is_host` here already means
+        # `meeting.host_user_id == user.id`, a stronger check. Previously this
+        # was unconditional, which meant an authenticated host calling
+        # POST /join on their own meeting was rejected unless they also typed
+        # the password back in — a real bug, just never exercised (no client
+        # called authenticated `/join` before the host-link flow this fixes).
+        if not is_host and meeting.password_hash is not None:
             if password is None or not verify_secret(meeting.password_hash, password):
                 raise MeetingError("Incorrect meeting password.")
         if not is_host and not _is_within_join_window(meeting):
@@ -536,6 +552,67 @@ class MeetingService:
     ) -> list[MeetingRecording]:
         await self._require_host_or_cohost(meeting_id, acting_user_id)
         return await self._recordings.list_for_meeting(meeting_id)
+
+    # ---- Meeting documents — host/co-host share files, every participant
+    # (including guests with no DITSALA account) can view them ------------
+
+    async def request_document_upload(
+        self,
+        *,
+        meeting_id: uuid.UUID,
+        acting_user_id: uuid.UUID,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+    ) -> tuple[MeetingDocument, str]:
+        uploader = await self._require_host_or_cohost(meeting_id, acting_user_id)
+        if size_bytes > MAX_MEETING_DOCUMENT_SIZE_BYTES:
+            raise MeetingError("File is too large.")
+        key = f"meeting-documents/{meeting_id}/{uuid.uuid4()}"
+        document = await self._documents.add(
+            MeetingDocument(
+                meeting_id=meeting_id,
+                uploaded_by_participant_id=uploader.id,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                storage_key=key,
+            )
+        )
+        upload_url = await self._storage.create_upload_url(key=key, content_type=content_type)
+        return document, upload_url
+
+    async def list_documents(
+        self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> list[MeetingDocument]:
+        # Deliberately trusts a valid participant_id with no JWT — the same
+        # trust model `get_participant_status` already uses (see its
+        # docstring): a guest has no DITSALA account, so this is the only way
+        # for them to see documents shared in a meeting they're actually in.
+        await self._get_participant_in_meeting(meeting_id, participant_id)
+        return await self._documents.list_for_meeting(meeting_id)
+
+    async def get_document_download_url(
+        self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> str:
+        await self._get_participant_in_meeting(meeting_id, participant_id)
+        document = await self._documents.get(document_id)
+        if document is None or document.meeting_id != meeting_id:
+            raise MeetingError("No such document on this meeting.")
+        return await self._storage.create_download_url(key=document.storage_key)
+
+    async def delete_document(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        document = await self._documents.get(document_id)
+        if document is None or document.meeting_id != meeting_id:
+            raise MeetingError("No such document on this meeting.")
+        # Removes the DB row only — StorageProvider has no delete method
+        # today (same gap as messaging's MediaObject), so the underlying
+        # object is orphaned in storage rather than actually deleted. A
+        # disclosed scope cut, not a silent one — see docs/SECURITY_GAPS.md.
+        await self._documents.delete(document)
 
     # ---- Phase 2: chat -----------------------------------------------------
 
@@ -789,6 +866,12 @@ class MeetingService:
         return room
 
     # ---- shared helpers ---------------------------------------------------
+
+    async def assert_host_or_cohost(self, meeting_id: uuid.UUID, acting_user_id: uuid.UUID) -> None:
+        """Public wrapper so router-level checks (e.g. `POST /host-link`,
+        which needs to gate *before* doing anything else) can reuse this
+        without reaching into a private method."""
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
 
     async def _require_host_or_cohost(
         self, meeting_id: uuid.UUID, acting_user_id: uuid.UUID

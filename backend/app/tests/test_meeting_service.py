@@ -18,10 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import get_settings
 from app.domain.meetings.interfaces import RecordingHandle
 from app.domain.meetings.service import MeetingError, MeetingService
+from app.domain.messaging.interfaces import StorageProvider
 from app.models.accounts import User
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
+    MeetingDocumentRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -36,6 +38,14 @@ from app.services.meet.livekit import LiveKitRoomProvider
 
 TEST_LIVEKIT_KEY = "test-key-0123456789"
 TEST_LIVEKIT_SECRET = "test-secret-0123456789-0123456789"
+
+
+class StubStorageProvider(StorageProvider):
+    async def create_upload_url(self, *, key: str, content_type: str) -> str:
+        return f"https://stub-upload.test/{key}"
+
+    async def create_download_url(self, *, key: str) -> str:
+        return f"https://stub-download.test/{key}"
 
 
 @dataclass
@@ -119,6 +129,8 @@ def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
         breakout_rooms=BreakoutRoomRepository(session),
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
         registrations=MeetingRegistrationRepository(session),
+        documents=MeetingDocumentRepository(session),
+        storage_provider=StubStorageProvider(),
     )
     return Harness(service=service, users=UserRepository(session), participants=participants)
 

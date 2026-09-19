@@ -22,6 +22,7 @@ from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
     MeetingAiNoteRepository,
+    MeetingDocumentRepository,
     MeetingMessageRepository,
     MeetingParticipantRepository,
     MeetingPollRepository,
@@ -68,6 +69,15 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             breakout_rooms=BreakoutRoomRepository(db_session),
             breakout_room_participants=BreakoutRoomParticipantRepository(db_session),
             registrations=MeetingRegistrationRepository(db_session),
+            documents=MeetingDocumentRepository(db_session),
+            storage_provider=S3StorageProvider(
+                bucket="test-bucket",
+                region="us-east-1",
+                access_key_id="test",
+                secret_access_key="test",
+                endpoint_url="",
+                url_ttl_minutes=15,
+            ),
         )
 
     async def _override_meeting_intelligence_service(
@@ -515,3 +525,150 @@ async def test_webinar_stage_control_and_registration_endpoints(
     )
     assert r.status_code == 200, r.text
     assert r.json()["stage_status"] == "audience"
+
+
+# ---- host-link / host-join handoff (apps/meet has no session of its own) ----
+
+
+async def test_host_link_and_host_join_bypasses_password(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": "Password protected", "password": "secret123"},
+        headers=headers,
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/host-link", headers=headers)
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+
+    # No Authorization header, no password — the token alone is the
+    # credential, and the host bypasses their own meeting's password
+    # (the _check_joinable fix this feature needed).
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/host-join", json={"token": token})
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "host"
+    assert r.json()["access"]["token"]
+
+
+async def test_host_join_rejects_token_for_a_different_meeting(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post("/api/v1/meetings", json={"title": "Meeting A"}, headers=headers)
+    meeting_a_id = r.json()["id"]
+    r = await client.post("/api/v1/meetings", json={"title": "Meeting B"}, headers=headers)
+    meeting_b_id = r.json()["id"]
+
+    r = await client.post(f"/api/v1/meetings/{meeting_a_id}/host-link", headers=headers)
+    token_for_a = r.json()["token"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_b_id}/host-join", json={"token": token_for_a}
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_host_link_forbidden_for_non_host(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Private"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/host-link", headers=_bearer_for(other)
+    )
+    assert r.status_code == 400
+
+
+# ---- meeting documents — guest-viewable files --------------------------------
+
+
+async def test_meeting_documents_upload_list_download_for_guest(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post("/api/v1/meetings", json={"title": "Docs meeting"}, headers=headers)
+    meeting_id = r.json()["id"]
+    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=headers)
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/documents/upload",
+        json={"filename": "agenda.pdf", "content_type": "application/pdf", "size_bytes": 1024},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    document_id = r.json()["document_id"]
+    assert r.json()["upload_url"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Visitor"},
+    )
+    guest_participant_id = r.json()["participant_id"]
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/documents",
+        params={"participant_id": guest_participant_id},
+    )
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+    assert r.json()[0]["id"] == document_id
+    assert r.json()[0]["filename"] == "agenda.pdf"
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/documents/{document_id}/download",
+        params={"participant_id": guest_participant_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["download_url"]
+
+
+async def test_document_upload_forbidden_for_non_host(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Docs"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/documents/upload",
+        json={"filename": "x.txt", "content_type": "text/plain", "size_bytes": 10},
+        headers=_bearer_for(other),
+    )
+    assert r.status_code == 400
+
+
+async def test_documents_list_rejects_a_participant_from_another_meeting(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post("/api/v1/meetings", json={"title": "Meeting A"}, headers=headers)
+    meeting_a_id = r.json()["id"]
+    r = await client.post("/api/v1/meetings", json={"title": "Meeting B"}, headers=headers)
+    meeting_b_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_a_id}/guest-join", json={"guest_display_name": "Visitor"}
+    )
+    participant_in_a = r.json()["participant_id"]
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_b_id}/documents",
+        params={"participant_id": participant_in_a},
+    )
+    assert r.status_code == 400

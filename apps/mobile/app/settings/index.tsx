@@ -106,6 +106,41 @@ export default function Settings() {
       />
 
       <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Meet Conference Call
+      </Text>
+      <SettingsRow
+        testID="settings-meet-schedule-row"
+        label="Schedule a meeting"
+        description="Set a time, password, and share the link"
+        icon="video"
+        onPress={() => router.push("/meet/schedule")}
+      />
+      <SettingsRow
+        testID="settings-meet-my-meetings-row"
+        label="My meetings"
+        description="Everything you've scheduled"
+        icon="video"
+        onPress={() => router.push("/meet")}
+      />
+
+      <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Account tier
+      </Text>
+      <SettingsRow
+        testID="settings-account-tier-row"
+        label={accountTier === "vip" ? "VIP" : accountTier === "normal" ? "Normal" : "…"}
+        description={
+          accountTier === "vip"
+            ? "Two-factor login, Emergency SOS, and more"
+            : "Free tier — upgrade for Emergency SOS and more"
+        }
+        icon="shield"
+        onPress={() => {
+          if (accountTier === "normal") router.push("/account/vip-upgrade");
+        }}
+      />
+
+      <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">
         Session
       </Text>
       {accountTier === "vip" ? (

@@ -103,6 +103,14 @@ class RaiseHandRequest(BaseModel):
     raised: bool
 
 
+class MeetHostLinkResponse(BaseModel):
+    token: str
+
+
+class MeetHostJoinRequest(BaseModel):
+    token: str
+
+
 class RecordingResponse(BaseModel):
     id: uuid.UUID
     meeting_id: uuid.UUID
@@ -263,3 +271,33 @@ class RegistrationResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---- Meeting documents (guest-viewable files) --------------------------------
+
+
+class RequestDocumentUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=128)
+    size_bytes: int = Field(gt=0)
+
+
+class MeetingDocumentUploadResponse(BaseModel):
+    document_id: uuid.UUID
+    upload_url: str
+
+
+class MeetingDocumentResponse(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    uploaded_by_participant_id: uuid.UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MeetingDocumentDownloadResponse(BaseModel):
+    download_url: str
