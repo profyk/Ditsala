@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type MeetingDocumentResponse,
+  type ParticipantResponse,
   type RecordingResponse,
   meetingsApi,
   uploadFileToPresignedUrl,
@@ -31,12 +32,22 @@ const HOST_ROLES = new Set(["host", "co_host"]);
 
 export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: MeetingToolsBarProps) {
   const isHost = HOST_ROLES.has(role) && hostToken !== null;
-  const [panel, setPanel] = useState<"none" | "documents">("none");
+  const [panel, setPanel] = useState<"none" | "documents" | "waiting-room">("none");
 
   return (
     <div className="fixed right-3 top-3 z-50 flex flex-col items-end gap-2">
+      {isHost ? <LiveCountdown meetingId={meetingId} hostToken={hostToken!} /> : null}
       <div className="flex gap-2">
         {isHost ? <RecordingControl meetingId={meetingId} hostToken={hostToken!} /> : null}
+        {isHost ? (
+          <button
+            type="button"
+            onClick={() => setPanel(panel === "waiting-room" ? "none" : "waiting-room")}
+            className="rounded bg-surface px-3 py-1.5 text-sm text-text-primary border border-border hover:bg-surface-raised"
+          >
+            Waiting room
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setPanel(panel === "documents" ? "none" : "documents")}
@@ -53,6 +64,144 @@ export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: M
           hostToken={hostToken}
         />
       ) : null}
+      {panel === "waiting-room" && isHost ? (
+        <WaitingRoomPanel meetingId={meetingId} hostToken={hostToken!} />
+      ) : null}
+    </div>
+  );
+}
+
+const WAITING_ROOM_POLL_MS = 5000;
+
+function WaitingRoomPanel({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  const [waiting, setWaiting] = useState<ParticipantResponse[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setWaiting(await meetingsApi.listWaitingRoom(meetingId, hostToken));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load the waiting room.");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, WAITING_ROOM_POLL_MS);
+    return () => clearInterval(id);
+  }, [meetingId, hostToken]);
+
+  async function admit(participantId: string) {
+    setBusyId(participantId);
+    try {
+      await meetingsApi.admitParticipant(meetingId, participantId, hostToken);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not admit this participant.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="w-72 rounded border border-border bg-surface p-3 text-sm">
+      <p className="mb-2 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Waiting room
+      </p>
+      {waiting.length === 0 ? (
+        <p className="text-text-tertiary">Nobody is waiting right now.</p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {waiting.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-2">
+              <span className="truncate text-text-primary">
+                {p.guest_display_name || "A participant"}
+              </span>
+              <button
+                type="button"
+                onClick={() => admit(p.id)}
+                disabled={busyId === p.id}
+                className="shrink-0 rounded bg-accent px-2 py-1 text-xs text-background hover:bg-accent-pressed disabled:opacity-50"
+              >
+                {busyId === p.id ? "Admitting…" : "Bring online"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
+    </div>
+  );
+}
+
+const COUNTDOWN_POLL_MS = 30000;
+
+function formatRemaining(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function LiveCountdown({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  const [deadline, setDeadline] = useState<Date | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const [extending, setExtending] = useState(false);
+
+  useEffect(() => {
+    async function refreshDeadline() {
+      try {
+        const info = await meetingsApi.joinInfo(meetingId);
+        setDeadline(info.live_deadline_at ? new Date(info.live_deadline_at) : null);
+      } catch {
+        // A poll failing shouldn't make an existing countdown disappear.
+      }
+    }
+    refreshDeadline();
+    const id = setInterval(refreshDeadline, COUNTDOWN_POLL_MS);
+    return () => clearInterval(id);
+  }, [meetingId]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function extend() {
+    setExtending(true);
+    try {
+      await meetingsApi.extendMeeting(meetingId, 15, hostToken);
+      const info = await meetingsApi.joinInfo(meetingId);
+      setDeadline(info.live_deadline_at ? new Date(info.live_deadline_at) : null);
+    } catch {
+      // Leaves the existing countdown showing — the host can just retry.
+    } finally {
+      setExtending(false);
+    }
+  }
+
+  if (!deadline) return null;
+  const remainingMs = deadline.getTime() - now.getTime();
+  const isUp = remainingMs <= 0;
+
+  return (
+    <div
+      className={`flex items-center gap-2 rounded px-3 py-1.5 text-sm border ${
+        isUp
+          ? "bg-danger/10 text-danger border-danger"
+          : "bg-surface text-text-primary border-border"
+      }`}
+    >
+      <span>{isUp ? "Time's up" : formatRemaining(remainingMs)}</span>
+      <button
+        type="button"
+        onClick={extend}
+        disabled={extending}
+        className="rounded bg-surface-raised px-2 py-1 text-xs text-text-primary border border-border hover:bg-surface disabled:opacity-50"
+      >
+        {extending ? "…" : "+15 min"}
+      </button>
     </div>
   );
 }

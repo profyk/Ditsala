@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from sqlalchemy import func, select
 
@@ -34,6 +35,21 @@ class MeetingRepository(Repository[Meeting]):
             self._select()
             .where(Meeting.host_user_id == host_user_id)
             .order_by(Meeting.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_due_to_start(self, now: datetime) -> list[Meeting]:
+        """Conference Room kickoff prompt — meetings whose scheduled start
+        has arrived (or passed) but that aren't ended/cancelled yet, for
+        the scheduler job that auto-promotes any still-`waiting`
+        participant to `live` at exactly that moment (`app/tasks/
+        scheduler.py`'s `auto_promote_waiting_conference_participants`)."""
+        result = await self.session.execute(
+            self._select().where(
+                Meeting.status.in_(("scheduled", "live")),
+                Meeting.scheduled_start_at.is_not(None),
+                Meeting.scheduled_start_at <= now,
+            )
         )
         return list(result.scalars().all())
 

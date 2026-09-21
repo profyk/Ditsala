@@ -149,6 +149,17 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
+    # --- Ditsala VIP translation (TranslationProvider) — docs/DITSALA_VIP_SPEC.md.
+    # translation_provider: azure | mock. "mock" is dev-only, refused
+    # outright when environment="production" (services/factory.py), same
+    # guard kyc_provider="bypass" already has — defaults to "mock" so a
+    # fresh local environment can exercise VIP chat/interpreter with zero
+    # external credentials. ---
+    translation_provider: str = "mock"
+    azure_translator_key: str = ""
+    azure_translator_region: str = ""
+    azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
+
     @property
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]

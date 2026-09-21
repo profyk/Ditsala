@@ -26,6 +26,7 @@ from app.schemas.meetings import (
     CreateMeetingRequest,
     CreatePollRequest,
     EditNoteRequest,
+    ExtendMeetingRequest,
     GeneratedNotesResponse,
     GuestJoinMeetingRequest,
     JoinInfoResponse,
@@ -41,6 +42,7 @@ from app.schemas.meetings import (
     MeetingSearchResultResponse,
     MessageResponse,
     MuteParticipantRequest,
+    ParticipantLanguageResponse,
     ParticipantResponse,
     PollResponse,
     PollResultsResponse,
@@ -53,7 +55,9 @@ from app.schemas.meetings import (
     RequestDocumentUploadRequest,
     RoomAccessTokenResponse,
     SendMessageRequest,
+    SetParticipantLanguageRequest,
     TranscriptSegmentResponse,
+    TranslateMessageResponse,
     VotePollRequest,
 )
 
@@ -103,6 +107,7 @@ async def create_meeting(
         scheduled_duration_minutes=body.scheduled_duration_minutes,
         password=body.password,
         waiting_room_enabled=body.waiting_room_enabled,
+        prep_lead_minutes=body.prep_lead_minutes,
     )
     return MeetingResponse.model_validate(meeting)
 
@@ -154,6 +159,8 @@ async def get_join_info(meeting_id: uuid.UUID, service: MeetingServiceDep) -> Jo
         scheduled_start_at=info.meeting.scheduled_start_at,
         requires_password=info.requires_password,
         joinable_now=info.joinable_now,
+        room_phase=info.room_phase,
+        live_deadline_at=info.live_deadline_at,
     )
 
 
@@ -268,16 +275,38 @@ async def end_meeting(
     return MeetingResponse.model_validate(meeting)
 
 
+@router.post("/{meeting_id}/extend", response_model=MeetingResponse)
+async def extend_meeting(
+    meeting_id: uuid.UUID,
+    body: ExtendMeetingRequest,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> MeetingResponse:
+    try:
+        meeting = await service.extend_duration(
+            meeting_id=meeting_id,
+            acting_user_id=acting_user_id,
+            additional_minutes=body.additional_minutes,
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingResponse.model_validate(meeting)
+
+
 # ---- Phase 2: waiting room --------------------------------------------------
 
 
 @router.get("/{meeting_id}/waiting-room", response_model=list[ParticipantResponse])
 async def list_waiting_participants(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> list[ParticipantResponse]:
+    """Host-only, via either a real access token or the meet-host token —
+    same reasoning as recording/document management (`MeetingActorDep`'s
+    docstring): apps/meet's web client only ever has one of those two,
+    never a `CurrentUserDep`-style session of its own."""
     try:
         waiting = await service.list_waiting_participants(
-            meeting_id=meeting_id, acting_user_id=user.id
+            meeting_id=meeting_id, acting_user_id=acting_user_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -290,12 +319,12 @@ async def list_waiting_participants(
 async def admit_participant(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> ParticipantResponse:
     try:
         participant = await service.admit_participant(
-            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -553,6 +582,69 @@ async def list_messages(
     participant = await _current_participant(meeting_id, user, service)
     messages = await service.list_messages(meeting_id=meeting_id, participant_id=participant.id)
     return [MessageResponse.model_validate(m) for m in messages]
+
+
+# ---- multilingual chat (business-model kickoff §13/§18/§20) --------------------
+
+
+@router.put(
+    "/{meeting_id}/participants/{participant_id}/language",
+    response_model=ParticipantLanguageResponse,
+)
+async def set_participant_language(
+    meeting_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    body: SetParticipantLanguageRequest,
+    service: MeetingServiceDep,
+) -> ParticipantLanguageResponse:
+    """Public given a valid participant_id — see `MeetingService`'s
+    multilingual-chat section docstring for why (same trust model as
+    `list_documents`/`get_participant_status`: guests have no JWT, and
+    apps/meet's web client has no authenticated-user flow of its own)."""
+    try:
+        preference = await service.set_participant_language(
+            meeting_id=meeting_id, participant_id=participant_id, language=body.language
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return ParticipantLanguageResponse.model_validate(preference)
+
+
+@router.get(
+    "/{meeting_id}/participants/{participant_id}/language",
+    response_model=ParticipantLanguageResponse | None,
+)
+async def get_participant_language(
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
+) -> ParticipantLanguageResponse | None:
+    preference = await service.get_participant_language(participant_id)
+    return ParticipantLanguageResponse.model_validate(preference) if preference else None
+
+
+@router.post(
+    "/{meeting_id}/messages/{message_id}/translate", response_model=TranslateMessageResponse
+)
+async def translate_message(
+    meeting_id: uuid.UUID,
+    message_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    service: MeetingServiceDep,
+) -> TranslateMessageResponse:
+    try:
+        result = await service.translate_message(
+            meeting_id=meeting_id, message_id=message_id, viewer_participant_id=participant_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return TranslateMessageResponse(
+        message_id=message_id,
+        translated_text=result.translated_text,
+        source_language=result.source_language,
+        target_language=result.target_language,
+        provider=result.provider,
+        status=result.status,
+        error_message=result.error_message,
+    )
 
 
 # ---- Phase 2: polls -------------------------------------------------------------

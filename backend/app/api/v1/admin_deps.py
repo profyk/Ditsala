@@ -14,6 +14,7 @@ from app.domain.admin.auth_service import AdminAuthService
 from app.domain.admin.kyc_review_service import KycReviewService
 from app.domain.admin.rbac import Permission
 from app.domain.admin.service import AdminService
+from app.domain.billing.plans import PlanService
 from app.models.admin import AdminUser
 from app.repositories.admin import (
     AdminRoleRepository,
@@ -21,6 +22,7 @@ from app.repositories.admin import (
     AuditLogRepository,
     SystemConfigRepository,
 )
+from app.repositories.billing import EntitlementRepository, PlanPriceRepository, PlanRepository
 from app.repositories.circle import InvitationRepository, ReportRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
@@ -68,6 +70,18 @@ async def get_kyc_review_service(session: SessionDep) -> KycReviewService:
 
 
 KycReviewServiceDep = Annotated[KycReviewService, Depends(get_kyc_review_service)]
+
+
+async def get_plan_service(session: SessionDep) -> PlanService:
+    return PlanService(
+        plans=PlanRepository(session),
+        plan_prices=PlanPriceRepository(session),
+        entitlements=EntitlementRepository(session),
+        audit_log=AuditLogRepository(session),
+    )
+
+
+PlanServiceDep = Annotated[PlanService, Depends(get_plan_service)]
 
 
 async def get_current_admin(

@@ -1,4 +1,6 @@
-from datetime import date
+import uuid
+from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -25,3 +27,69 @@ class VipKycDocumentStartRequest(BaseModel):
 class VipKycSdkTokenResponse(BaseModel):
     token: str
     job_id: str
+
+
+class VipStatusResponse(BaseModel):
+    """Backs the VIP dashboard's status card — null fields mean "never
+    started an upgrade," not an error."""
+
+    account_tier: str
+    subscription_status: str | None
+    current_period_end: datetime | None
+    payment_provider: str | None
+
+
+# --- admin plan/entitlement management (§27-29) ---
+
+
+class CreatePlanRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=64)
+    product: str = Field(pattern="^(free|vip|business|conference)$")
+    name: str = Field(min_length=1, max_length=128)
+
+
+class SetPlanStatusRequest(BaseModel):
+    status: str = Field(pattern="^(active|archived)$")
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PlanResponse(BaseModel):
+    id: uuid.UUID
+    code: str
+    product: str
+    name: str
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
+class SetPlanPriceRequest(BaseModel):
+    currency: str = Field(min_length=3, max_length=3)
+    amount_cents: int = Field(ge=0)
+    billing_interval: str = Field(pattern="^(month|year|one_time)$")
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PlanPriceResponse(BaseModel):
+    id: uuid.UUID
+    currency: str
+    amount_cents: int
+    billing_interval: str
+    status: str
+    effective_from: datetime
+    effective_until: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class SetEntitlementRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=128)
+    value: Any
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class EntitlementResponse(BaseModel):
+    key: str
+    value: Any
+
+    model_config = {"from_attributes": True}

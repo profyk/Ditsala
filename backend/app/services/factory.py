@@ -10,6 +10,7 @@ from app.domain.billing.interfaces import PaymentProvider
 from app.domain.messaging.interfaces import StorageProvider
 from app.domain.notifications.interfaces import PushProvider, SmsProvider
 from app.domain.onboarding.interfaces import EmailProvider, KycProvider, OtpProvider
+from app.domain.translation.interfaces import TranslationProvider
 from app.services.billing.sandbox import SandboxStitchPaymentProvider
 from app.services.billing.stitch import StitchPaymentProvider
 from app.services.email.resend import ResendEmailProvider
@@ -25,6 +26,8 @@ from app.services.sms.sandbox import SandboxSmsProvider
 from app.services.sms.twilio_sms import TwilioSmsProvider
 from app.services.storage.s3 import S3StorageProvider
 from app.services.storage.sandbox import SandboxStorageProvider
+from app.services.translation.azure import AzureTranslationProvider
+from app.services.translation.mock import MockTranslationProvider
 
 
 def get_email_provider(settings: Settings) -> EmailProvider:
@@ -88,3 +91,19 @@ def get_payment_provider(settings: Settings) -> PaymentProvider:
     if settings.payment_provider == "sandbox":
         return SandboxStitchPaymentProvider.from_settings(settings)
     raise ValueError(f"Unrecognized PAYMENT_PROVIDER: {settings.payment_provider!r}")
+
+
+def get_translation_provider(settings: Settings) -> TranslationProvider:
+    if settings.translation_provider == "azure":
+        return AzureTranslationProvider.from_settings(settings)
+    if settings.translation_provider == "mock":
+        # Dev-only escape hatch (docs/DITSALA_VIP_SPEC.md) for exercising
+        # VIP chat/the AI Interpreter without a live Azure account —
+        # refused outright in production, no matter how it got configured,
+        # same guard KYC_PROVIDER=bypass already has.
+        if settings.environment == "production":
+            raise ValueError(
+                "TRANSLATION_PROVIDER=mock must never be used with ENVIRONMENT=production."
+            )
+        return MockTranslationProvider()
+    raise ValueError(f"Unrecognized TRANSLATION_PROVIDER: {settings.translation_provider!r}")

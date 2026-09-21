@@ -14,6 +14,7 @@ class CreateMeetingRequest(BaseModel):
     scheduled_duration_minutes: int | None = Field(default=None, gt=0)
     password: str | None = None
     waiting_room_enabled: bool = False
+    prep_lead_minutes: int = Field(default=15, ge=0, le=180)
 
 
 class MeetingResponse(BaseModel):
@@ -29,6 +30,8 @@ class MeetingResponse(BaseModel):
     actual_end_at: datetime | None
     waiting_room_enabled: bool
     locked_at: datetime | None
+    prep_lead_minutes: int
+    duration_extended_minutes: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -46,10 +49,16 @@ class JoinInfoResponse(BaseModel):
     scheduled_start_at: datetime | None
     requires_password: bool
     joinable_now: bool
+    room_phase: str
+    live_deadline_at: datetime | None
 
 
 class JoinMeetingRequest(BaseModel):
     password: str | None = None
+
+
+class ExtendMeetingRequest(BaseModel):
+    additional_minutes: int = Field(gt=0, le=240)
 
 
 class GuestJoinMeetingRequest(BaseModel):
@@ -136,6 +145,29 @@ class MessageResponse(BaseModel):
     recipient_participant_id: uuid.UUID | None
     body: str
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SetParticipantLanguageRequest(BaseModel):
+    language: str = Field(min_length=2, max_length=16)
+
+
+class ParticipantLanguageResponse(BaseModel):
+    participant_id: uuid.UUID
+    language: str
+
+    model_config = {"from_attributes": True}
+
+
+class TranslateMessageResponse(BaseModel):
+    message_id: uuid.UUID
+    translated_text: str | None
+    source_language: str | None
+    target_language: str
+    provider: str | None
+    status: str
+    error_message: str | None
 
     model_config = {"from_attributes": True}
 

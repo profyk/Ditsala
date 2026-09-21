@@ -14,6 +14,7 @@ key/value editor (`PUT /admin/system-config/vip_pricing`) before any
 upgrade can be initiated.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.billing.interfaces import PaymentInitiation, PaymentProvider, PaymentWebhookResult
@@ -61,6 +62,11 @@ class VipUpgradeService:
         self._system_config = system_config
         self._payment_provider = payment_provider
         self._kyc_provider = kyc_provider
+
+    async def get_latest_subscription(self, user_id: uuid.UUID) -> VipSubscription | None:
+        """Backs the VIP dashboard's status card (plan/renewal date) —
+        read-only, no state transition."""
+        return await self._vip_subscriptions.get_latest_for_user(user_id)
 
     # --- step 1: payment ---
 

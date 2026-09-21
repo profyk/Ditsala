@@ -17,9 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import get_settings
 from app.domain.meetings.interfaces import RecordingHandle
-from app.domain.meetings.service import MeetingError, MeetingService
+from app.domain.meetings.service import (
+    MeetingError,
+    MeetingService,
+    get_live_deadline,
+    get_room_phase,
+)
 from app.domain.messaging.interfaces import StorageProvider
+from app.domain.translation.service import TranslationService
 from app.models.accounts import User
+from app.repositories.admin import SystemConfigRepository
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
@@ -33,8 +40,16 @@ from app.repositories.meetings import (
     MeetingRegistrationRepository,
     MeetingRepository,
 )
+from app.repositories.translation import (
+    ConferenceLanguagePreferenceRepository,
+    InterpreterSessionRepository,
+    TranslationRequestRepository,
+    TranslationUsageRepository,
+    UserLanguagePreferenceRepository,
+)
 from app.repositories.users import UserRepository
 from app.services.meet.livekit import LiveKitRoomProvider
+from app.services.translation.mock import MockTranslationProvider
 
 TEST_LIVEKIT_KEY = "test-key-0123456789"
 TEST_LIVEKIT_SECRET = "test-secret-0123456789-0123456789"
@@ -53,6 +68,7 @@ class Harness:
     service: MeetingService
     users: UserRepository
     participants: MeetingParticipantRepository
+    conference_language_preferences: ConferenceLanguagePreferenceRepository
 
 
 class StubRoomProvider(LiveKitRoomProvider):
@@ -117,6 +133,15 @@ def room_provider() -> StubRoomProvider:
 @pytest.fixture
 def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
     participants = MeetingParticipantRepository(session)
+    conference_language_preferences = ConferenceLanguagePreferenceRepository(session)
+    translation_service = TranslationService(
+        translation_requests=TranslationRequestRepository(session),
+        translation_usage=TranslationUsageRepository(session),
+        user_language_preferences=UserLanguagePreferenceRepository(session),
+        interpreter_sessions=InterpreterSessionRepository(session),
+        system_config=SystemConfigRepository(session),
+        provider=MockTranslationProvider(),
+    )
     service = MeetingService(
         meetings=MeetingRepository(session),
         participants=participants,
@@ -131,8 +156,15 @@ def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
         registrations=MeetingRegistrationRepository(session),
         documents=MeetingDocumentRepository(session),
         storage_provider=StubStorageProvider(),
+        conference_language_preferences=conference_language_preferences,
+        translation_service=translation_service,
     )
-    return Harness(service=service, users=UserRepository(session), participants=participants)
+    return Harness(
+        service=service,
+        users=UserRepository(session),
+        participants=participants,
+        conference_language_preferences=conference_language_preferences,
+    )
 
 
 async def _make_user(harness: Harness, **overrides: object) -> User:
@@ -542,6 +574,96 @@ async def test_send_message_broadcast_and_private_visibility(harness: Harness) -
     assert [m.body for m in third_messages] == ["Hello everyone"]
 
 
+# ---- multilingual chat (business-model kickoff §13/§18/§20) --------------------
+
+
+async def test_set_and_get_participant_language(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Global Standup")
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    assert host_p is not None
+
+    assert await harness.service.get_participant_language(host_p.id) is None
+
+    preference = await harness.service.set_participant_language(
+        meeting_id=meeting.id, participant_id=host_p.id, language="fr"
+    )
+    assert preference.language == "fr"
+
+    fetched = await harness.service.get_participant_language(host_p.id)
+    assert fetched is not None and fetched.language == "fr"
+
+    # Setting again updates the same row rather than creating a second one.
+    await harness.service.set_participant_language(
+        meeting_id=meeting.id, participant_id=host_p.id, language="zu"
+    )
+    languages = await harness.service.list_participant_languages(meeting.id)
+    assert [p.language for p in languages] == ["zu"]
+
+
+async def test_translate_message_uses_viewers_stored_language(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Global Standup")
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert host_p is not None
+
+    message = await harness.service.send_message(
+        meeting_id=meeting.id, sender=host_p, body="Hello, nice to meet you."
+    )
+    await harness.service.set_participant_language(
+        meeting_id=meeting.id, participant_id=other_result.participant.id, language="zh"
+    )
+
+    translation = await harness.service.translate_message(
+        meeting_id=meeting.id,
+        message_id=message.id,
+        viewer_participant_id=other_result.participant.id,
+    )
+    assert translation.translated_text == "你好，很高兴认识你。"
+    assert translation.target_language == "zh"
+    assert translation.status == "completed"
+
+
+async def test_translate_message_requires_viewer_language_set(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Global Standup")
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    other_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert host_p is not None
+
+    message = await harness.service.send_message(meeting_id=meeting.id, sender=host_p, body="Hi")
+    with pytest.raises(MeetingError, match="Set your conference language"):
+        await harness.service.translate_message(
+            meeting_id=meeting.id,
+            message_id=message.id,
+            viewer_participant_id=other_result.participant.id,
+        )
+
+
+async def test_translate_message_rejects_message_from_another_meeting(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting_a = await harness.service.create_meeting(host=host, title="Meeting A")
+    meeting_b = await harness.service.create_meeting(host=host, title="Meeting B")
+    host_a = await harness.participants.get_by_meeting_and_user(meeting_a.id, host.id)
+    other_result_b = await harness.service.join(meeting_id=meeting_b.id, user=other)
+    assert host_a is not None
+
+    message = await harness.service.send_message(meeting_id=meeting_a.id, sender=host_a, body="Hi")
+    await harness.service.set_participant_language(
+        meeting_id=meeting_b.id, participant_id=other_result_b.participant.id, language="zh"
+    )
+    with pytest.raises(MeetingError, match="No such message"):
+        await harness.service.translate_message(
+            meeting_id=meeting_b.id,
+            message_id=message.id,
+            viewer_participant_id=other_result_b.participant.id,
+        )
+
+
 # ---- Phase 2: polls -------------------------------------------------------------
 
 
@@ -891,3 +1013,107 @@ async def test_join_is_allowed_within_the_early_join_window(harness: Harness) ->
 
     result = await harness.service.join(meeting_id=meeting.id, user=other)
     assert result.access_token is not None
+
+
+# ---- Conference Room: prep/live phase, duration extension ------------------
+
+
+async def test_room_phase_scheduled_before_prep_window(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        scheduled_start_at=datetime.now(UTC) + timedelta(hours=2),
+        prep_lead_minutes=15,
+    )
+    assert get_room_phase(meeting) == "scheduled"
+
+
+async def test_room_phase_prep_within_lead_window(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        scheduled_start_at=datetime.now(UTC) + timedelta(minutes=10),
+        prep_lead_minutes=15,
+    )
+    assert get_room_phase(meeting) == "prep"
+
+
+async def test_room_phase_live_once_someone_has_joined(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host,
+        title="Board meeting",
+        scheduled_start_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    assert get_room_phase(meeting) == "live"
+
+
+async def test_room_phase_ended(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    await harness.service.end_meeting(meeting_id=meeting.id, acting_user_id=host.id)
+    assert get_room_phase(meeting) == "ended"
+
+
+async def test_extend_duration_requires_host_or_cohost(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Board meeting", scheduled_duration_minutes=30
+    )
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    await harness.service.join(meeting_id=meeting.id, user=other)
+
+    with pytest.raises(MeetingError, match="Only the host or a co-host"):
+        await harness.service.extend_duration(
+            meeting_id=meeting.id, acting_user_id=other.id, additional_minutes=15
+        )
+
+
+async def test_extend_duration_requires_a_live_meeting(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Board meeting", scheduled_duration_minutes=30
+    )
+    with pytest.raises(MeetingError, match="currently live"):
+        await harness.service.extend_duration(
+            meeting_id=meeting.id, acting_user_id=host.id, additional_minutes=15
+        )
+
+
+async def test_extend_duration_pushes_the_live_deadline_out(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Board meeting", scheduled_duration_minutes=30
+    )
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    assert meeting.actual_start_at is not None
+
+    original_deadline = get_live_deadline(meeting)
+    assert original_deadline == meeting.actual_start_at + timedelta(minutes=30)
+
+    await harness.service.extend_duration(
+        meeting_id=meeting.id, acting_user_id=host.id, additional_minutes=15
+    )
+    extended_deadline = get_live_deadline(meeting)
+    assert extended_deadline == meeting.actual_start_at + timedelta(minutes=45)
+
+    # Extending never ends the meeting itself (confirmed decision: alert
+    # the host at zero, never auto-end).
+    assert meeting.status == "live"
+
+
+async def test_a_participant_who_leaves_a_live_meeting_can_rejoin(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    await harness.service.join(meeting_id=meeting.id, user=other)
+
+    await harness.service.leave(meeting_id=meeting.id, user_id=other.id)
+    rejoin_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert rejoin_result.access_token is not None

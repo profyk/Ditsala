@@ -23,6 +23,8 @@ from app.domain.messaging.service import MessagingService
 from app.domain.onboarding.service import OnboardingService
 from app.domain.recovery.service import RecoveryService
 from app.domain.sos.service import SosService
+from app.domain.translation.service import TranslationService
+from app.domain.vip_chat.service import VipChatService
 from app.models.accounts import User
 from app.models.devices import Device
 from app.repositories.admin import AuditLogRepository, SystemConfigRepository
@@ -75,6 +77,15 @@ from app.repositories.messages import (
     MessageRepository,
 )
 from app.repositories.sos import SosEventRepository, SosNotificationRepository
+from app.repositories.translation import (
+    ConferenceLanguagePreferenceRepository,
+    InterpreterSessionRepository,
+    TranslationRequestRepository,
+    TranslationUsageRepository,
+    UserLanguagePreferenceRepository,
+    VipMessageRepository,
+    VipMessageTranslationRepository,
+)
 from app.repositories.users import (
     DataSubjectRequestRepository,
     EmailVerificationRepository,
@@ -90,6 +101,7 @@ from app.services.factory import (
     get_push_provider,
     get_sms_provider,
     get_storage_provider,
+    get_translation_provider,
 )
 from app.services.meet.livekit import LiveKitRoomProvider
 from app.services.meet_ai.claude import ClaudeMeetingIntelligenceProvider
@@ -427,6 +439,11 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
         documents=MeetingDocumentRepository(session),
         room_provider=LiveKitRoomProvider.from_settings(settings),
         storage_provider=get_storage_provider(settings),
+        conference_language_preferences=ConferenceLanguagePreferenceRepository(session),
+        # Called directly (not as a `TranslationServiceDep` param) since this
+        # function is defined above that dependency in this file — same
+        # session/settings, so it resolves to an identical TranslationService.
+        translation_service=await get_translation_service(session, settings),
     )
 
 
@@ -466,3 +483,38 @@ async def get_vip_upgrade_service(session: SessionDep, settings: SettingsDep) ->
 
 
 VipUpgradeServiceDep = Annotated[VipUpgradeService, Depends(get_vip_upgrade_service)]
+
+
+async def get_translation_service(session: SessionDep, settings: SettingsDep) -> TranslationService:
+    return TranslationService(
+        translation_requests=TranslationRequestRepository(session),
+        translation_usage=TranslationUsageRepository(session),
+        user_language_preferences=UserLanguagePreferenceRepository(session),
+        interpreter_sessions=InterpreterSessionRepository(session),
+        system_config=SystemConfigRepository(session),
+        provider=get_translation_provider(settings),
+    )
+
+
+TranslationServiceDep = Annotated[TranslationService, Depends(get_translation_service)]
+
+
+async def get_vip_chat_service(
+    session: SessionDep, translation: TranslationServiceDep
+) -> VipChatService:
+    return VipChatService(
+        conversations=ConversationRepository(session),
+        conversation_members=ConversationMemberRepository(session),
+        vip_messages=VipMessageRepository(session),
+        vip_message_translations=VipMessageTranslationRepository(session),
+        users=UserRepository(session),
+        contacts=ContactRepository(session),
+        blocks=BlockRepository(session),
+        language_preferences=UserLanguagePreferenceRepository(session),
+        devices=DeviceRepository(session),
+        translation_service=translation,
+        connection_manager=connection_manager,
+    )
+
+
+VipChatServiceDep = Annotated[VipChatService, Depends(get_vip_chat_service)]

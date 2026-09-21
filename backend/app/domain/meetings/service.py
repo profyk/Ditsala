@@ -15,6 +15,7 @@ from typing import Any
 from app.core.security import hash_secret, verify_secret
 from app.domain.meetings.interfaces import RecordingHandle, RoomAccessToken, RoomProvider
 from app.domain.messaging.interfaces import StorageProvider
+from app.domain.translation.service import TranslationService
 from app.models.accounts import User
 from app.models.meetings import (
     LARGE_AUDIENCE_MEETING_TYPES,
@@ -30,6 +31,7 @@ from app.models.meetings import (
     MeetingRecording,
     MeetingRegistration,
 )
+from app.models.translation import ConferenceLanguagePreference, TranslationRequest
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
@@ -43,15 +45,13 @@ from app.repositories.meetings import (
     MeetingRegistrationRepository,
     MeetingRepository,
 )
+from app.repositories.translation import ConferenceLanguagePreferenceRepository
 
 MAX_MEETING_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 
 _HOST_ROLES = ("host", "co_host")
-# §9 Phase 4 — a shared meeting link's recipient shouldn't be let straight
-# into an empty room 6 hours before a scheduled call; this is the window
-# before `scheduled_start_at` a non-host participant is allowed to join
-# (enough time to test audio/video, not "any time before the meeting").
-EARLY_JOIN_WINDOW_MINUTES = 10
+ROOM_PHASES = ("scheduled", "prep", "live", "ended")
+DEFAULT_PREP_LEAD_MINUTES = 15
 
 
 def _initial_stage_status(meeting: Meeting, role: str) -> str:
@@ -63,10 +63,43 @@ def _initial_stage_status(meeting: Meeting, role: str) -> str:
 
 
 def _is_within_join_window(meeting: Meeting) -> bool:
+    """§9 Phase 4 / Conference Room `prep` — a shared meeting link's
+    recipient shouldn't be let straight into an empty room hours before a
+    scheduled call; a non-host may join (and sit in `waiting`, per the
+    Conference Room kickoff prompt) starting `prep_lead_minutes` before
+    `scheduled_start_at`, the same window the room's own `prep` phase
+    opens in (`get_room_phase`) — one config value, not two."""
     if meeting.status != "scheduled" or meeting.scheduled_start_at is None:
         return True
-    earliest_join_at = meeting.scheduled_start_at - timedelta(minutes=EARLY_JOIN_WINDOW_MINUTES)
+    earliest_join_at = meeting.scheduled_start_at - timedelta(minutes=meeting.prep_lead_minutes)
     return datetime.now(UTC) >= earliest_join_at
+
+
+def get_room_phase(meeting: Meeting) -> str:
+    """Conference Room kickoff prompt's `scheduled|prep|live|ended` — derived
+    from existing timestamps/status rather than stored as its own
+    `MEETING_STATUSES` value, same "compute it" approach
+    `_is_within_join_window` already used for the join-window check."""
+    if meeting.status in ("ended", "cancelled"):
+        return "ended"
+    if meeting.status == "live":
+        return "live"
+    if meeting.scheduled_start_at is not None and _is_within_join_window(meeting):
+        return "prep"
+    return "scheduled"
+
+
+def get_live_deadline(meeting: Meeting) -> datetime | None:
+    """The countdown target a host/co-host UI polls — `None` until the
+    meeting is actually live or has no planned duration. Per the kickoff
+    prompt's confirmed decision, reaching this deadline does NOT auto-end
+    the meeting (`end_meeting` stays the only thing that does) — a host
+    UI alerts and offers Extend/End; this value is what it counts down to
+    and re-reads after an extension."""
+    if meeting.actual_start_at is None or meeting.scheduled_duration_minutes is None:
+        return None
+    total_minutes = meeting.scheduled_duration_minutes + meeting.duration_extended_minutes
+    return meeting.actual_start_at + timedelta(minutes=total_minutes)
 
 
 class MeetingError(Exception):
@@ -96,6 +129,8 @@ class JoinInfo:
     meeting: Meeting
     requires_password: bool
     joinable_now: bool
+    room_phase: str
+    live_deadline_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -124,6 +159,8 @@ class MeetingService:
         registrations: MeetingRegistrationRepository,
         documents: MeetingDocumentRepository,
         storage_provider: StorageProvider,
+        conference_language_preferences: ConferenceLanguagePreferenceRepository,
+        translation_service: TranslationService,
     ) -> None:
         self._meetings = meetings
         self._participants = participants
@@ -138,6 +175,8 @@ class MeetingService:
         self._registrations = registrations
         self._documents = documents
         self._storage = storage_provider
+        self._conference_language_preferences = conference_language_preferences
+        self._translation = translation_service
 
     # ---- Phase 1: create / join / end -----------------------------------
 
@@ -151,6 +190,7 @@ class MeetingService:
         scheduled_duration_minutes: int | None = None,
         password: str | None = None,
         waiting_room_enabled: bool = False,
+        prep_lead_minutes: int = DEFAULT_PREP_LEAD_MINUTES,
     ) -> Meeting:
         meeting = await self._meetings.add(
             Meeting(
@@ -162,6 +202,7 @@ class MeetingService:
                 scheduled_duration_minutes=scheduled_duration_minutes,
                 password_hash=hash_secret(password) if password else None,
                 waiting_room_enabled=waiting_room_enabled,
+                prep_lead_minutes=prep_lead_minutes,
             )
         )
         await self._participants.add(
@@ -324,6 +365,22 @@ class MeetingService:
         meeting.actual_end_at = datetime.now(UTC)
         return meeting
 
+    async def extend_duration(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, additional_minutes: int
+    ) -> Meeting:
+        """Host or co-host, any time during a live meeting — per the
+        kickoff prompt's confirmed decision, the countdown never
+        auto-ends the meeting on its own, so this just pushes the
+        deadline `get_live_deadline` computes further out."""
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        if additional_minutes <= 0:
+            raise MeetingError("additional_minutes must be positive.")
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.status != "live":
+            raise MeetingError("Can only extend a meeting that is currently live.")
+        meeting.duration_extended_minutes += additional_minutes
+        return meeting
+
     def _check_joinable(self, meeting: Meeting, *, password: str | None, is_host: bool) -> None:
         if meeting.status in ("ended", "cancelled"):
             raise MeetingError(f"Cannot join a meeting that has {meeting.status}.")
@@ -355,6 +412,8 @@ class MeetingService:
                 and meeting.locked_at is None
                 and _is_within_join_window(meeting)
             ),
+            room_phase=get_room_phase(meeting),
+            live_deadline_at=get_live_deadline(meeting),
         )
 
     def _mark_live_if_needed(self, meeting: Meeting) -> None:
@@ -653,6 +712,80 @@ class MeetingService:
         self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID
     ) -> list[MeetingMessage]:
         return await self._messages.list_for_participant(meeting_id, participant_id)
+
+    # ---- multilingual chat (business-model kickoff §13/§18/§20) --------------
+    #
+    # Deliberately pull-based, not push-fan-out like VIP 1:1 chat's
+    # `_push_to_recipient`: a conference can have dozens of participants
+    # each wanting a different target language, so translating a message
+    # into every language on every send would be wasted work for
+    # languages nobody's reading right now. A participant asks for a
+    # translation of a specific message into their own stored preference
+    # when they need it — same shape the AI Interpreter already uses.
+    #
+    # Deliberately NOT gated behind `TranslationService.require_vip`, per
+    # the business-model kickoff prompt's own FREE-tier feature list
+    # ("Basic translation" is free; only AI *voice* interpretation and
+    # premium conference features are paywalled) — unlike VIP Multilingual
+    # Chat, which the VIP spec explicitly reserves for VIP-only 1:1
+    # threads. A future per-plan entitlement check (`PlanService.
+    # get_entitlement_for_user`) can replace this blanket allow once
+    # conference plans have a real seat/membership model to resolve a
+    # *meeting's* plan from — not guessed at here.
+    #
+    # Public given a valid participant_id, unlike `send_message`/
+    # `list_messages` — same trust model as `list_documents`/
+    # `get_participant_status` (guests have no JWT, and apps/meet's web
+    # client itself has no authenticated-user flow yet, only guest-join
+    # and the host-link handoff — see `[meetingId]/page.tsx`'s own
+    # docstring). A guest's translation usage is attributed to the
+    # meeting's host account (`_get_usage_attribution_user_id`) rather
+    # than rejected, since `TranslationRequest.requested_by_user_id` is
+    # NOT NULL and a guest has no user row of its own to charge.
+
+    async def set_participant_language(
+        self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID, language: str
+    ) -> ConferenceLanguagePreference:
+        await self._get_participant_in_meeting(meeting_id, participant_id)
+        return await self._conference_language_preferences.upsert(
+            meeting_id=meeting_id, participant_id=participant_id, language=language
+        )
+
+    async def get_participant_language(
+        self, participant_id: uuid.UUID
+    ) -> ConferenceLanguagePreference | None:
+        return await self._conference_language_preferences.get_by_participant(participant_id)
+
+    async def list_participant_languages(
+        self, meeting_id: uuid.UUID
+    ) -> list[ConferenceLanguagePreference]:
+        return await self._conference_language_preferences.list_for_meeting(meeting_id)
+
+    async def translate_message(
+        self, *, meeting_id: uuid.UUID, message_id: uuid.UUID, viewer_participant_id: uuid.UUID
+    ) -> TranslationRequest:
+        viewer = await self._get_participant_in_meeting(meeting_id, viewer_participant_id)
+        message = await self._messages.get(message_id)
+        if message is None or message.meeting_id != meeting_id:
+            raise MeetingError("No such message.")
+        viewer_language = await self.get_participant_language(viewer_participant_id)
+        if viewer_language is None:
+            raise MeetingError(
+                "Set your conference language before requesting a translation."
+            )
+        if viewer.user_id is not None:
+            requested_by_user_id = viewer.user_id
+        else:
+            meeting = await self.get_meeting(meeting_id)
+            requested_by_user_id = meeting.host_user_id
+        return await self._translation.translate_and_record(
+            requested_by_user_id=requested_by_user_id,
+            context_type="conference_caption",
+            context_id=message.id,
+            source_text=message.body,
+            source_language=None,
+            target_language=viewer_language.language,
+        )
 
     # ---- Phase 2: polls ------------------------------------------------------
 

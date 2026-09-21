@@ -29,3 +29,5 @@ class Permission(StrEnum):
     DATA_SUBJECT_REQUESTS_ACTION = "data_subject_requests:action"
     ADMIN_USERS_VIEW = "admin_users:view"
     ADMIN_USERS_ACTION = "admin_users:action"
+    BILLING_PLANS_VIEW = "billing_plans:view"
+    BILLING_PLANS_ACTION = "billing_plans:action"

@@ -46,15 +46,25 @@ class ConversationMemberRepository(Repository[ConversationMember]):
         idempotent rather than creating a fresh conversation every time
         two people message. Restricted to `direct` type so a group both
         happen to share is never mistaken for their 1:1 thread."""
+        return await self.find_conversation_id(user_a, user_b, conversation_type="direct")
+
+    async def find_conversation_id(
+        self, user_a: uuid.UUID, user_b: uuid.UUID, *, conversation_type: str
+    ) -> uuid.UUID | None:
+        """Same idempotent-lookup shape as `find_direct_conversation_id`,
+        generalized so VIP multilingual chat (`conversation_type=
+        "vip_multilingual"`) can reuse it instead of duplicating the
+        query — a `direct` and a `vip_multilingual` thread between the
+        same two people are never mistaken for each other."""
         a_ids_stmt = (
             select(ConversationMember.conversation_id)
             .join(Conversation, Conversation.id == ConversationMember.conversation_id)
-            .where(ConversationMember.user_id == user_a, Conversation.type == "direct")
+            .where(ConversationMember.user_id == user_a, Conversation.type == conversation_type)
         )
         b_ids_stmt = (
             select(ConversationMember.conversation_id)
             .join(Conversation, Conversation.id == ConversationMember.conversation_id)
-            .where(ConversationMember.user_id == user_b, Conversation.type == "direct")
+            .where(ConversationMember.user_id == user_b, Conversation.type == conversation_type)
         )
         a_ids = {row[0] for row in (await self.session.execute(a_ids_stmt)).all()}
         b_ids = {row[0] for row in (await self.session.execute(b_ids_stmt)).all()}

@@ -13,8 +13,8 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces" });
 
 export const metadata: Metadata = {
-  title: "Ditsala Meet",
-  description: "Video meetings, backed by your Ditsala account.",
+  title: "Ditsala Conference",
+  description: "Meet the world without language barriers.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

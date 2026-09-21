@@ -36,6 +36,7 @@ from app.repositories.devices import (
     LoginAttemptRepository,
 )
 from app.repositories.location import LocationPingRepository
+from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
 from app.repositories.messages import (
     MediaObjectRepository,
     MessageReceiptRepository,
@@ -118,6 +119,31 @@ async def purge_old_login_attempts_and_recovery_requests() -> tuple[int, int]:
         return login_attempts_purged, recovery_requests_purged
 
 
+async def auto_promote_waiting_conference_participants() -> int:
+    """Conference Room kickoff prompt — "at scheduled start time, all
+    participants still in `waiting` auto-transition to `live` with no
+    host action required," and the room itself moves from `prep` to
+    `live`. A real join already does the room's own scheduled->live flip
+    reactively (`MeetingService._mark_live_if_needed`) — this job covers
+    the case nobody has joined yet by the scheduled time at all, and is
+    what actually admits participants who arrived early and are sitting
+    in `waiting` (admission is otherwise host/co-host-triggered only,
+    per `MeetingService.admit_participant`)."""
+    async with session_scope() as session:
+        meetings = MeetingRepository(session)
+        participants = MeetingParticipantRepository(session)
+        now = datetime.now(UTC)
+        promoted = 0
+        for meeting in await meetings.list_due_to_start(now):
+            if meeting.status == "scheduled":
+                meeting.status = "live"
+                meeting.actual_start_at = now
+            for waiting in await participants.list_waiting(meeting.id):
+                waiting.admission_status = "admitted"
+                promoted += 1
+        return promoted
+
+
 async def process_scheduled_account_deletions() -> int:
     """§34.2 — hard-deletes accounts whose deactivation/ban grace window
     has elapsed."""
@@ -155,6 +181,12 @@ def start_scheduler() -> AsyncIOScheduler:
         "interval",
         hours=1,
         id="process_scheduled_account_deletions",
+    )
+    scheduler.add_job(
+        auto_promote_waiting_conference_participants,
+        "interval",
+        seconds=60,
+        id="auto_promote_waiting_conference_participants",
     )
     scheduler.start()
     return scheduler

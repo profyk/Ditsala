@@ -9,6 +9,7 @@ from app.api.v1.routers import (
     account,
     admin,
     admin_auth,
+    admin_billing,
     admin_kyc,
     auth,
     billing,
@@ -21,6 +22,8 @@ from app.api.v1.routers import (
     onboarding,
     recovery,
     sos,
+    vip,
+    vip_chat,
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -79,8 +82,11 @@ app.include_router(calls.router, prefix="/api/v1")
 app.include_router(admin_auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(admin_kyc.router, prefix="/api/v1")
+app.include_router(admin_billing.router, prefix="/api/v1")
 app.include_router(recovery.router, prefix="/api/v1")
 app.include_router(account.router, prefix="/api/v1")
 app.include_router(meetings.router, prefix="/api/v1")
 app.include_router(billing.router, prefix="/api/v1")
 app.include_router(billing.webhook_router, prefix="/api/v1")
+app.include_router(vip.router, prefix="/api/v1")
+app.include_router(vip_chat.router, prefix="/api/v1")

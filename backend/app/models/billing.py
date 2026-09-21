@@ -9,9 +9,10 @@ stays `active` throughout.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -51,3 +52,78 @@ class VipSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+PLAN_PRODUCTS = ("free", "vip", "business", "conference")
+PLAN_STATUSES = ("active", "archived")
+BILLING_INTERVALS = ("month", "year", "one_time")
+
+
+class Plan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A sellable product line (§27-29 of the business-model kickoff prompt)
+    — deliberately additive alongside `VipSubscription`/`VipUpgradeService`
+    rather than replacing them: this table is the config-driven pricing/
+    entitlement layer other domains ask "can this user do X," not a new
+    subscription state machine. `code` is the stable string other code
+    references (e.g. "vip", "conference_business"); `product` groups plans
+    for admin-UI display and reporting, nothing more."""
+
+    __tablename__ = "plans"
+
+    code: Mapped[str] = mapped_column(String(64), unique=True)
+    product: Mapped[str] = mapped_column(
+        Enum(*PLAN_PRODUCTS, name="plan_product", native_enum=False)
+    )
+    name: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(
+        Enum(*PLAN_STATUSES, name="plan_status", native_enum=False),
+        default="active",
+        server_default=text("'active'"),
+    )
+
+
+class PlanPrice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One priced offering of a `Plan` — a plan can have several (monthly
+    vs. annual, or several currencies) simultaneously `active`; admins
+    archive an old price rather than mutate it in place so past invoices/
+    audit-log entries still resolve to the price actually charged at the
+    time (§29's "changes must be audited" — the row itself is the record,
+    `admin.py`'s generic `audit_log` captures who changed what and why)."""
+
+    __tablename__ = "plan_prices"
+
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plans.id", ondelete="CASCADE"), index=True
+    )
+    currency: Mapped[str] = mapped_column(String(3))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    billing_interval: Mapped[str] = mapped_column(
+        Enum(*BILLING_INTERVALS, name="billing_interval", native_enum=False)
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(*PLAN_STATUSES, name="plan_status", native_enum=False),
+        default="active",
+        server_default=text("'active'"),
+    )
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Entitlement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A generic key/value feature flag or usage limit attached to a
+    `Plan` (§28's `conference.max_participants`, `translation.text`,
+    `interpretation.minutes` examples) — deliberately schemaless so a new
+    feature is an admin-configured row, not a new column/migration/
+    deploy. `value` can be a bool, a number, or a small object depending
+    on what `key` means; callers know the shape for the key they ask for."""
+
+    __tablename__ = "entitlements"
+    __table_args__ = (UniqueConstraint("plan_id", "key", name="uq_entitlements_plan_id_key"),)
+
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plans.id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str] = mapped_column(String(128))
+    value: Mapped[Any] = mapped_column(JSONB)

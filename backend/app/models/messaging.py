@@ -11,8 +11,16 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "conversations"
 
+    # "vip_multilingual" added for Ditsala VIP (docs/DITSALA_VIP_SPEC.md) —
+    # a deliberately separate, NOT end-to-end-encrypted conversation kind:
+    # AI translation requires the backend to read plaintext, which is
+    # structurally incompatible with `messages.ciphertext` being opaque by
+    # design (§7.3). Reusing this table/`conversation_members` for VIP
+    # multilingual chat membership is real reuse; the message *content*
+    # lives in a new `vip_messages` table instead of `messages` for exactly
+    # that reason — see `app/models/translation.py`.
     type: Mapped[str] = mapped_column(
-        Enum("direct", "group", name="conversation_type", native_enum=False)
+        Enum("direct", "group", "vip_multilingual", name="conversation_type", native_enum=False)
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

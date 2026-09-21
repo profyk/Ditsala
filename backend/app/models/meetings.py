@@ -82,6 +82,19 @@ class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Boolean, default=False, server_default=text("false")
     )
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Conference Room (business-model kickoff prompt): how long before
+    # `scheduled_start_at` the host/co-host may enter to set up (documents,
+    # recorder) and participants may sit in `waiting` — the room's `prep`
+    # phase is computed from this + `scheduled_start_at`/`status`, not
+    # stored as its own `MEETING_STATUSES` value (same "derive it, don't
+    # store a redundant flag" approach `_is_within_join_window` already uses).
+    prep_lead_minutes: Mapped[int] = mapped_column(Integer, default=15, server_default=text("15"))
+    # Cumulative minutes a host/co-host has added to `scheduled_duration_minutes`
+    # once live — never mutates the original plan, so "what was scheduled"
+    # stays a stable historical fact even after an extension.
+    duration_extended_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
     # §18 search — a generated, indexed column rather than computing
     # `to_tsvector` at query time on every row scanned.
     title_search: Mapped[str] = mapped_column(

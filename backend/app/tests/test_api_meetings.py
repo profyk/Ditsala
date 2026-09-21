@@ -16,8 +16,10 @@ from app.core.security import create_access_token
 from app.domain.meet_ai.interfaces import MeetingSummary, TranscriptSegment
 from app.domain.meet_ai.service import MeetingIntelligenceService
 from app.domain.meetings.service import MeetingService
+from app.domain.translation.service import TranslationService
 from app.main import app
 from app.models.accounts import User
+from app.repositories.admin import SystemConfigRepository
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
@@ -33,7 +35,15 @@ from app.repositories.meetings import (
     MeetingRepository,
     MeetingTranscriptRepository,
 )
+from app.repositories.translation import (
+    ConferenceLanguagePreferenceRepository,
+    InterpreterSessionRepository,
+    TranslationRequestRepository,
+    TranslationUsageRepository,
+    UserLanguagePreferenceRepository,
+)
 from app.services.storage.s3 import S3StorageProvider
+from app.services.translation.mock import MockTranslationProvider
 from app.tests.test_meeting_intelligence_service import (
     StubIntelligenceProvider,
     StubTranscriptionProvider,
@@ -77,6 +87,15 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
                 secret_access_key="test",
                 endpoint_url="",
                 url_ttl_minutes=15,
+            ),
+            conference_language_preferences=ConferenceLanguagePreferenceRepository(db_session),
+            translation_service=TranslationService(
+                translation_requests=TranslationRequestRepository(db_session),
+                translation_usage=TranslationUsageRepository(db_session),
+                user_language_preferences=UserLanguagePreferenceRepository(db_session),
+                interpreter_sessions=InterpreterSessionRepository(db_session),
+                system_config=SystemConfigRepository(db_session),
+                provider=MockTranslationProvider(),
             ),
         )
 
@@ -555,6 +574,57 @@ async def test_host_link_and_host_join_bypasses_password(
     assert r.json()["access"]["token"]
 
 
+async def test_waiting_room_admit_and_extend_work_via_the_host_token(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The whole point of switching these three endpoints to
+    MeetingActorDep: apps/meet's host-link handoff (no real access token
+    of its own) must be able to see who's waiting, admit them, and
+    extend the meeting — not just a CurrentUserDep-authenticated caller."""
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": "Global Standup", "scheduled_duration_minutes": 30},
+        headers=headers,
+    )
+    meeting_id = r.json()["id"]
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/host-link", headers=headers)
+    host_token = r.json()["token"]
+    host_token_headers = {"Authorization": f"Bearer {host_token}"}
+
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/host-join", json={"token": host_token})
+    assert r.status_code == 200, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Visitor"},
+    )
+    guest_participant_id = r.json()["participant_id"]
+    assert r.json()["admission_status"] == "waiting"
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/waiting-room", headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert [p["id"] for p in r.json()] == [guest_participant_id]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{guest_participant_id}/admit",
+        headers=host_token_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "admitted"
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/extend",
+        json={"additional_minutes": 15},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["duration_extended_minutes"] == 15
+
+
 async def test_host_join_rejects_token_for_a_different_meeting(
     client: AsyncClient, session: AsyncSession
 ) -> None:
@@ -632,6 +702,56 @@ async def test_meeting_documents_upload_list_download_for_guest(
     )
     assert r.status_code == 200, r.text
     assert r.json()["download_url"]
+
+
+async def test_guest_can_set_conference_language_and_translate_chat(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The whole point of gating these public-given-a-participant-id
+    (not CurrentUserDep) — apps/meet's web client only ever has a guest
+    or a host-link session, never a real DITSALA access token, so a
+    guest must be able to use multilingual chat without one."""
+    host = await _make_active_user(session)
+    headers = _bearer_for(host)
+    r = await client.post("/api/v1/meetings", json={"title": "Global Standup"}, headers=headers)
+    meeting_id = r.json()["id"]
+    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=headers)
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Visitor"},
+    )
+    guest_participant_id = r.json()["participant_id"]
+
+    r = await client.put(
+        f"/api/v1/meetings/{meeting_id}/participants/{guest_participant_id}/language",
+        json={"language": "zh"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["language"] == "zh"
+
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/participants/{guest_participant_id}/language",
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["language"] == "zh"
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages",
+        json={"body": "Hello, nice to meet you."},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    message_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages/{message_id}/translate",
+        params={"participant_id": guest_participant_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["translated_text"] == "你好，很高兴认识你。"
+    assert r.json()["target_language"] == "zh"
+    assert r.json()["status"] == "completed"
 
 
 async def test_document_upload_forbidden_for_non_host(

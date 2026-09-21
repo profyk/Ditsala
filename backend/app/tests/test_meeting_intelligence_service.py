@@ -25,8 +25,10 @@ from app.domain.meet_ai.interfaces import (
 )
 from app.domain.meet_ai.service import MeetingIntelligenceService
 from app.domain.meetings.service import MeetingError, MeetingService
+from app.domain.translation.service import TranslationService
 from app.models.accounts import User
 from app.models.meetings import MeetingRecording
+from app.repositories.admin import SystemConfigRepository
 from app.repositories.meetings import (
     BreakoutRoomParticipantRepository,
     BreakoutRoomRepository,
@@ -42,8 +44,16 @@ from app.repositories.meetings import (
     MeetingRepository,
     MeetingTranscriptRepository,
 )
+from app.repositories.translation import (
+    ConferenceLanguagePreferenceRepository,
+    InterpreterSessionRepository,
+    TranslationRequestRepository,
+    TranslationUsageRepository,
+    UserLanguagePreferenceRepository,
+)
 from app.repositories.users import UserRepository
 from app.services.storage.s3 import S3StorageProvider
+from app.services.translation.mock import MockTranslationProvider
 from app.tests.test_meeting_service import StubRoomProvider
 
 
@@ -118,6 +128,15 @@ def harness(session: AsyncSession) -> Harness:
             secret_access_key="test",
             endpoint_url="",
             url_ttl_minutes=15,
+        ),
+        conference_language_preferences=ConferenceLanguagePreferenceRepository(session),
+        translation_service=TranslationService(
+            translation_requests=TranslationRequestRepository(session),
+            translation_usage=TranslationUsageRepository(session),
+            user_language_preferences=UserLanguagePreferenceRepository(session),
+            interpreter_sessions=InterpreterSessionRepository(session),
+            system_config=SystemConfigRepository(session),
+            provider=MockTranslationProvider(),
         ),
     )
     transcription = StubTranscriptionProvider(

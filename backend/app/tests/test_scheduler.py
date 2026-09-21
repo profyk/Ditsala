@@ -19,10 +19,13 @@ from app.core.config import get_settings
 from app.models.accounts import User
 from app.models.devices import LoginAttempt
 from app.models.location import SosEvent
+from app.models.meetings import Meeting, MeetingParticipant
 from app.repositories.devices import LoginAttemptRepository
+from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
 from app.repositories.sos import SosEventRepository
 from app.repositories.users import UserRepository
 from app.tasks.scheduler import (
+    auto_promote_waiting_conference_participants,
     escalate_armed_sos_events,
     process_scheduled_account_deletions,
     purge_expired_location_pings,
@@ -104,6 +107,72 @@ async def test_escalate_armed_sos_events_escalates_due_events(session: AsyncSess
     # path — refresh() re-fetches this specific object directly instead.
     await session.refresh(event)
     assert event.status == "escalated"
+
+
+async def test_auto_promote_waiting_conference_participants(session: AsyncSession) -> None:
+    """Conference Room kickoff prompt — a meeting whose scheduled start
+    has passed with nobody having joined yet: the room itself should
+    flip to `live`, and anyone sitting in `waiting` should be admitted,
+    with no host action."""
+    host = await _make_user(session)
+    waiting_user = await _make_user(session)
+    meeting = await MeetingRepository(session).add(
+        Meeting(
+            host_user_id=host.id,
+            livekit_room_name=f"meet-{uuid.uuid4().hex}",
+            title="Global Standup",
+            scheduled_start_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
+    waiting_participant = await MeetingParticipantRepository(session).add(
+        MeetingParticipant(
+            meeting_id=meeting.id,
+            user_id=waiting_user.id,
+            role="participant",
+            livekit_participant_identity=str(waiting_user.id),
+            admission_status="waiting",
+        )
+    )
+    await session.commit()
+
+    promoted_count = await auto_promote_waiting_conference_participants()
+
+    assert promoted_count >= 1
+    await session.refresh(meeting)
+    await session.refresh(waiting_participant)
+    assert meeting.status == "live"
+    assert meeting.actual_start_at is not None
+    assert waiting_participant.admission_status == "admitted"
+
+
+async def test_auto_promote_ignores_meetings_not_yet_due(session: AsyncSession) -> None:
+    host = await _make_user(session)
+    waiting_user = await _make_user(session)
+    meeting = await MeetingRepository(session).add(
+        Meeting(
+            host_user_id=host.id,
+            livekit_room_name=f"meet-{uuid.uuid4().hex}",
+            title="Future Standup",
+            scheduled_start_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    waiting_participant = await MeetingParticipantRepository(session).add(
+        MeetingParticipant(
+            meeting_id=meeting.id,
+            user_id=waiting_user.id,
+            role="participant",
+            livekit_participant_identity=str(waiting_user.id),
+            admission_status="waiting",
+        )
+    )
+    await session.commit()
+
+    await auto_promote_waiting_conference_participants()
+
+    await session.refresh(meeting)
+    await session.refresh(waiting_participant)
+    assert meeting.status == "scheduled"
+    assert waiting_participant.admission_status == "waiting"
 
 
 async def test_purge_old_login_attempts_removes_only_stale_rows(session: AsyncSession) -> None:

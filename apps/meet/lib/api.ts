@@ -70,6 +70,20 @@ export interface JoinInfoResponse {
   scheduled_start_at: string | null;
   requires_password: boolean;
   joinable_now: boolean;
+  room_phase: "scheduled" | "prep" | "live" | "ended";
+  live_deadline_at: string | null;
+}
+
+export interface ParticipantResponse {
+  id: string;
+  meeting_id: string;
+  user_id: string | null;
+  guest_display_name: string | null;
+  role: string;
+  admission_status: "waiting" | "admitted" | "removed";
+  stage_status: string;
+  joined_at: string | null;
+  left_at: string | null;
 }
 
 export interface RecordingResponse {
@@ -186,6 +200,26 @@ export const meetingsApi = {
     request<void>(`/meetings/${meetingId}/documents/${documentId}`, {
       method: "DELETE",
       token,
+    }),
+
+  // Conference Room (business-model kickoff prompt) — host/co-host only,
+  // via the same MeetingActorDep token (real access token or meet-host
+  // token) recording/documents already use.
+  listWaitingRoom: (meetingId: string, token: string) =>
+    request<ParticipantResponse[]>(`/meetings/${meetingId}/waiting-room`, {
+      method: "GET",
+      token,
+    }),
+
+  admitParticipant: (meetingId: string, participantId: string, token: string) =>
+    request<ParticipantResponse>(`/meetings/${meetingId}/participants/${participantId}/admit`, {
+      token,
+    }),
+
+  extendMeeting: (meetingId: string, additionalMinutes: number, token: string) =>
+    request<MeetingResponse>(`/meetings/${meetingId}/extend`, {
+      token,
+      body: { additional_minutes: additionalMinutes },
     }),
 };
 

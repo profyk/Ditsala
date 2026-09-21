@@ -1,0 +1,212 @@
+"""
+Ditsala plans/entitlements — the config-driven pricing layer the business-
+model kickoff prompt asks for (§27-29: "do not hard-code prices," "can this
+user use recording," "how many interpretation minutes remain"). Additive
+alongside `VipUpgradeService`/`VipSubscription`: this module does not
+replace the real, live Stitch payment flow — it's the layer other domains
+ask "what does this user's plan allow," resolved today from the existing
+`users.account_tier` (vip|normal), with Business/Conference plan
+resolution (an org/seat membership, not yet modeled) a documented next
+step rather than guessed at here.
+
+Every plan/price/entitlement mutation is audit-logged via the existing
+generic `audit_log` (`AuditLogRepository`) — no separate `pricing_audit_log`
+table, since that would duplicate a real system this codebase already has
+(see CLAUDE.md's "do not duplicate existing... database... systems").
+"""
+
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+from app.models.accounts import User
+from app.models.admin import AuditLog
+from app.models.billing import Entitlement, Plan, PlanPrice
+from app.repositories.admin import AuditLogRepository
+from app.repositories.billing import EntitlementRepository, PlanPriceRepository, PlanRepository
+
+# The MVP user -> plan resolution: every real account today is either
+# `normal` (free) or `vip`. Business/Conference plans need an org/seat
+# model that doesn't exist yet — resolving those is this module's next
+# real extension point, not something to fake here.
+DEFAULT_FREE_PLAN_CODE = "free"
+DEFAULT_VIP_PLAN_CODE = "vip"
+
+
+class PlanError(Exception):
+    """Raised for plan/pricing preconditions a caller should turn into a 4xx, not a 500."""
+
+
+class PlanService:
+    def __init__(
+        self,
+        *,
+        plans: PlanRepository,
+        plan_prices: PlanPriceRepository,
+        entitlements: EntitlementRepository,
+        audit_log: AuditLogRepository,
+    ) -> None:
+        self._plans = plans
+        self._plan_prices = plan_prices
+        self._entitlements = entitlements
+        self._audit_log = audit_log
+
+    async def _log(
+        self,
+        admin_id: uuid.UUID,
+        action: str,
+        *,
+        target_id: uuid.UUID | None = None,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        await self._audit_log.add(
+            AuditLog(
+                created_at=datetime.now(UTC),
+                actor_type="admin",
+                actor_id=admin_id,
+                action=action,
+                target_type="plan",
+                target_id=target_id,
+                metadata_json=metadata_json,
+            )
+        )
+
+    # --- plans ---
+
+    async def list_plans(self) -> list[Plan]:
+        return await self._plans.list_all()
+
+    async def get_plan_by_code(self, code: str) -> Plan | None:
+        return await self._plans.get_by_code(code)
+
+    async def create_plan(
+        self, *, admin_id: uuid.UUID, code: str, product: str, name: str
+    ) -> Plan:
+        if await self._plans.get_by_code(code) is not None:
+            raise PlanError(f"A plan with code {code!r} already exists.")
+        plan = await self._plans.add(Plan(code=code, product=product, name=name))
+        await self._log(
+            admin_id, "admin.plan.created", target_id=plan.id,
+            metadata_json={"code": code, "product": product, "name": name},
+        )
+        return plan
+
+    async def set_plan_status(
+        self, *, admin_id: uuid.UUID, plan_id: uuid.UUID, status: str, reason: str
+    ) -> Plan:
+        plan = await self._plans.get(plan_id)
+        if plan is None:
+            raise PlanError("No such plan.")
+        before = plan.status
+        plan.status = status
+        await self._log(
+            admin_id, "admin.plan.status_changed", target_id=plan.id,
+            metadata_json={"before": before, "after": status, "reason": reason},
+        )
+        return plan
+
+    # --- prices ---
+
+    async def list_prices(self, plan_id: uuid.UUID) -> list[PlanPrice]:
+        return await self._plan_prices.list_for_plan(plan_id)
+
+    async def get_active_price(
+        self, *, plan_code: str, currency: str, billing_interval: str
+    ) -> PlanPrice | None:
+        plan = await self._plans.get_by_code(plan_code)
+        if plan is None:
+            return None
+        return await self._plan_prices.get_active_price(
+            plan_id=plan.id, currency=currency, billing_interval=billing_interval
+        )
+
+    async def set_price(
+        self,
+        *,
+        admin_id: uuid.UUID,
+        plan_id: uuid.UUID,
+        currency: str,
+        amount_cents: int,
+        billing_interval: str,
+        reason: str,
+    ) -> PlanPrice:
+        """Archives any existing `active` price for this plan/currency/
+        interval and creates a new one, rather than mutating a price in
+        place — past subscriptions and audit-log entries stay resolvable
+        against the price that was actually active when they were charged."""
+        plan = await self._plans.get(plan_id)
+        if plan is None:
+            raise PlanError("No such plan.")
+
+        existing = await self._plan_prices.get_active_price(
+            plan_id=plan_id, currency=currency, billing_interval=billing_interval
+        )
+        before = (
+            {"amount_cents": existing.amount_cents, "currency": existing.currency}
+            if existing is not None
+            else None
+        )
+        if existing is not None:
+            existing.status = "archived"
+            existing.effective_until = datetime.now(UTC)
+
+        new_price = await self._plan_prices.add(
+            PlanPrice(
+                plan_id=plan_id,
+                currency=currency,
+                amount_cents=amount_cents,
+                billing_interval=billing_interval,
+            )
+        )
+        await self._log(
+            admin_id, "admin.plan.price_changed", target_id=plan_id,
+            metadata_json={
+                "before": before,
+                "after": {"amount_cents": amount_cents, "currency": currency},
+                "billing_interval": billing_interval,
+                "reason": reason,
+            },
+        )
+        return new_price
+
+    # --- entitlements ---
+
+    async def list_entitlements(self, plan_id: uuid.UUID) -> list[Entitlement]:
+        return await self._entitlements.list_for_plan(plan_id)
+
+    async def set_entitlement(
+        self, *, admin_id: uuid.UUID, plan_id: uuid.UUID, key: str, value: object, reason: str
+    ) -> Entitlement:
+        plan = await self._plans.get(plan_id)
+        if plan is None:
+            raise PlanError("No such plan.")
+        before = await self._entitlements.get_by_plan_and_key(plan_id, key)
+        entitlement = await self._entitlements.upsert(plan_id=plan_id, key=key, value=value)
+        await self._log(
+            admin_id, "admin.plan.entitlement_changed", target_id=plan_id,
+            metadata_json={
+                "key": key,
+                "before": before.value if before is not None else None,
+                "after": value,
+                "reason": reason,
+            },
+        )
+        return entitlement
+
+    # --- resolution: what other domains actually call ---
+
+    def resolve_plan_code_for_user(self, user: User) -> str:
+        """MVP mapping only — see module docstring. Business/Conference
+        plan resolution is a real, documented gap until org membership
+        exists, not silently approximated here."""
+        return DEFAULT_VIP_PLAN_CODE if user.account_tier == "vip" else DEFAULT_FREE_PLAN_CODE
+
+    async def get_entitlement_for_user(
+        self, user: User, key: str, *, default: Any = None
+    ) -> Any:
+        plan_code = self.resolve_plan_code_for_user(user)
+        plan = await self._plans.get_by_code(plan_code)
+        if plan is None:
+            return default
+        entitlement = await self._entitlements.get_by_plan_and_key(plan.id, key)
+        return entitlement.value if entitlement is not None else default

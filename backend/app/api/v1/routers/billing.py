@@ -9,6 +9,7 @@ from app.domain.billing.service import VipUpgradeError
 from app.schemas.billing import (
     VipKycDocumentStartRequest,
     VipKycSdkTokenResponse,
+    VipStatusResponse,
     VipUpgradeInitiationResponse,
     VipUpgradeStartRequest,
 )
@@ -20,6 +21,17 @@ webhook_router = APIRouter(tags=["webhooks"])
 
 def _as_http_error(exc: VipUpgradeError) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/status", response_model=VipStatusResponse)
+async def get_vip_status(user: CurrentUserDep, service: VipUpgradeServiceDep) -> VipStatusResponse:
+    subscription = await service.get_latest_subscription(user.id)
+    return VipStatusResponse(
+        account_tier=user.account_tier,
+        subscription_status=subscription.status if subscription else None,
+        current_period_end=subscription.current_period_end if subscription else None,
+        payment_provider=subscription.payment_provider if subscription else None,
+    )
 
 
 @router.post("/upgrade/start", response_model=VipUpgradeInitiationResponse)
