@@ -181,12 +181,19 @@ class PlanService:
         if plan is None:
             raise PlanError("No such plan.")
         before = await self._entitlements.get_by_plan_and_key(plan_id, key)
+        # Captured as a plain value, not a reference to `before` itself —
+        # `upsert` below fetches and mutates the *same* identity-mapped
+        # ORM object in place (same session, same primary key), so
+        # `before.value` read after the upsert would already reflect the
+        # new value, not the old one (caught by CI running against a real
+        # Postgres/session, where the identity map is actually exercised).
+        before_value = before.value if before is not None else None
         entitlement = await self._entitlements.upsert(plan_id=plan_id, key=key, value=value)
         await self._log(
             admin_id, "admin.plan.entitlement_changed", target_id=plan_id,
             metadata_json={
                 "key": key,
-                "before": before.value if before is not None else None,
+                "before": before_value,
                 "after": value,
                 "reason": reason,
             },
