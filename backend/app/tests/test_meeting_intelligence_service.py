@@ -138,6 +138,7 @@ def harness(session: AsyncSession) -> Harness:
             system_config=SystemConfigRepository(session),
             provider=MockTranslationProvider(),
         ),
+        users=UserRepository(session),
     )
     transcription = StubTranscriptionProvider(
         [

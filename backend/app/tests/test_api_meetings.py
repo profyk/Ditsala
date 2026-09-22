@@ -42,6 +42,7 @@ from app.repositories.translation import (
     TranslationUsageRepository,
     UserLanguagePreferenceRepository,
 )
+from app.repositories.users import UserRepository
 from app.services.storage.s3 import S3StorageProvider
 from app.services.translation.mock import MockTranslationProvider
 from app.tests.test_meeting_intelligence_service import (
@@ -97,6 +98,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
                 system_config=SystemConfigRepository(db_session),
                 provider=MockTranslationProvider(),
             ),
+            users=UserRepository(db_session),
         )
 
     async def _override_meeting_intelligence_service(
@@ -585,7 +587,11 @@ async def test_waiting_room_admit_and_extend_work_via_the_host_token(
     headers = _bearer_for(host)
     r = await client.post(
         "/api/v1/meetings",
-        json={"title": "Global Standup", "scheduled_duration_minutes": 30},
+        json={
+            "title": "Global Standup",
+            "scheduled_duration_minutes": 30,
+            "waiting_room_enabled": True,
+        },
         headers=headers,
     )
     meeting_id = r.json()["id"]

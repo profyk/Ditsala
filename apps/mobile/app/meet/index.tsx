@@ -1,7 +1,7 @@
 import { dark } from "@ditsala/ui-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "react-native";
 
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
@@ -27,11 +27,16 @@ function formatScheduled(meeting: MeetingResponse): string {
  * scoped token (`POST /meetings/{id}/host-link`) so it opens straight into
  * the live room as host, not the guest-join form.
  */
+type ExpandedPanel = "none" | "delete" | "co-host";
+
 export default function MyMeetings() {
   const router = useRouter();
   const [meetings, setMeetings] = useState<MeetingResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<{ id: string; panel: ExpandedPanel } | null>(null);
+  const [coHostPhone, setCoHostPhone] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const accessToken = await getAccessToken();
@@ -58,6 +63,14 @@ export default function MyMeetings() {
     }, [load])
   );
 
+  function toggle(meetingId: string, panel: ExpandedPanel) {
+    setError(null);
+    setCoHostPhone("");
+    setExpanded((current) =>
+      current?.id === meetingId && current.panel === panel ? null : { id: meetingId, panel }
+    );
+  }
+
   async function handleOpen(meeting: MeetingResponse) {
     setError(null);
     setOpeningId(meeting.id);
@@ -74,6 +87,45 @@ export default function MyMeetings() {
       setError(err instanceof ApiError ? err.message : "Could not open this meeting.");
     } finally {
       setOpeningId(null);
+    }
+  }
+
+  async function handleDelete(meetingId: string) {
+    setError(null);
+    setBusy(true);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        router.replace("/");
+        return;
+      }
+      await meetingsApi.delete(accessToken, meetingId);
+      setExpanded(null);
+      setMeetings((current) => current?.filter((m) => m.id !== meetingId) ?? current);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete this meeting.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleInviteCoHost(meetingId: string) {
+    if (!coHostPhone.trim()) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        router.replace("/");
+        return;
+      }
+      await meetingsApi.inviteCoHost(accessToken, meetingId, coHostPhone.trim());
+      setExpanded(null);
+      setCoHostPhone("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not invite that person.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -95,33 +147,110 @@ export default function MyMeetings() {
           </Text>
         </View>
       ) : (
-        meetings.map((meeting) => (
-          <Pressable
-            key={meeting.id}
-            testID={`my-meeting-row-${meeting.id}`}
-            onPress={() => handleOpen(meeting)}
-            disabled={openingId !== null}
-            className="mb-2 flex-row items-center gap-3 rounded-xl border border-border bg-surface p-4 active:bg-surface-raised"
-          >
+        meetings.map((meeting) => {
+          const isExpanded = expanded?.id === meeting.id;
+          return (
             <View
-              className="h-9 w-9 items-center justify-center rounded-full"
-              style={{ backgroundColor: dark.accentMuted }}
+              key={meeting.id}
+              className="mb-2 overflow-hidden rounded-xl border border-border bg-surface"
             >
-              <Icon name="video" size={18} color={dark.accent} />
+              <Pressable
+                testID={`my-meeting-row-${meeting.id}`}
+                onPress={() => handleOpen(meeting)}
+                disabled={openingId !== null}
+                className="flex-row items-center gap-3 p-4 active:bg-surface-raised"
+              >
+                <View
+                  className="h-9 w-9 items-center justify-center rounded-full"
+                  style={{ backgroundColor: dark.accentMuted }}
+                >
+                  <Icon name="video" size={18} color={dark.accent} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-medium text-text-primary">{meeting.title}</Text>
+                  <Text className="mt-0.5 text-xs text-text-tertiary">
+                    {formatScheduled(meeting)} · {meeting.status}
+                  </Text>
+                  <Text
+                    selectable
+                    testID={`my-meeting-id-${meeting.id}`}
+                    className="mt-0.5 text-xs text-text-tertiary"
+                  >
+                    ID: {meeting.id}
+                  </Text>
+                </View>
+                {openingId === meeting.id ? (
+                  <ActivityIndicator color={dark.accent} />
+                ) : (
+                  <Icon name="chevron-right" size={16} color={dark.textTertiary} />
+                )}
+              </Pressable>
+
+              <View className="flex-row gap-2 border-t border-border px-4 py-2">
+                <Pressable
+                  testID={`my-meeting-invite-cohost-${meeting.id}`}
+                  onPress={() => toggle(meeting.id, "co-host")}
+                  className="flex-1 items-center rounded-lg py-2 active:bg-surface-raised"
+                >
+                  <Text className="text-xs font-medium text-accent">Invite co-host</Text>
+                </Pressable>
+                <Pressable
+                  testID={`my-meeting-delete-${meeting.id}`}
+                  onPress={() => toggle(meeting.id, "delete")}
+                  className="flex-1 items-center rounded-lg py-2 active:bg-surface-raised"
+                >
+                  <Text className="text-xs font-medium text-danger">Delete</Text>
+                </Pressable>
+              </View>
+
+              {isExpanded && expanded?.panel === "co-host" ? (
+                <View className="gap-2 border-t border-border p-4">
+                  <Text className="text-xs text-text-secondary">
+                    Enter the co-host&apos;s phone number. They&apos;ll get host-level controls
+                    the moment they join.
+                  </Text>
+                  <TextInput
+                    testID={`my-meeting-cohost-phone-input-${meeting.id}`}
+                    value={coHostPhone}
+                    onChangeText={setCoHostPhone}
+                    placeholder="+27..."
+                    keyboardType="phone-pad"
+                    placeholderTextColor={dark.textTertiary}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-text-primary"
+                  />
+                  <Pressable
+                    testID={`my-meeting-cohost-confirm-${meeting.id}`}
+                    onPress={() => handleInviteCoHost(meeting.id)}
+                    disabled={busy || !coHostPhone.trim()}
+                    className="items-center rounded-lg bg-accent py-2 disabled:opacity-50"
+                  >
+                    <Text className="text-sm font-medium text-background">
+                      {busy ? "Inviting…" : "Send invite"}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {isExpanded && expanded?.panel === "delete" ? (
+                <View className="gap-2 border-t border-border p-4">
+                  <Text className="text-xs text-text-secondary">
+                    Delete &quot;{meeting.title}&quot;? This can&apos;t be undone.
+                  </Text>
+                  <Pressable
+                    testID={`my-meeting-delete-confirm-${meeting.id}`}
+                    onPress={() => handleDelete(meeting.id)}
+                    disabled={busy}
+                    className="items-center rounded-lg bg-danger py-2 disabled:opacity-50"
+                  >
+                    <Text className="text-sm font-medium text-white">
+                      {busy ? "Deleting…" : "Yes, delete this meeting"}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
-            <View className="flex-1">
-              <Text className="text-base font-medium text-text-primary">{meeting.title}</Text>
-              <Text className="mt-0.5 text-xs text-text-tertiary">
-                {formatScheduled(meeting)} · {meeting.status}
-              </Text>
-            </View>
-            {openingId === meeting.id ? (
-              <ActivityIndicator color={dark.accent} />
-            ) : (
-              <Icon name="chevron-right" size={16} color={dark.textTertiary} />
-            )}
-          </Pressable>
-        ))
+          );
+        })
       )}
     </Screen>
   );

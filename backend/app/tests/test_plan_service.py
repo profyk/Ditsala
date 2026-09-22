@@ -225,7 +225,13 @@ async def test_set_entitlement_overwrites_and_is_audit_logged(
     entries = await harness.audit_log.list_for_target("plan", plan.id)
     changed = [e for e in entries if e.action == "admin.plan.entitlement_changed"]
     assert len(changed) == 2
-    assert changed[-1].metadata_json == {
+    # list_for_target orders newest-first, but two writes in the same test
+    # can share a `created_at` tie — match by reason instead of trusting
+    # position, so this doesn't flake on ordering.
+    second_write = next(
+        e for e in changed if (e.metadata_json or {}).get("reason") == "increased allowance"
+    )
+    assert second_write.metadata_json == {
         "key": "interpretation.minutes_per_month", "before": 600, "after": 900,
         "reason": "increased allowance",
     }

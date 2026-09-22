@@ -20,7 +20,10 @@ class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # lives in a new `vip_messages` table instead of `messages` for exactly
     # that reason — see `app/models/translation.py`.
     type: Mapped[str] = mapped_column(
-        Enum("direct", "group", "vip_multilingual", name="conversation_type", native_enum=False)
+        Enum(
+            "direct", "group", "vip_multilingual",
+            name="conversation_type", native_enum=False, length=32,
+        )
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

@@ -444,6 +444,7 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
         # function is defined above that dependency in this file — same
         # session/settings, so it resolves to an identical TranslationService.
         translation_service=await get_translation_service(session, settings),
+        users=UserRepository(session),
     )
 
 

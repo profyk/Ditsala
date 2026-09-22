@@ -46,6 +46,7 @@ from app.repositories.meetings import (
     MeetingRepository,
 )
 from app.repositories.translation import ConferenceLanguagePreferenceRepository
+from app.repositories.users import UserRepository
 
 MAX_MEETING_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 
@@ -161,6 +162,7 @@ class MeetingService:
         storage_provider: StorageProvider,
         conference_language_preferences: ConferenceLanguagePreferenceRepository,
         translation_service: TranslationService,
+        users: UserRepository,
     ) -> None:
         self._meetings = meetings
         self._participants = participants
@@ -177,6 +179,7 @@ class MeetingService:
         self._storage = storage_provider
         self._conference_language_preferences = conference_language_preferences
         self._translation = translation_service
+        self._users = users
 
     # ---- Phase 1: create / join / end -----------------------------------
 
@@ -380,6 +383,56 @@ class MeetingService:
             raise MeetingError("Can only extend a meeting that is currently live.")
         meeting.duration_extended_minutes += additional_minutes
         return meeting
+
+    async def delete_meeting(self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID) -> None:
+        """Host-only, any status, any time — every meeting-scoped child
+        table (`meeting_participants`, `meeting_messages`, recordings,
+        polls, documents, transcripts, breakout rooms, registrations,
+        conference language preferences) already has `ondelete=CASCADE`
+        back to `meetings.id`, so one DELETE is the whole operation, same
+        reasoning as the user hard-delete cascade (ADR 0009). Disclosed
+        scope cut, matching the existing one for a single document delete:
+        this removes the DB rows only, not any underlying storage objects
+        (recordings, uploaded documents) — `StorageProvider` has no delete
+        method yet."""
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.host_user_id != acting_user_id:
+            raise MeetingError("Only the host can delete this meeting.")
+        await self._meetings.delete(meeting)
+
+    async def invite_co_host(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, invitee_phone: str
+    ) -> MeetingParticipant:
+        """Host-only — pre-provisions a `co_host` participant row for a
+        real DITSALA user, found by phone. `join()` already checks for an
+        existing participant row before creating one, so when this person
+        actually joins (or is already in the meeting), they land as
+        `co_host` rather than a plain participant — no separate
+        "accept invite" step exists yet; the invited person just has
+        elevated access the moment they join, same as being promoted
+        in-call already worked (`promote_co_host`)."""
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.host_user_id != acting_user_id:
+            raise MeetingError("Only the host can invite a co-host.")
+        invitee = await self._users.get_by_phone(invitee_phone)
+        if invitee is None:
+            raise MeetingError("No DITSALA account found for that phone number.")
+        if invitee.id == meeting.host_user_id:
+            raise MeetingError("The host is already hosting this meeting.")
+        existing = await self._participants.get_by_meeting_and_user(meeting_id, invitee.id)
+        if existing is not None:
+            existing.role = "co_host"
+            return existing
+        return await self._participants.add(
+            MeetingParticipant(
+                meeting_id=meeting_id,
+                user_id=invitee.id,
+                role="co_host",
+                livekit_participant_identity=str(invitee.id),
+                admission_status="admitted",
+                stage_status=_initial_stage_status(meeting, "co_host"),
+            )
+        )
 
     def _check_joinable(self, meeting: Meeting, *, password: str | None, is_host: bool) -> None:
         if meeting.status in ("ended", "cancelled"):

@@ -14,10 +14,16 @@ export interface AccountDeactivationStatus {
 
 export const accountApi = {
   deactivate: (accessToken: string) =>
-    request<AccountDeactivationStatus>("/account/deactivate", { token: accessToken }),
+    request<AccountDeactivationStatus>("/account/deactivate", {
+      method: "POST",
+      token: accessToken,
+    }),
 
   cancelDeactivation: (accessToken: string) =>
-    request<AccountDeactivationStatus>("/account/deactivate/cancel", { token: accessToken }),
+    request<AccountDeactivationStatus>("/account/deactivate/cancel", {
+      method: "POST",
+      token: accessToken,
+    }),
 
   // --- profile picture ---
 

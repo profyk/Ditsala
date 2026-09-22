@@ -29,6 +29,7 @@ from app.schemas.meetings import (
     ExtendMeetingRequest,
     GeneratedNotesResponse,
     GuestJoinMeetingRequest,
+    InviteCoHostRequest,
     JoinInfoResponse,
     JoinMeetingRequest,
     JoinMeetingResponse,
@@ -291,6 +292,32 @@ async def extend_meeting(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return MeetingResponse.model_validate(meeting)
+
+
+@router.delete("/{meeting_id}", status_code=204)
+async def delete_meeting(
+    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+) -> None:
+    try:
+        await service.delete_meeting(meeting_id=meeting_id, acting_user_id=user.id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+
+
+@router.post("/{meeting_id}/co-host", response_model=ParticipantResponse, status_code=201)
+async def invite_co_host(
+    meeting_id: uuid.UUID,
+    body: InviteCoHostRequest,
+    user: CurrentUserDep,
+    service: MeetingServiceDep,
+) -> ParticipantResponse:
+    try:
+        participant = await service.invite_co_host(
+            meeting_id=meeting_id, acting_user_id=user.id, invitee_phone=body.phone
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return ParticipantResponse.model_validate(participant)
 
 
 # ---- Phase 2: waiting room --------------------------------------------------

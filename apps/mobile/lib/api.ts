@@ -142,13 +142,13 @@ export const onboardingApi = {
     request<AccountStateResponse>("/onboarding/status", { method: "GET", token }),
 
   resendEmailCode: (token: string) =>
-    request<AccountStateResponse>("/onboarding/email/resend", { token }),
+    request<AccountStateResponse>("/onboarding/email/resend", { method: "POST", token }),
 
   confirmEmail: (token: string, code: string) =>
     request<AccountStateResponse>("/onboarding/email/confirm", { token, body: { code } }),
 
   requestPhoneCode: (token: string) =>
-    request<AccountStateResponse>("/onboarding/phone/request", { token }),
+    request<AccountStateResponse>("/onboarding/phone/request", { method: "POST", token }),
 
   confirmPhone: (token: string, code: string) =>
     request<AccountStateResponse>("/onboarding/phone/confirm", { token, body: { code } }),
@@ -160,7 +160,7 @@ export const onboardingApi = {
     }),
 
   startKycLiveness: (token: string) =>
-    request<KycSdkToken>("/onboarding/kyc/liveness/start", { token }),
+    request<KycSdkToken>("/onboarding/kyc/liveness/start", { method: "POST", token }),
 
   addNextOfKin: (
     token: string,

@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from app.domain.translation.service import TranslationService
+from app.domain.translation.service import TranslationError, TranslationService
 from app.models.accounts import User
 from app.models.messaging import Conversation, ConversationMember
 from app.models.translation import VipMessage, VipMessageTranslation
@@ -68,12 +68,24 @@ class VipChatService:
         self._translation = translation_service
         self._connections = connection_manager
 
+    def _require_vip(self, user: User) -> None:
+        """Wraps TranslationService.require_vip's TranslationError as a
+        VipChatError — the router's `_as_http_error` only catches the
+        latter, so leaving TranslationError uncaught here means a
+        normal-tier user starting a VIP conversation 500s instead of
+        getting a clean 403 (caught by CI running real tests against a
+        real Postgres, not just mypy/ruff)."""
+        try:
+            self._translation.require_vip(user)
+        except TranslationError as exc:
+            raise VipChatError(str(exc)) from exc
+
     async def start_conversation(
         self, current_user: User, other_user_id: uuid.UUID
     ) -> Conversation:
         if current_user.id == other_user_id:
             raise VipChatError("Cannot start a conversation with yourself.")
-        self._translation.require_vip(current_user)
+        self._require_vip(current_user)
         other = await self._users.get(other_user_id)
         if other is None:
             raise VipChatError("No such user.")
@@ -140,7 +152,7 @@ class VipChatService:
         text: str,
         client_message_id: str,
     ) -> VipMessageWithTranslation:
-        self._translation.require_vip(sender)
+        self._require_vip(sender)
         await self._require_membership(conversation_id, sender.id)
 
         existing = await self._vip_messages.get_by_client_message_id(client_message_id)

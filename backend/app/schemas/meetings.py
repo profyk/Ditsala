@@ -61,6 +61,10 @@ class ExtendMeetingRequest(BaseModel):
     additional_minutes: int = Field(gt=0, le=240)
 
 
+class InviteCoHostRequest(BaseModel):
+    phone: str = Field(min_length=4, max_length=32)
+
+
 class GuestJoinMeetingRequest(BaseModel):
     guest_display_name: str = Field(min_length=1, max_length=120)
     password: str | None = None

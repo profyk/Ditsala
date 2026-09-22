@@ -158,6 +158,7 @@ def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
         storage_provider=StubStorageProvider(),
         conference_language_preferences=conference_language_preferences,
         translation_service=translation_service,
+        users=UserRepository(session),
     )
     return Harness(
         service=service,
@@ -1117,3 +1118,94 @@ async def test_a_participant_who_leaves_a_live_meeting_can_rejoin(harness: Harne
     await harness.service.leave(meeting_id=meeting.id, user_id=other.id)
     rejoin_result = await harness.service.join(meeting_id=meeting.id, user=other)
     assert rejoin_result.access_token is not None
+
+
+# ---- delete + co-host invite ------------------------------------------------
+
+
+async def test_delete_meeting_requires_host(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+
+    with pytest.raises(MeetingError, match="Only the host"):
+        await harness.service.delete_meeting(meeting_id=meeting.id, acting_user_id=other.id)
+
+
+async def test_delete_meeting_removes_it_and_cascades_participants(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    await harness.service.join(meeting_id=meeting.id, user=other)
+
+    await harness.service.delete_meeting(meeting_id=meeting.id, acting_user_id=host.id)
+
+    with pytest.raises(MeetingError, match="No such meeting"):
+        await harness.service.get_meeting(meeting.id)
+    assert await harness.participants.get_by_meeting_and_user(meeting.id, other.id) is None
+
+
+async def test_delete_meeting_works_regardless_of_status(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+    await harness.service.join(meeting_id=meeting.id, user=host)
+    await harness.service.end_meeting(meeting_id=meeting.id, acting_user_id=host.id)
+
+    await harness.service.delete_meeting(meeting_id=meeting.id, acting_user_id=host.id)
+    with pytest.raises(MeetingError, match="No such meeting"):
+        await harness.service.get_meeting(meeting.id)
+
+
+async def test_invite_co_host_requires_host(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    invitee = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+
+    with pytest.raises(MeetingError, match="Only the host"):
+        await harness.service.invite_co_host(
+            meeting_id=meeting.id, acting_user_id=other.id, invitee_phone=invitee.phone
+        )
+
+
+async def test_invite_co_host_requires_a_real_account(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+
+    with pytest.raises(MeetingError, match="No DITSALA account"):
+        await harness.service.invite_co_host(
+            meeting_id=meeting.id, acting_user_id=host.id, invitee_phone="+27000000000"
+        )
+
+
+async def test_invite_co_host_pre_provisions_the_role_before_they_join(harness: Harness) -> None:
+    host = await _make_user(harness)
+    invitee = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+
+    participant = await harness.service.invite_co_host(
+        meeting_id=meeting.id, acting_user_id=host.id, invitee_phone=invitee.phone
+    )
+    assert participant.role == "co_host"
+    assert participant.admission_status == "admitted"
+
+    # join() must find and reuse this pre-provisioned row, not create a
+    # second, plain-participant one.
+    join_result = await harness.service.join(meeting_id=meeting.id, user=invitee)
+    assert join_result.participant.id == participant.id
+    assert join_result.participant.role == "co_host"
+
+
+async def test_invite_co_host_promotes_an_existing_participant(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Board meeting")
+    join_result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert join_result.participant.role == "participant"
+
+    promoted = await harness.service.invite_co_host(
+        meeting_id=meeting.id, acting_user_id=host.id, invitee_phone=other.phone
+    )
+    assert promoted.id == join_result.participant.id
+    assert promoted.role == "co_host"

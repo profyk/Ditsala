@@ -52,7 +52,19 @@ export const meetingsApi = {
   // meeting directly into the Ditsala Meet web app as its host, instead of
   // the guest-join form.
   hostJoinLink: (accessToken: string, meetingId: string) =>
-    request<{ token: string }>(`/meetings/${meetingId}/host-link`, { token: accessToken }),
+    request<{ token: string }>(`/meetings/${meetingId}/host-link`, {
+      method: "POST",
+      token: accessToken,
+    }),
+
+  delete: (accessToken: string, meetingId: string) =>
+    request<void>(`/meetings/${meetingId}`, { method: "DELETE", token: accessToken }),
+
+  inviteCoHost: (accessToken: string, meetingId: string, phone: string) =>
+    request<{ id: string; role: string }>(`/meetings/${meetingId}/co-host`, {
+      token: accessToken,
+      body: { phone },
+    }),
 };
 
 export function meetingJoinLink(meetingId: string): string {
