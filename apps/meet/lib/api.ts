@@ -158,10 +158,14 @@ export const meetingsApi = {
   // the meet-host token as `token` — both work via MeetingActorDep on the
   // backend.
   startRecording: (meetingId: string, token: string) =>
-    request<RecordingResponse>(`/meetings/${meetingId}/recordings/start`, { token }),
+    request<RecordingResponse>(`/meetings/${meetingId}/recordings/start`, {
+      method: "POST",
+      token,
+    }),
 
   stopRecording: (meetingId: string, recordingId: string, token: string) =>
     request<RecordingResponse>(`/meetings/${meetingId}/recordings/${recordingId}/stop`, {
+      method: "POST",
       token,
     }),
 
@@ -213,6 +217,7 @@ export const meetingsApi = {
 
   admitParticipant: (meetingId: string, participantId: string, token: string) =>
     request<ParticipantResponse>(`/meetings/${meetingId}/participants/${participantId}/admit`, {
+      method: "POST",
       token,
     }),
 
