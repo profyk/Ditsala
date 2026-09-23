@@ -93,3 +93,22 @@ class EntitlementResponse(BaseModel):
     value: Any
 
     model_config = {"from_attributes": True}
+
+
+# --- public plan listing (Conference Room "plans & tools" screen) ---
+# Read-only, any authenticated user — deliberately a narrower shape than
+# the admin responses above: active plans/prices only, no archived
+# history, no audit trail. See app/api/v1/routers/plans.py.
+
+
+class PublicPlanResponse(BaseModel):
+    id: uuid.UUID
+    code: str
+    product: str
+    name: str
+    prices: list[PlanPriceResponse]
+    entitlements: list[EntitlementResponse]
+
+
+class MyPlanResponse(BaseModel):
+    plan_code: str
