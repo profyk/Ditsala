@@ -1,6 +1,14 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Linking,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
@@ -75,16 +83,37 @@ export default function MyMeetings() {
   async function handleOpen(meeting: MeetingResponse) {
     setError(null);
     setOpeningId(meeting.id);
+    // Web only: open the tab synchronously, still inside this tap's own
+    // event handler, *before* the async hostJoinLink() call below. Most
+    // browsers only allow `window.open` to succeed as the direct result
+    // of a trusted user gesture — once an `await` has run, that gesture
+    // has already "expired", and a same-named `Linking.openURL` call
+    // after it gets silently popup-blocked (or opens a blank tab with no
+    // URL at all) on a real share of browsers. That's the actual bug
+    // behind "host has to enter a password" reports: the blocked/blank
+    // tab never carried the `?hj=` host token, so apps/meet fell back to
+    // its plain guest-join form, which asks for the meeting password a
+    // host should never need. Pre-opening a blank tab here keeps that
+    // trusted-gesture handle alive; its location is set once the real
+    // URL is known. Native (iOS/Android) `Linking.openURL` has no such
+    // restriction, so this only applies on web.
+    const pendingTab = Platform.OS === "web" ? window.open("", "_blank") : null;
     try {
       const accessToken = await getAccessToken();
       if (!accessToken) {
+        pendingTab?.close();
         router.replace("/");
         return;
       }
       const { token } = await meetingsApi.hostJoinLink(accessToken, meeting.id);
       const url = `${meetingJoinLink(meeting.id)}?hj=${encodeURIComponent(token)}`;
-      await Linking.openURL(url);
+      if (pendingTab) {
+        pendingTab.location.href = url;
+      } else {
+        await Linking.openURL(url);
+      }
     } catch (err) {
+      pendingTab?.close();
       setError(err instanceof ApiError ? err.message : "Could not open this meeting.");
     } finally {
       setOpeningId(null);
