@@ -12,6 +12,14 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
+### Host PIN join shares one LiveKit identity — no distinct co-host identity yet
+
+**What's missing:** `MeetingService.host_pin_join` (the same-tab, same-origin alternative to the mobile app's cross-app host-link handoff — see CLAUDE.md's own entry on why that handoff needed one) authenticates anyone who knows the PIN by reusing `join()`'s existing host-identity path: same `MeetingParticipant` row, same LiveKit identity (`str(host_user_id)`) any other host entry already uses. Two people using the PIN at the *exact same moment* collide at the LiveKit layer — the second connection replaces the first, standard LiveKit reconnect behavior, not a crash or data-loss bug, but not true concurrent co-host access either.
+
+**Why:** A genuinely distinct co-host identity per PIN use needs its own `MeetingParticipant` row (no `user_id`, like a guest) plus its own lightweight bearer credential — and every host-only endpoint (`MeetingActorDep` → `_require_host_or_cohost` → `get_by_meeting_and_user`) is built around a `user_id`-shaped actor throughout. Making that authorization path accept a participant-id-shaped actor too is a real, contained refactor, just not one to do hastily alongside the PIN feature's own first pass.
+
+**Tracked for:** Extend `MeetingActorDep`/`_require_host_or_cohost` to accept either a `user_id` or a `participant_id`-bound actor, then have `host_pin_join` mint a distinct co-host participant + token per use instead of reusing the host's own. Sequential (non-simultaneous) host-and-co-host PIN use already works correctly today; this only matters for true concurrent use.
+
 ### App icon still uses the pre-redesign gold palette (not a security gap, a visual-consistency one)
 
 **What's missing:** the shipped app-package icon (`docs/brand/icon-1024.png` and its adaptive/favicon/splash derivatives, wired into `apps/mobile/assets/`) is real, hand-supplied artwork committed 2026-09-17 (`7c07525`) — one day *before* the v2 visual redesign (`0717793`, 2026-09-18) that moved the entire rest of the product from a dark/gold palette to indigo-violet (`packages/ui-tokens/src/colors.ts`). The redesign commit's own message mentions "icon set," but that refers to the new in-app `Icon.tsx` glyph component, not the app-package icon — the actual home-screen/store icon was never touched and still reads gold-on-black against every other surface's indigo-violet.

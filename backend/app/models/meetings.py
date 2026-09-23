@@ -78,6 +78,15 @@ class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     actual_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # P0-equivalent — Argon2id, same treatment as users.ditsala_code_hash.
     password_hash: Mapped[str | None] = mapped_column(String(256))
+    # Auto-generated (6-digit) at create_meeting time, shown once to the
+    # host to share with co-hosts — a same-origin, same-tab alternative
+    # to the mobile app's host-link URL handoff (create_meet_host_token/
+    # POST /host-join), which needs a cross-app navigation that's proven
+    # fragile in practice (see docs/SECURITY_GAPS.md). Anyone who knows
+    # this PIN authenticates as the meeting's host directly on apps/meet
+    # via POST /host-pin-join — see MeetingService.host_pin_join's
+    # docstring for the one real, disclosed limitation this carries.
+    host_pin_hash: Mapped[str | None] = mapped_column(String(256))
     waiting_room_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )

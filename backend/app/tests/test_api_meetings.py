@@ -612,8 +612,53 @@ async def test_host_link_and_host_join_bypasses_password(
     # (the _check_joinable fix this feature needed).
     r = await client.post(f"/api/v1/meetings/{meeting_id}/host-join", json={"token": token})
     assert r.status_code == 200, r.text
+
+
+async def test_host_pin_join_is_a_same_tab_alternative_to_the_host_link_handoff(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The actual fix for a real user report: the mobile-app-to-apps/meet
+    host-link handoff (cross-app navigation) kept failing in practice.
+    This endpoint needs nothing but the PIN shown once at creation —
+    no Authorization header, no token, no navigation at all."""
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings",
+        json={"title": "Password protected", "password": "secret123"},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 201, r.text
+    meeting_id = r.json()["id"]
+    pin = r.json()["host_pin"]
+    assert pin is not None and len(pin) == 6
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/host-pin-join", json={"pin": pin}
+    )
+    assert r.status_code == 200, r.text
     assert r.json()["role"] == "host"
     assert r.json()["access"]["token"]
+
+    # Re-fetching the meeting never echoes the PIN back — only the
+    # create response does.
+    r = await client.get(f"/api/v1/meetings/{meeting_id}", headers=_bearer_for(host))
+    assert r.status_code == 200, r.text
+    assert r.json().get("host_pin") is None
+
+
+async def test_host_pin_join_rejects_wrong_pin_over_http(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Standup"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/host-pin-join", json={"pin": "000000"}
+    )
+    assert r.status_code == 400, r.text
 
 
 async def test_waiting_room_admit_and_extend_work_via_the_host_token(

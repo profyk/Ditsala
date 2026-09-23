@@ -33,6 +33,12 @@ class MeetingResponse(BaseModel):
     prep_lead_minutes: int
     duration_extended_minutes: int
     created_at: datetime
+    # Only ever populated on the create_meeting response — see
+    # MeetingService.create_meeting's docstring for why this is the one
+    # and only moment the plaintext PIN is readable anywhere. Every other
+    # response validated from a `Meeting` (list, get-by-id, etc.) leaves
+    # this null; only the hash is ever persisted.
+    host_pin: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -140,6 +146,10 @@ class MeetHostLinkResponse(BaseModel):
 
 class MeetHostJoinRequest(BaseModel):
     token: str
+
+
+class HostPinJoinRequest(BaseModel):
+    pin: str = Field(min_length=1, max_length=32)
 
 
 class RecordingResponse(BaseModel):

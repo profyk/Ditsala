@@ -176,6 +176,15 @@ export const meetingsApi = {
       },
     }),
 
+  // Same-origin, same-tab alternative to the host-link handoff (`hj`
+  // query param + hostJoin below) — the PIN itself is the credential,
+  // no navigation from the mobile app required. See backend
+  // MeetingService.host_pin_join's docstring.
+  hostPinJoin: (meetingId: string, pin: string) =>
+    request<JoinMeetingResponse>(`/meetings/${meetingId}/host-pin-join`, {
+      body: { pin },
+    }),
+
   // Public — no auth. Lets a waiting-room client poll for admission
   // using the stable participant id it already has, instead of
   // re-calling guestJoin (which would mint a new waiting row each time).

@@ -40,9 +40,7 @@ function startOfDay(date: Date): Date {
 }
 
 function formatTimeSlot(hour: number, minute: number): string {
-  const period = hour < 12 ? "AM" : "PM";
-  const displayHour = hour % 12 === 0 ? 12 : hour % 12;
-  return `${displayHour}:${minute.toString().padStart(2, "0")} ${period}`;
+  return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 }
 
 function formatSelected(date: Date): string {
@@ -50,8 +48,9 @@ function formatSelected(date: Date): string {
     weekday: "short",
     month: "short",
     day: "numeric",
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }
 

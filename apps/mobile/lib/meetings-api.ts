@@ -29,6 +29,11 @@ export interface MeetingResponse {
   scheduled_duration_minutes: number | null;
   waiting_room_enabled: boolean;
   created_at: string;
+  // Only ever set on the create-meeting response — a same-tab, same-
+  // origin alternative to the fragile mobile-to-apps/meet host-link
+  // handoff. Anyone with it (host or a co-host) authenticates as the
+  // host directly on the meeting page itself, no navigation needed.
+  host_pin?: string | null;
 }
 
 export interface CreateMeetingPayload {

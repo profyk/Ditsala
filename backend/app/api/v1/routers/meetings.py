@@ -29,6 +29,7 @@ from app.schemas.meetings import (
     ExtendMeetingRequest,
     GeneratedNotesResponse,
     GuestJoinMeetingRequest,
+    HostPinJoinRequest,
     InviteCoHostRequest,
     JoinInfoResponse,
     JoinMeetingRequest,
@@ -256,6 +257,20 @@ async def host_join_meeting(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired link.")
     try:
         result = await service.join(meeting_id=meeting_id, user=user, password=None)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return _join_response(result)
+
+
+@router.post("/{meeting_id}/host-pin-join", response_model=JoinMeetingResponse)
+async def host_pin_join(
+    meeting_id: uuid.UUID, body: HostPinJoinRequest, service: MeetingServiceDep
+) -> JoinMeetingResponse:
+    """Public — the PIN itself is the credential, same reasoning as
+    `host_join_meeting` above. See `MeetingService.host_pin_join`'s
+    docstring, including its one disclosed limitation."""
+    try:
+        result = await service.host_pin_join(meeting_id=meeting_id, pin=body.pin)
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return _join_response(result)

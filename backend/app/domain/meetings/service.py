@@ -7,6 +7,7 @@ still never touches media itself.
 """
 
 import json
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -64,6 +65,14 @@ MAX_MEETING_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
 _HOST_ROLES = ("host", "co_host")
 ROOM_PHASES = ("scheduled", "prep", "live", "ended")
 DEFAULT_PREP_LEAD_MINUTES = 15
+
+
+def _generate_host_pin() -> str:
+    """A 6-digit numeric PIN — `secrets.randbelow`, not `random`, since
+    this grants host access to anyone who has it (same rigor as any
+    other credential in this codebase, even though it's short-lived per
+    meeting rather than long-lived like the DITSALA Code)."""
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def _initial_stage_status(meeting: Meeting, role: str) -> str:
@@ -221,6 +230,7 @@ class MeetingService:
         # meeting itself (see `Meeting.max_participants`'s docstring for
         # why it's snapshotted rather than re-read live).
         entitlements = await resolve_conference_entitlements(self._plans, host)
+        host_pin = _generate_host_pin()
         meeting = await self._meetings.add(
             Meeting(
                 host_user_id=host.id,
@@ -232,11 +242,21 @@ class MeetingService:
                     scheduled_duration_minutes, entitlements
                 ),
                 password_hash=hash_secret(password) if password else None,
+                host_pin_hash=hash_secret(host_pin),
                 waiting_room_enabled=waiting_room_enabled,
                 prep_lead_minutes=prep_lead_minutes,
                 max_participants=entitlements.max_guests,
             )
         )
+        # Transient, never persisted (only `host_pin_hash` is) — the one
+        # and only moment the plaintext PIN exists is right here, so the
+        # router can hand it back to the host exactly once. Named to
+        # match `MeetingResponse.host_pin` exactly so pydantic's
+        # `from_attributes` picks it up automatically on this specific
+        # response; every other response reading a `Meeting` (list,
+        # get-by-id, etc.) never sets this attribute, so that field is
+        # simply absent/null there — the PIN is genuinely shown once.
+        meeting.host_pin = host_pin  # type: ignore[attr-defined]
         await self._participants.add(
             MeetingParticipant(
                 meeting_id=meeting.id,
@@ -350,6 +370,34 @@ class MeetingService:
             can_publish=participant.stage_status == "on_stage",
         )
         return JoinResult(meeting=meeting, participant=participant, access_token=token)
+
+    async def host_pin_join(self, *, meeting_id: uuid.UUID, pin: str) -> JoinResult:
+        """A same-origin, same-tab alternative to the mobile app's
+        host-link handoff (`create_meet_host_token` / `POST /host-join`)
+        — that flow needs a cross-app navigation (DITSALA mobile app to
+        apps/meet's separate origin) that's proven fragile in real use.
+        Anyone who knows the meeting's host PIN (generated once at
+        `create_meeting`, shown to the host to share with co-hosts)
+        authenticates as the host directly here instead, with no
+        navigation at all.
+
+        Reuses `join()`'s own host-identity path unchanged — same
+        `MeetingParticipant` row, same LiveKit identity
+        (`str(host_user_id)`) any other host entry already uses. That's
+        a real, disclosed limitation, not a silent one: two people using
+        this PIN at the *exact same moment* will still collide at the
+        LiveKit layer (a second connection with an identical identity
+        replaces the first, standard LiveKit behavior) — sequential /
+        non-simultaneous host-and-co-host use works fine, concurrent use
+        does not yet. A genuinely distinct co-host identity via this PIN
+        is a real follow-up, not implemented here."""
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.host_pin_hash is None or not verify_secret(meeting.host_pin_hash, pin):
+            raise MeetingError("Incorrect host PIN.")
+        host = await self._users.get(meeting.host_user_id)
+        if host is None:
+            raise MeetingError("This meeting's host account no longer exists.")
+        return await self.join(meeting_id=meeting_id, user=host)
 
     async def _mark_attended(self, meeting_id: uuid.UUID, email: str) -> None:
         registration = await self._registrations.get_by_meeting_and_email(meeting_id, email)

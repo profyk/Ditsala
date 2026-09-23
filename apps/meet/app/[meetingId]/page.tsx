@@ -34,8 +34,9 @@ function formatScheduledTime(iso: string): string {
     year: "numeric",
     month: "long",
     day: "numeric",
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }
 
@@ -94,6 +95,11 @@ export default function MeetingRoom() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
+  // Same-tab alternative to the mobile app's host-link handoff — see
+  // meetingsApi.hostPinJoin's docstring.
+  const [hostPinMode, setHostPinMode] = useState(false);
+  const [hostPin, setHostPin] = useState("");
+  const [hostPinSubmitting, setHostPinSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [join, setJoin] = useState<JoinMeetingResponse | null>(null);
@@ -178,6 +184,21 @@ export default function MeetingRoom() {
       setError(err instanceof ApiError ? err.message : "Could not join this meeting.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleHostPinJoin(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setHostPinSubmitting(true);
+    try {
+      const result = await meetingsApi.hostPinJoin(meetingId, hostPin.trim());
+      setJoin(result);
+      setStage(result.access ? "in-call" : "waiting");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "That PIN isn't correct.");
+    } finally {
+      setHostPinSubmitting(false);
     }
   }
 
@@ -266,6 +287,50 @@ export default function MeetingRoom() {
     );
   }
 
+  if (hostPinMode) {
+    return (
+      <Centered>
+        <h1 className="font-display text-3xl text-text-primary">
+          {joinInfo?.title ?? "Join meeting"}
+        </h1>
+        <p className="max-w-sm text-center text-sm text-text-secondary">
+          Enter the meeting's Host PIN — shown once when the meeting was scheduled, and shared
+          separately from the meeting link/password. It signs you in with full host controls, no
+          name or password needed.
+        </p>
+        <form className="flex w-full max-w-sm flex-col gap-3" onSubmit={handleHostPinJoin}>
+          <input
+            value={hostPin}
+            onChange={(e) => setHostPin(e.target.value)}
+            placeholder="Host PIN"
+            inputMode="numeric"
+            autoFocus
+            required
+            className="rounded border border-border bg-surface px-4 py-2 text-center text-2xl tracking-widest text-text-primary outline-none focus:border-accent"
+          />
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          <button
+            type="submit"
+            disabled={hostPinSubmitting || hostPin.trim().length === 0}
+            className="rounded bg-accent px-4 py-2 font-medium text-background hover:bg-accent-pressed disabled:opacity-50"
+          >
+            {hostPinSubmitting ? "Checking…" : "Enter as host"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setHostPinMode(false);
+              setError(null);
+            }}
+            className="text-sm text-text-tertiary hover:text-text-secondary"
+          >
+            ← Back to joining as a guest
+          </button>
+        </form>
+      </Centered>
+    );
+  }
+
   return (
     <Centered>
       <h1 className="font-display text-3xl text-text-primary">
@@ -312,6 +377,16 @@ export default function MeetingRoom() {
           className="rounded bg-accent px-4 py-2 font-medium text-background hover:bg-accent-pressed disabled:opacity-50"
         >
           {submitting ? "Joining…" : "Join now"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setHostPinMode(true);
+            setError(null);
+          }}
+          className="text-sm text-accent hover:underline"
+        >
+          Host or co-host? Enter with your PIN instead →
         </button>
       </form>
     </Centered>

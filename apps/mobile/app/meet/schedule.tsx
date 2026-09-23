@@ -63,6 +63,14 @@ export default function ScheduleMeeting() {
     });
   }
 
+  async function handleShareHostPin(meeting: MeetingResponse) {
+    if (!meeting.host_pin) return;
+    const link = meetingJoinLink(meeting.id);
+    await Share.share({
+      message: `You're a co-host for "${meeting.title}" on DITSALA Meet: ${link}\n\nHost PIN: ${meeting.host_pin}\n\nEnter this PIN on the meeting page instead of a name/password — it signs you in with full host controls.`,
+    });
+  }
+
   if (created) {
     const link = meetingJoinLink(created.id);
     return (
@@ -80,8 +88,9 @@ export default function ScheduleMeeting() {
                   weekday: "long",
                   month: "long",
                   day: "numeric",
-                  hour: "numeric",
+                  hour: "2-digit",
                   minute: "2-digit",
+                  hour12: false,
                 })
               : ""}
           </Text>
@@ -100,9 +109,33 @@ export default function ScheduleMeeting() {
               {password}
             </Text>
           </View>
+          {created.host_pin ? (
+            <View className="mb-6 w-full rounded-lg border border-accent bg-accent-muted p-4">
+              <Text className="mb-1 text-xs font-medium uppercase tracking-widest text-accent">
+                Host PIN
+              </Text>
+              <Text selectable className="mb-1 text-2xl font-semibold tracking-widest text-text-primary">
+                {created.host_pin}
+              </Text>
+              <Text className="text-xs text-text-secondary">
+                Only you and anyone you share this with can enter as host — no password needed.
+                Share it with a co-host separately from the meeting link above.
+              </Text>
+            </View>
+          ) : null}
           <View className="w-full">
             <Button label="Share invite" onPress={() => handleShare(created)} />
             <View className="h-3" />
+            {created.host_pin ? (
+              <>
+                <Button
+                  label="Share with a co-host"
+                  variant="secondary"
+                  onPress={() => handleShareHostPin(created)}
+                />
+                <View className="h-3" />
+              </>
+            ) : null}
             <Button
               label="View my meetings"
               variant="secondary"

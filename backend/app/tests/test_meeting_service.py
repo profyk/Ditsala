@@ -196,6 +196,55 @@ async def test_create_meeting_adds_host_as_participant(harness: Harness) -> None
     assert participant.role == "host"
 
 
+async def test_create_meeting_generates_a_six_digit_host_pin(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    pin = meeting.host_pin  # type: ignore[attr-defined]
+    assert isinstance(pin, str)
+    assert len(pin) == 6
+    assert pin.isdigit()
+    # Only the hash is actually persisted — never the plaintext.
+    assert meeting.host_pin_hash is not None
+    assert meeting.host_pin_hash != pin
+
+
+async def test_host_pin_join_authenticates_as_the_host(harness: Harness) -> None:
+    """The whole point: a same-origin, same-tab alternative to the
+    mobile app's host-link handoff — no token, no navigation, just the
+    PIN a real client would read off the "meeting scheduled" screen."""
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+    pin = meeting.host_pin  # type: ignore[attr-defined]
+
+    result = await harness.service.host_pin_join(meeting_id=meeting.id, pin=pin)
+    assert result.participant.role == "host"
+    assert result.participant.user_id == host.id
+    assert result.access_token is not None
+
+
+async def test_host_pin_join_rejects_wrong_pin(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    with pytest.raises(MeetingError, match="Incorrect host PIN"):
+        await harness.service.host_pin_join(meeting_id=meeting.id, pin="000000")
+
+
+async def test_host_pin_join_bypasses_the_meeting_password(harness: Harness) -> None:
+    """A host (or co-host) using the PIN never needs the separate guest
+    password — same bypass `join()`'s own is_host check already gives
+    an authenticated host calling POST /join directly."""
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(
+        host=host, title="Private", password="guest-secret"
+    )
+    pin = meeting.host_pin  # type: ignore[attr-defined]
+
+    result = await harness.service.host_pin_join(meeting_id=meeting.id, pin=pin)
+    assert result.access_token is not None
+
+
 async def test_list_hosted_meetings_returns_only_this_hosts_meetings(harness: Harness) -> None:
     host = await _make_user(harness)
     other = await _make_user(harness)
