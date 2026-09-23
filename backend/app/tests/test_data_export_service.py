@@ -20,11 +20,13 @@ from app.domain.messaging.interfaces import StorageProvider
 from app.models.accounts import User
 from app.models.circle import Contact
 from app.models.devices import Device
-from app.models.messaging import Conversation, Message
+from app.models.location import LocationPing, LocationShare
+from app.models.messaging import Conversation, MediaObject, Message
 from app.repositories.circle import ContactRepository
 from app.repositories.conversations import ConversationRepository
 from app.repositories.devices import DeviceRepository
-from app.repositories.messages import MessageRepository
+from app.repositories.location import LocationPingRepository, LocationShareRepository
+from app.repositories.messages import MediaObjectRepository, MessageRepository
 from app.repositories.users import UserRepository
 
 
@@ -51,6 +53,9 @@ class Harness:
     contacts: ContactRepository
     conversations: ConversationRepository
     messages: MessageRepository
+    media_objects: MediaObjectRepository
+    location_shares: LocationShareRepository
+    location_pings: LocationPingRepository
 
 
 @pytest.fixture
@@ -74,6 +79,9 @@ def harness(session: AsyncSession) -> Harness:
         contacts=ContactRepository(session),
         conversations=ConversationRepository(session),
         messages=MessageRepository(session),
+        media_objects=MediaObjectRepository(session),
+        location_shares=LocationShareRepository(session),
+        location_pings=LocationPingRepository(session),
     )
 
 
@@ -176,6 +184,75 @@ async def test_export_includes_own_messages_via_device_join_and_redacts_cipherte
     assert message_row["content_type"] == "text"
     assert "top-secret" not in message_row["ciphertext"]
     assert "not included in export" in message_row["ciphertext"]
+
+
+async def test_export_includes_media_via_message_join_and_redacts_s3_key(
+    harness: Harness,
+) -> None:
+    user = await _make_user(harness)
+    now = datetime.now(UTC)
+    device = await harness.devices.add(
+        Device(
+            user_id=user.id,
+            device_name="Sender Device",
+            platform="android",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    )
+    conversation = await harness.conversations.add(Conversation(type="direct", created_by=user.id))
+    message = await harness.messages.add(
+        Message(
+            conversation_id=conversation.id,
+            sender_device_id=device.id,
+            ciphertext=b"ciphertext-not-checked-here",
+            content_type="media",
+            client_message_id=str(uuid.uuid4()),
+        )
+    )
+    await harness.media_objects.add(
+        MediaObject(
+            message_id=message.id,
+            s3_key="private/bucket/path/should-never-leak.enc",
+            encrypted_size_bytes=1024,
+            content_hash="sha256:deadbeef",
+        )
+    )
+
+    bundle = await _bundle(harness, user)
+
+    [media_row] = bundle["tables"]["media_objects"]
+    assert media_row["encrypted_size_bytes"] == 1024
+    assert "should-never-leak" not in media_row["s3_key"]
+    assert "not included in export" in media_row["s3_key"]
+
+
+async def test_export_includes_own_shared_location_pings_but_not_a_recipients_view(
+    harness: Harness,
+) -> None:
+    sharer = await _make_user(harness)
+    recipient = await _make_user(harness)
+    now = datetime.now(UTC)
+    share = await harness.location_shares.add(
+        LocationShare(
+            sharer_user_id=sharer.id,
+            recipient_user_id=recipient.id,
+            starts_at=now,
+            expires_at=now,
+        )
+    )
+    await harness.location_pings.add(
+        LocationPing(
+            location_share_id=share.id, lat=1.23, lng=4.56, accuracy_m=5.0, recorded_at=now
+        )
+    )
+
+    sharer_bundle = await _bundle(harness, sharer)
+    recipient_bundle = await _bundle(harness, recipient)
+
+    [ping_row] = sharer_bundle["tables"]["location_pings"]
+    assert "not included in export" in ping_row["lat"]
+    assert "location_pings" not in recipient_bundle["tables"]
 
 
 async def test_export_omits_a_table_with_no_matching_rows(harness: Harness) -> None:

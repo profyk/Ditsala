@@ -1,7 +1,8 @@
 """
 §34.4's data-export bundle for a completed "access" request — see
-`docs/SECURITY_GAPS.md`'s "Data export bundle only reaches tables one hop
-from users.id" entry for this implementation's disclosed scope boundary.
+`docs/SECURITY_GAPS.md`'s "Data export bundle's deeper joins are hand-
+picked, not a generic multi-hop walker" entry for this implementation's
+disclosed scope boundary.
 
 Reflection-driven rather than a hand-maintained table list: it walks
 every mapped model looking for a foreign key to `users.id` and pulls
@@ -21,14 +22,20 @@ result summaries) and P3 (everything else) pass through unredacted.
 
 **Scope boundary, disclosed rather than silent**: the generic scan above
 only reaches tables with a *direct* foreign key to `users.id` — it does
-not walk multi-hop relationships. `messages` has no such direct column
-(a message's sender is identified via `sender_device_id -> devices.user_id`,
-one hop removed) but is explicitly promised by this feature's own tracked
-gap ("the user's own message metadata, never content"), so it gets one
-deliberate, hand-written join below rather than a generalized multi-hop
-walker. Tables reachable only through a *deeper* chain (e.g.
-`media_objects` via `messages`, or `location_pings` via `location_shares`)
-are still out of scope — see `docs/SECURITY_GAPS.md`.
+not walk multi-hop relationships on its own. Three specific deeper cases
+are worth the user's own data and get a deliberate, hand-written join
+each, rather than a generalized (and riskier — see below) multi-hop
+walker: `messages` (sender is one hop away via
+`sender_device_id -> devices.user_id`; explicitly promised by this
+feature's own tracked gap as "metadata, never content"), `media_objects`
+(one hop further, via `message_id -> messages`), and `location_pings`
+(one hop via `location_share_id -> location_shares.sharer_user_id` — only
+the *sharer's* own pings, not a recipient's, since a ping is the sharer's
+GPS reading, not the recipient's data). Still out of scope: tables
+reachable only through a relationship that isn't cleanly "this user's own
+data" (e.g. `meeting_participants` rows for meetings the user merely
+attended, not hosted) — a generic walker would silently traverse those
+too, which is exactly the risk this hand-picked approach avoids.
 """
 
 import json
@@ -44,7 +51,8 @@ from app.domain.messaging.interfaces import StorageProvider
 from app.models.accounts import User
 from app.models.base import Base
 from app.models.devices import Device
-from app.models.messaging import Message
+from app.models.location import LocationPing, LocationShare
+from app.models.messaging import MediaObject, Message
 
 _REDACTED = "[not included in export: P2 content/location — server-opaque or precise-location data]"
 
@@ -103,9 +111,18 @@ class DataExportService:
             if rows:
                 tables[table.name] = rows
 
-        message_rows = await self._export_own_messages(user)
+        device_ids = await self._own_device_ids(user)
+        message_rows, message_ids = await self._export_own_messages(device_ids)
         if message_rows:
             tables["messages"] = message_rows
+
+        media_rows = await self._export_own_media_objects(message_ids)
+        if media_rows:
+            tables["media_objects"] = media_rows
+
+        location_ping_rows = await self._export_own_location_pings(user)
+        if location_ping_rows:
+            tables["location_pings"] = location_ping_rows
 
         payload = json.dumps(
             {
@@ -124,17 +141,49 @@ class DataExportService:
     async def create_download_url(self, key: str) -> str:
         return await self._storage.create_download_url(key=key)
 
-    async def _export_own_messages(self, user: User) -> list[dict[str, Any]]:
+    async def _own_device_ids(self, user: User) -> list[uuid.UUID]:
+        result = await self._session.execute(select(Device.id).where(Device.user_id == user.id))
+        return list(result.scalars().all())
+
+    async def _export_own_messages(
+        self, device_ids: list[uuid.UUID]
+    ) -> tuple[list[dict[str, Any]], list[uuid.UUID]]:
         """See the module docstring's "scope boundary" note — `messages`
         has no direct `users.id` column, so it's not reached by the
-        generic scan above."""
-        device_ids_result = await self._session.execute(
-            select(Device.id).where(Device.user_id == user.id)
-        )
-        device_ids = list(device_ids_result.scalars().all())
+        generic scan above. Returns the message ids alongside the
+        serialized rows so `_export_own_media_objects` can join off them
+        without re-deriving device ownership."""
         if not device_ids:
-            return []
+            return [], []
         result = await self._session.execute(
             select(Message).where(Message.sender_device_id.in_(device_ids))
         )
-        return [_serialize_row("messages", obj) for obj in result.scalars().all()]
+        messages = list(result.scalars().all())
+        rows = [_serialize_row("messages", obj) for obj in messages]
+        return rows, [m.id for m in messages]
+
+    async def _export_own_media_objects(self, message_ids: list[uuid.UUID]) -> list[dict[str, Any]]:
+        """One hop further than `messages` itself — media attached to a
+        message this user sent."""
+        if not message_ids:
+            return []
+        result = await self._session.execute(
+            select(MediaObject).where(MediaObject.message_id.in_(message_ids))
+        )
+        return [_serialize_row("media_objects", obj) for obj in result.scalars().all()]
+
+    async def _export_own_location_pings(self, user: User) -> list[dict[str, Any]]:
+        """Only the pings recorded under a share *this user created* —
+        `location_pings` has no direct `users.id` column, and a
+        recipient's own view of someone else's pings isn't this user's
+        own data to export."""
+        share_ids_result = await self._session.execute(
+            select(LocationShare.id).where(LocationShare.sharer_user_id == user.id)
+        )
+        share_ids = list(share_ids_result.scalars().all())
+        if not share_ids:
+            return []
+        result = await self._session.execute(
+            select(LocationPing).where(LocationPing.location_share_id.in_(share_ids))
+        )
+        return [_serialize_row("location_pings", obj) for obj in result.scalars().all()]

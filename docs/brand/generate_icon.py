@@ -1,9 +1,15 @@
 from PIL import Image, ImageDraw
 
-# Exact values from packages/ui-tokens/src/colors.ts (dark palette)
-BG = (0x0A, 0x0A, 0x0B)
-ACCENT = (0xC8, 0xA0, 0x59)
-ACCENT_MUTED = (0x3A, 0x32, 0x22)
+# Exact values from packages/ui-tokens/src/colors.ts (dark palette) — v2
+# indigo-violet palette (commit 0717793), not the original gold this
+# script's output was superseded by (see docs/brand/README.md). This
+# script is not currently run to produce the shipped assets — the live
+# icon is separate hand-supplied artwork that still uses the old gold —
+# but keeping these constants in sync with ui-tokens means the script
+# itself stays truthful if it's ever run again.
+BG = (0x0B, 0x0B, 0x12)
+ACCENT = (0x7C, 0x6A, 0xFF)
+ACCENT_MUTED = (0x24, 0x1F, 0x45)
 
 SIZE = 1024
 CX, CY = SIZE // 2, SIZE // 2
