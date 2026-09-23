@@ -83,12 +83,36 @@ def total_minutes_exceeds_cap(
 
 
 def count_active_participants(participants: list[MeetingParticipant]) -> int:
-    """"Currently occupying a seat": admitted (or never needed
-    admission) and not yet marked `removed`. Deliberately counts a
-    participant who joined and later left too — `left_at` just means
-    "not connected right now," not "gave up their seat" (they can
-    rejoin), which is the more conservative reading for a capacity gate."""
-    return sum(1 for p in participants if p.admission_status != "removed")
+    """"Currently occupying a seat right now" — a waiting-room guest
+    (about to occupy one once admitted) plus anyone actively connected
+    (joined and not yet left). Deliberately NOT a historical/cumulative
+    count of every participant row that's ever existed: `guest_join`
+    mints a brand-new row on every single call (it has no way to
+    recognize a returning guest as "the same person" — no account, no
+    session), so a handful of real people simply reconnecting, or
+    retrying a failed join, would otherwise permanently ratchet up the
+    count and exhaust a low-tier plan's guest cap with nobody actually
+    in the room. That was this function's original design ("counts a
+    participant who joined and later left too") — a real bug, caught by
+    exactly that happening during normal use, not a hypothetical.
+
+    `left_at` being set always excludes a participant, regardless of
+    `admission_status` — including a still-`waiting` one: a guest who
+    gives up and disconnects before ever being admitted (`page.tsx`
+    calls `leaveAsParticipant` from `onDisconnected`, which only fires
+    once actually connected — a `waiting` guest closing the tab before
+    admission has no such signal today, a real, separate, smaller gap
+    left open here) shouldn't hold their spot in line forever either,
+    on the rare path where `left_at` does get set for one."""
+    return sum(
+        1
+        for p in participants
+        if p.left_at is None
+        and (
+            p.admission_status == "waiting"
+            or (p.admission_status != "removed" and p.joined_at is not None)
+        )
+    )
 
 
 def guest_capacity_exceeded(current_count: int, max_guests: int | None) -> bool:

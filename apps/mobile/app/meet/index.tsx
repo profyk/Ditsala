@@ -83,37 +83,34 @@ export default function MyMeetings() {
   async function handleOpen(meeting: MeetingResponse) {
     setError(null);
     setOpeningId(meeting.id);
-    // Web only: open the tab synchronously, still inside this tap's own
-    // event handler, *before* the async hostJoinLink() call below. Most
-    // browsers only allow `window.open` to succeed as the direct result
-    // of a trusted user gesture — once an `await` has run, that gesture
-    // has already "expired", and a same-named `Linking.openURL` call
-    // after it gets silently popup-blocked (or opens a blank tab with no
-    // URL at all) on a real share of browsers. That's the actual bug
-    // behind "host has to enter a password" reports: the blocked/blank
-    // tab never carried the `?hj=` host token, so apps/meet fell back to
-    // its plain guest-join form, which asks for the meeting password a
-    // host should never need. Pre-opening a blank tab here keeps that
-    // trusted-gesture handle alive; its location is set once the real
-    // URL is known. Native (iOS/Android) `Linking.openURL` has no such
-    // restriction, so this only applies on web.
-    const pendingTab = Platform.OS === "web" ? window.open("", "_blank") : null;
     try {
       const accessToken = await getAccessToken();
       if (!accessToken) {
-        pendingTab?.close();
         router.replace("/");
         return;
       }
       const { token } = await meetingsApi.hostJoinLink(accessToken, meeting.id);
       const url = `${meetingJoinLink(meeting.id)}?hj=${encodeURIComponent(token)}`;
-      if (pendingTab) {
-        pendingTab.location.href = url;
+      if (Platform.OS === "web") {
+        // Navigate the *current* tab rather than opening a new one.
+        // window.open()/Linking.openURL() for a *new* tab only succeed
+        // as the direct, synchronous result of a trusted user gesture —
+        // the async hostJoinLink() call above already breaks that
+        // chain, so a new-tab attempt here reliably gets popup-blocked
+        // (or opens blank with no `?hj=` token attached) on real
+        // browsers. That was the actual bug behind "host has to enter a
+        // password" reports: apps/meet, seeing no host token, correctly
+        // fell back to its plain guest-join form. Same-tab navigation
+        // via location.href has no such restriction — it's never
+        // subject to popup blocking — so this is the reliable fix, not
+        // a workaround. Native (iOS/Android) keeps Linking.openURL,
+        // which opens the external browser app and has no popup-blocker
+        // analog at all.
+        window.location.href = url;
       } else {
         await Linking.openURL(url);
       }
     } catch (err) {
-      pendingTab?.close();
       setError(err instanceof ApiError ? err.message : "Could not open this meeting.");
     } finally {
       setOpeningId(null);

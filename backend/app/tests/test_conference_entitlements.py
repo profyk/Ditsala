@@ -32,13 +32,20 @@ def _entitlements(**overrides: object) -> ConferenceEntitlements:
     return ConferenceEntitlements(**defaults)  # type: ignore[arg-type]
 
 
-def _participant(*, admission_status: str = "admitted") -> MeetingParticipant:
+def _participant(
+    *,
+    admission_status: str = "admitted",
+    joined_at: datetime | None = None,
+    left_at: datetime | None = None,
+) -> MeetingParticipant:
     return MeetingParticipant(
         meeting_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         role="participant",
         livekit_participant_identity=str(uuid.uuid4()),
         admission_status=admission_status,
+        joined_at=joined_at,
+        left_at=left_at,
     )
 
 
@@ -82,13 +89,51 @@ class TestGuestCapacityExceeded:
 
 
 class TestCountActiveParticipants:
-    def test_counts_admitted_and_waiting(self) -> None:
+    def test_counts_connected_and_waiting(self) -> None:
         participants = [
-            _participant(admission_status="admitted"),
+            _participant(admission_status="admitted", joined_at=datetime.now(UTC)),
             _participant(admission_status="waiting"),
             _participant(admission_status="removed"),
         ]
         assert count_active_participants(participants) == 2
+
+    def test_admitted_but_never_actually_joined_does_not_count(self) -> None:
+        # A participant row can exist as "admitted" with no joined_at yet
+        # (e.g. a host's own row right after create_meeting, before they
+        # ever call join()) — shouldn't occupy a seat until they actually connect.
+        participants = [_participant(admission_status="admitted", joined_at=None)]
+        assert count_active_participants(participants) == 0
+
+    def test_someone_who_left_does_not_count(self) -> None:
+        """The actual bug this guards against: `guest_join` mints a brand
+        new participant row on every call (no way to recognize a
+        returning guest), so a real person simply reconnecting — or a
+        failed join being retried — must not permanently occupy a seat
+        after they've left. Previously it did, and a handful of guests
+        retrying a join could exhaust a whole meeting's guest cap with
+        nobody actually in the room."""
+        now = datetime.now(UTC)
+        participants = [
+            _participant(admission_status="admitted", joined_at=now, left_at=now),
+        ]
+        assert count_active_participants(participants) == 0
+
+    def test_currently_connected_counts(self) -> None:
+        participants = [
+            _participant(admission_status="admitted", joined_at=datetime.now(UTC), left_at=None),
+        ]
+        assert count_active_participants(participants) == 1
+
+    def test_removed_never_counts_even_if_still_connected(self) -> None:
+        participants = [
+            _participant(admission_status="removed", joined_at=datetime.now(UTC), left_at=None),
+        ]
+        assert count_active_participants(participants) == 0
+
+    def test_waiting_participant_who_left_does_not_count(self) -> None:
+        now = datetime.now(UTC)
+        participants = [_participant(admission_status="waiting", left_at=now)]
+        assert count_active_participants(participants) == 0
 
     def test_empty_list(self) -> None:
         assert count_active_participants([]) == 0

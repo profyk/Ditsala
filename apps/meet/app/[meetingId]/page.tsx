@@ -244,7 +244,15 @@ export default function MeetingRoom() {
         connect
         data-lk-theme="default"
         style={{ height: "100vh" }}
-        onDisconnected={() => setStage("form")}
+        onDisconnected={() => {
+          // Best-effort — records that this seat is free again (see
+          // MeetingService.mark_participant_left's docstring). A guest
+          // has no JWT, so this participant_id-based call is the only
+          // way their left_at ever gets set; without it they'd
+          // permanently occupy a guest-cap seat even after leaving.
+          meetingsApi.leaveAsParticipant(meetingId, join.participant_id).catch(() => undefined);
+          setStage("form");
+        }}
       >
         <MeetingToolsBar
           meetingId={meetingId}

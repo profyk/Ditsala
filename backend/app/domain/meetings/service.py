@@ -390,6 +390,22 @@ class MeetingService:
         if participant is not None:
             participant.left_at = datetime.now(UTC)
 
+    async def mark_participant_left(
+        self, *, meeting_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> None:
+        """Public given a valid participant_id — same trust model as
+        reactions/chat/polls (`assert_participant_in_meeting`'s
+        docstring): a guest has no JWT, so `leave()` above (which looks
+        a participant up by `user_id`) can never reach them. Without
+        this, a guest's row stays "still connected" forever after they
+        actually disconnect — the real bug behind guests hitting a low
+        plan's guest cap (`entitlements.count_active_participants`,
+        which now only counts someone with `joined_at` set and `left_at`
+        still null) even when nobody is actually in the room, because
+        nothing had ever set `left_at` for a guest in the first place."""
+        participant = await self._get_participant_in_meeting(meeting_id, participant_id)
+        participant.left_at = datetime.now(UTC)
+
     async def end_meeting(self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID) -> Meeting:
         meeting = await self.get_meeting(meeting_id)
         if meeting.host_user_id != acting_user_id:

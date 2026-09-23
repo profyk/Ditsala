@@ -202,12 +202,58 @@ async def test_guest_join_rejected_once_at_capacity(harness: Harness) -> None:
         admin_id=admin_id, user_id=host.id, plan_code=FREE_PLAN_CODE, reason="test"
     )
     meeting = await harness.meetings.create_meeting(host=host, title="Small room")
+    # A participant row only occupies a seat once actually connected
+    # (see entitlements.count_active_participants) — the host's own row
+    # from create_meeting doesn't count until they call join().
+    await harness.meetings.join(meeting_id=meeting.id, user=host)
 
-    for i in range(4):  # host already occupies 1 of 5 seats
+    for i in range(4):  # host now occupies 1 of 5 seats
         await harness.meetings.guest_join(meeting_id=meeting.id, guest_display_name=f"Guest {i}")
 
     with pytest.raises(MeetingError, match="guest limit"):
         await harness.meetings.guest_join(meeting_id=meeting.id, guest_display_name="One too many")
+
+
+async def test_a_guest_who_leaves_frees_up_their_seat(harness: Harness) -> None:
+    """The actual real-world bug report this guards against: repeated
+    testing (or real guests reconnecting) used to permanently exhaust a
+    Free-tier meeting's 5-guest cap even with nobody left in the room,
+    because `guest_join` mints a brand-new participant row every call
+    and nothing ever marked an earlier one as having left. Filling the
+    cap, having everyone leave, then confirming a fresh guest can still
+    get in is the real end-to-end proof, not just the counting-function
+    unit tests in test_conference_entitlements.py."""
+    host = await _make_user(harness)
+    admin_id = await _make_admin_id(harness.users.session)
+    await harness.plans.set_user_conference_plan(
+        admin_id=admin_id, user_id=host.id, plan_code=FREE_PLAN_CODE, reason="test"
+    )
+    meeting = await harness.meetings.create_meeting(host=host, title="Small room")
+    await harness.meetings.join(meeting_id=meeting.id, user=host)
+
+    guests = []
+    for i in range(4):
+        result = await harness.meetings.guest_join(
+            meeting_id=meeting.id, guest_display_name=f"Guest {i}"
+        )
+        guests.append(result.participant)
+
+    with pytest.raises(MeetingError, match="guest limit"):
+        await harness.meetings.guest_join(meeting_id=meeting.id, guest_display_name="One too many")
+
+    # Every guest actually leaves — the same public, participant_id-based
+    # call apps/meet's onDisconnected handler makes for a real guest.
+    for guest in guests:
+        await harness.meetings.mark_participant_left(
+            meeting_id=meeting.id, participant_id=guest.id
+        )
+
+    # The cap is free again — a new guest gets in without needing the
+    # host to upgrade plans or manually clean anything up.
+    fresh = await harness.meetings.guest_join(
+        meeting_id=meeting.id, guest_display_name="Finally in"
+    )
+    assert fresh.access_token is not None
 
 
 async def test_extend_duration_rejects_beyond_plan_cap(harness: Harness) -> None:

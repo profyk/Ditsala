@@ -264,6 +264,15 @@ export const meetingsApi = {
       body: { additional_minutes: additionalMinutes },
     }),
 
+  // Public given a valid participant_id — records that this participant
+  // (host, co-host, or guest) has actually left, so they stop occupying
+  // a seat against the host's plan guest cap (see backend
+  // MeetingService.mark_participant_left's docstring).
+  leaveAsParticipant: (meetingId: string, participantId: string) =>
+    request<void>(`/meetings/${meetingId}/participants/${participantId}/leave`, {
+      method: "POST",
+    }),
+
   endMeeting: (meetingId: string, token: string) =>
     request<MeetingResponse>(`/meetings/${meetingId}/end`, { token, method: "POST" }),
 

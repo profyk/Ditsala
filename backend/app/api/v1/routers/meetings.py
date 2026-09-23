@@ -284,6 +284,20 @@ async def leave_meeting(
     await service.leave(meeting_id=meeting_id, user_id=user.id)
 
 
+@router.post("/{meeting_id}/participants/{participant_id}/leave", status_code=204)
+async def participant_leave(
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
+) -> None:
+    """Public given a valid participant_id — the guest counterpart to
+    `leave_meeting` above (guests have no JWT, so they can never be
+    resolved by `user_id`). See `MeetingService.mark_participant_left`'s
+    docstring for why this matters beyond just bookkeeping accuracy."""
+    try:
+        await service.mark_participant_left(meeting_id=meeting_id, participant_id=participant_id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+
+
 @router.post("/{meeting_id}/end", response_model=MeetingResponse)
 async def end_meeting(
     meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep

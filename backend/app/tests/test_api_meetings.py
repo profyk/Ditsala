@@ -205,6 +205,32 @@ async def test_guest_join_requires_no_auth(client: AsyncClient, session: AsyncSe
     assert r.json()["access"]["token"]
 
 
+async def test_guest_can_mark_themselves_left_with_no_auth(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The other half of the "host meeting plan reached" fix: a guest
+    has no JWT, so `POST /leave` (CurrentUserDep) can never reach them —
+    this is the participant_id-based endpoint apps/meet's onDisconnected
+    handler actually calls, and it needs zero credentials, same as
+    guest-join itself."""
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Open house"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Visitor"},
+    )
+    participant_id = r.json()["participant_id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/leave"
+    )
+    assert r.status_code == 204, r.text
+
+
 async def test_end_meeting_forbidden_for_non_host(
     client: AsyncClient, session: AsyncSession
 ) -> None:
