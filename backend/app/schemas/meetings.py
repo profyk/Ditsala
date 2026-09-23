@@ -224,6 +224,37 @@ class AssignBreakoutRoomRequest(BaseModel):
     participant_id: uuid.UUID
 
 
+# --- Meeting analytics (Premium/Enterprise Conference plans) ----------
+# Response shape mirrors `app/domain/meetings/analytics.py`'s dataclasses
+# exactly — see that module for what each field means and how it's computed.
+
+
+class ParticipantAttendanceResponse(BaseModel):
+    participant_id: uuid.UUID
+    display_name: str
+    role: str
+    is_guest: bool
+    joined_at: datetime | None
+    left_at: datetime | None
+    attended_seconds: int
+
+    model_config = {"from_attributes": True}
+
+
+class MeetingAnalyticsResponse(BaseModel):
+    meeting_id: uuid.UUID
+    as_of: datetime
+    total_participant_rows: int
+    unique_attendees: int
+    guest_attendees: int
+    total_attendance_seconds: int
+    average_attendance_seconds: float
+    peak_concurrent_attendees: int
+    attendees: list[ParticipantAttendanceResponse]
+
+    model_config = {"from_attributes": True}
+
+
 class QuestionResponse(BaseModel):
     id: uuid.UUID
     meeting_id: uuid.UUID

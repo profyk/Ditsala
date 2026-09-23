@@ -13,6 +13,8 @@ from app.schemas.billing import (
     SetEntitlementRequest,
     SetPlanPriceRequest,
     SetPlanStatusRequest,
+    SetUserConferencePlanRequest,
+    UserConferencePlanResponse,
 )
 
 router = APIRouter(
@@ -119,3 +121,30 @@ async def set_plan_entitlement(
     except PlanError as exc:
         raise _as_http_error(exc) from exc
     return EntitlementResponse.model_validate(entitlement)
+
+
+@router.put(
+    "/users/{user_id}/conference-plan",
+    response_model=UserConferencePlanResponse,
+    dependencies=[require_permission(Permission.BILLING_PLANS_ACTION)],
+)
+async def set_user_conference_plan(
+    user_id: uuid.UUID,
+    body: SetUserConferencePlanRequest,
+    admin: CurrentAdminDep,
+    service: PlanServiceDep,
+) -> UserConferencePlanResponse:
+    """Assigns a Conference Room plan (Free/Pro/Premium/Enterprise) to
+    one user — there's no self-serve payment flow for these tiers yet
+    (same "admin sets it, no default by design" precedent VIP pricing
+    already established), so this is how an admin actually grants one.
+    Audit-logged like every other mutation in this router."""
+    try:
+        user = await service.set_user_conference_plan(
+            admin_id=admin.id, user_id=user_id, plan_code=body.plan_code, reason=body.reason
+        )
+    except PlanError as exc:
+        raise _as_http_error(exc) from exc
+    return UserConferencePlanResponse(
+        user_id=user.id, conference_plan_code=user.conference_plan_code
+    )

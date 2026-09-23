@@ -112,3 +112,23 @@ class PublicPlanResponse(BaseModel):
 
 class MyPlanResponse(BaseModel):
     plan_code: str
+
+
+# --- Conference Room plan assignment (admin-only) ---------------------
+# Separate axis from the messaging-app free/vip plan above — see
+# `app/domain/billing/conference_plans.py` and
+# `PlanService.resolve_conference_plan_code_for_user`.
+
+
+class SetUserConferencePlanRequest(BaseModel):
+    plan_code: str = Field(min_length=2, max_length=64)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class UserConferencePlanResponse(BaseModel):
+    user_id: uuid.UUID
+    conference_plan_code: str
+
+
+class MyConferencePlanResponse(BaseModel):
+    plan_code: str

@@ -19,6 +19,11 @@ const NAV_ITEMS: { href: string; label: string; permission: Permission }[] = [
   { href: "/admins", label: "Admins", permission: "admin_users:view" },
   { href: "/pricing", label: "Pricing", permission: "billing_plans:view" },
   {
+    href: "/conference-plans",
+    label: "Conference Plans",
+    permission: "billing_plans:view",
+  },
+  {
     href: "/data-requests",
     label: "Data Subject Requests",
     permission: "data_subject_requests:view",

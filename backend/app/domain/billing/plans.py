@@ -24,6 +24,7 @@ from app.models.admin import AuditLog
 from app.models.billing import Entitlement, Plan, PlanPrice
 from app.repositories.admin import AuditLogRepository
 from app.repositories.billing import EntitlementRepository, PlanPriceRepository, PlanRepository
+from app.repositories.users import UserRepository
 
 # The MVP user -> plan resolution: every real account today is either
 # `normal` (free) or `vip`. Business/Conference plans need an org/seat
@@ -31,6 +32,17 @@ from app.repositories.billing import EntitlementRepository, PlanPriceRepository,
 # real extension point, not something to fake here.
 DEFAULT_FREE_PLAN_CODE = "free"
 DEFAULT_VIP_PLAN_CODE = "vip"
+
+# The Conference Room axis is separate from the messaging-app free/vip
+# axis above — a `normal` messaging user can still be on a paid
+# Conference plan (or vice versa). Resolved from `users.conference_plan_code`
+# (migration <conference plans>) rather than derived from `account_tier`,
+# since there's no org/seat model to derive it from yet — see
+# `resolve_conference_plan_code_for_user`. The seed data for these four
+# codes/entitlements lives in that same migration and is mirrored (for
+# app-layer defaults only, not re-run as code) in
+# `app/domain/billing/conference_plans.py`.
+DEFAULT_CONFERENCE_PLAN_CODE = "conference_free"
 
 
 class PlanError(Exception):
@@ -45,11 +57,17 @@ class PlanService:
         plan_prices: PlanPriceRepository,
         entitlements: EntitlementRepository,
         audit_log: AuditLogRepository,
+        # Optional — only needed for `set_user_conference_plan` (an admin
+        # action). Every existing caller/test constructs this service
+        # without it, so it stays optional rather than forcing every call
+        # site to thread a UserRepository through for a feature it doesn't use.
+        users: UserRepository | None = None,
     ) -> None:
         self._plans = plans
         self._plan_prices = plan_prices
         self._entitlements = entitlements
         self._audit_log = audit_log
+        self._users = users
 
     async def _log(
         self,
@@ -208,12 +226,58 @@ class PlanService:
         exists, not silently approximated here."""
         return DEFAULT_VIP_PLAN_CODE if user.account_tier == "vip" else DEFAULT_FREE_PLAN_CODE
 
-    async def get_entitlement_for_user(
-        self, user: User, key: str, *, default: Any = None
+    def resolve_conference_plan_code_for_user(self, user: User) -> str:
+        """The Conference Room's own plan axis — see module docstring.
+        `users.conference_plan_code` is set by an admin action
+        (`set_user_conference_plan`) since there's no self-serve payment
+        flow for these four tiers yet (same "admin sets it, no default
+        price by design" precedent VIP pricing already established via
+        `system_config`)."""
+        return user.conference_plan_code or DEFAULT_CONFERENCE_PLAN_CODE
+
+    async def get_entitlement_by_plan_code(
+        self, plan_code: str, key: str, *, default: Any = None
     ) -> Any:
-        plan_code = self.resolve_plan_code_for_user(user)
+        """The shared lookup both `get_entitlement_for_user` and any
+        conference-plan caller (`app/domain/meetings/entitlements.py`)
+        go through — one place that turns "plan code + key" into a
+        resolved value, so the two plan axes above don't each grow their
+        own copy of this."""
         plan = await self._plans.get_by_code(plan_code)
         if plan is None:
             return default
         entitlement = await self._entitlements.get_by_plan_and_key(plan.id, key)
         return entitlement.value if entitlement is not None else default
+
+    async def get_entitlement_for_user(
+        self, user: User, key: str, *, default: Any = None
+    ) -> Any:
+        plan_code = self.resolve_plan_code_for_user(user)
+        return await self.get_entitlement_by_plan_code(plan_code, key, default=default)
+
+    async def set_user_conference_plan(
+        self, *, admin_id: uuid.UUID, user_id: uuid.UUID, plan_code: str, reason: str
+    ) -> User:
+        """Admin-only (§27-29 style audit-logged mutation, mirrors every
+        other setter in this class). Refuses a `plan_code` that isn't a
+        real, active `product="conference"` plan — an admin fat-fingering
+        a typo here would otherwise silently downgrade a paying user to
+        the unlimited-fallback `DEFAULT_ENTITLEMENTS` every conference
+        entitlement lookup uses when a plan can't be found."""
+        if self._users is None:
+            raise PlanError("PlanService was constructed without a UserRepository.")
+        user = await self._users.get(user_id)
+        if user is None:
+            raise PlanError("No such user.")
+        plan = await self._plans.get_by_code(plan_code)
+        if plan is None or plan.product != "conference" or plan.status != "active":
+            raise PlanError(f"{plan_code!r} is not an active conference plan.")
+        before = user.conference_plan_code
+        user.conference_plan_code = plan_code
+        await self._log(
+            admin_id,
+            "admin.user.conference_plan_changed",
+            target_id=user_id,
+            metadata_json={"before": before, "after": plan_code, "reason": reason},
+        )
+        return user

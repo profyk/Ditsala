@@ -58,6 +58,17 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default="normal",
         server_default=text("'normal'"),
     )
+    # Conference Room's own plan axis (Free/Pro/Premium/Enterprise) — a
+    # separate concern from `account_tier` above, since a `normal`
+    # messaging user can still pay for a Premium Conference plan and vice
+    # versa. Not an FK to `plans.id`: `plans.code` is admin-editable
+    # (archive/recreate), and a stale reference here should just fall
+    # back to the free tier via `PlanService.
+    # resolve_conference_plan_code_for_user`, not break a FK constraint.
+    # See app/domain/billing/conference_plans.py.
+    conference_plan_code: Mapped[str] = mapped_column(
+        String(64), default="conference_free", server_default=text("'conference_free'")
+    )
     # S3-compatible object key (P3 — not secret, not message content); the
     # actual bytes go through the same StorageProvider presigned-URL flow
     # media does. Null means no avatar set.

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 
+import { useThemeVars } from "../lib/theme-context";
+
 interface ScheduleDateTimePickerProps {
   value: Date | null;
   onChange: (date: Date) => void;
@@ -62,6 +64,9 @@ function formatSelected(date: Date): string {
  * simulator/device here — same boundary as every other mobile phase).
  */
 export function ScheduleDateTimePicker({ value, onChange, testID }: ScheduleDateTimePickerProps) {
+  // Re-applies the theme's CSS vars inside the Modal's own native root —
+  // see useThemeVars's docstring for why this is required, not optional.
+  const themeVars = useThemeVars();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"date" | "time">("date");
   const [visibleMonth, setVisibleMonth] = useState(() => startOfDay(value ?? new Date()));
@@ -121,7 +126,7 @@ export function ScheduleDateTimePicker({ value, onChange, testID }: ScheduleDate
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
-        <View className="flex-1 justify-end bg-black/60">
+        <View style={themeVars} className="flex-1 justify-end bg-black/60">
           <View className="max-h-[80%] rounded-t-2xl bg-surface p-5">
             {step === "date" ? (
               <>

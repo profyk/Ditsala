@@ -5,7 +5,7 @@ import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "re
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
 import { meetingJoinLink } from "../../lib/meetings-api";
-import { formatPrice, plansApi, type Plan } from "../../lib/plans-api";
+import { formatEntitlement, formatPrice, plansApi, type Plan } from "../../lib/plans-api";
 import { getAccessToken } from "../../lib/session";
 import { useTheme } from "../../lib/theme-context";
 
@@ -15,13 +15,6 @@ const PRODUCT_LABEL: Record<Plan["product"], string> = {
   business: "Business",
   conference: "Conference Room",
 };
-
-function formatEntitlement(entitlement: { key: string; value: unknown }): string {
-  const label = entitlement.key.replace(/_/g, " ");
-  if (entitlement.value === true) return label;
-  if (entitlement.value === false) return `No ${label}`;
-  return `${label}: ${String(entitlement.value)}`;
-}
 
 /**
  * Conference Room hub — reached from Settings. Three real, working
@@ -34,7 +27,13 @@ export default function ConferenceRoom() {
   const router = useRouter();
   const { colors } = useTheme();
   const [plans, setPlans] = useState<Plan[] | null>(null);
-  const [myPlanCode, setMyPlanCode] = useState<string | null>(null);
+  // Two separate plan axes can each resolve to a code that collides with
+  // the other's (e.g. nothing stops a "vip" code and a "conference_vip"
+  // code existing someday) — kept as two distinct fields rather than one
+  // `myPlanCode`, and matched per-plan against `plan.product` below, so
+  // "Your plan" only ever highlights the axis a plan actually belongs to.
+  const [myMessagingPlanCode, setMyMessagingPlanCode] = useState<string | null>(null);
+  const [myConferencePlanCode, setMyConferencePlanCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [meetingId, setMeetingId] = useState("");
   const [joining, setJoining] = useState(false);
@@ -46,12 +45,14 @@ export default function ConferenceRoom() {
       return;
     }
     try {
-      const [planList, mine] = await Promise.all([
+      const [planList, mine, mineConference] = await Promise.all([
         plansApi.list(accessToken),
         plansApi.mine(accessToken),
+        plansApi.mineConference(accessToken),
       ]);
       setPlans(planList);
-      setMyPlanCode(mine.plan_code);
+      setMyMessagingPlanCode(mine.plan_code);
+      setMyConferencePlanCode(mineConference.plan_code);
     } catch {
       setError("Could not load plans right now.");
     }
@@ -138,7 +139,8 @@ export default function ConferenceRoom() {
         <Text className="text-sm text-text-tertiary">No plans configured yet.</Text>
       ) : (
         plans.map((plan) => {
-          const isMine = plan.code === myPlanCode;
+          const isMine =
+            plan.code === (plan.product === "conference" ? myConferencePlanCode : myMessagingPlanCode);
           return (
             <View
               key={plan.id}

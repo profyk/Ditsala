@@ -54,6 +54,16 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Swap in the native date picker and wire real font loading (`expo-font` + Fraunces/Inter assets) once resources allow.
 
+**A real bug in this picker was found and fixed since the paragraph above was written:** `ScheduleDateTimePicker`'s popup Modal (and `CountryCodePicker`'s, same root cause) rendered with every `bg-surface`/`text-text-primary`/etc. class resolving to nothing — a fully transparent sheet with default-color text overlapping whatever screen was behind it, unreadable. Cause: `lib/theme-context.tsx`'s `ThemeProvider` sets NativeWind's theme CSS variables via `vars()` as an inline `style` on its wrapping `<View>`; React Native's `<Modal>` portals its children into a separate native root (a new window on iOS, a new Dialog on Android) that isn't a native descendant of that `<View>`, so the variables never reach it even though the Modal's content is still a React-tree descendant. Fixed by a new `useThemeVars()` hook (same file) that either Modal now spreads onto its own outermost `<View>`, re-establishing the variables inside the portaled tree. Verified via `tsc --noEmit`, ESLint, and the existing Jest suite (all clean) — **not visually confirmed on a simulator/device**, same boundary as everything else mobile in this project; worth a quick visual check the next time someone has a working Expo dev client.
+
+### Conference Room plans (Free/Pro/Premium/Enterprise) have no self-serve checkout yet
+
+**What's missing:** the four `conference_*` plans (migration `b4f7c1a9e6d2`, `app/domain/billing/conference_plans.py`) are real, seeded, and enforced (`MeetingService` clamps meeting duration/guest count to the host's plan and gates recording/breakout-rooms/analytics behind `conference.tools`) — but a user can't buy one. `PlanService.set_user_conference_plan` (`PUT /admin/billing/users/{id}/conference-plan`, `apps/admin`'s Conference Plans page) is admin-only, same "admin sets it, no default by design" precedent VIP pricing already established in ADR 0012 before its own Stitch flow existed.
+
+**Why:** No org/seat model exists yet for Business/Conference plan resolution (a real, separately-documented gap — see `PlanService.resolve_plan_code_for_user`'s own docstring), and wiring a second product through the existing Stitch `VipUpgradeService`/`StitchPaymentProvider` flow (itself still unverified against a live Stitch account, see above) is real, scoped work of its own rather than something to guess at here.
+
+**Tracked for:** Once Stitch is live-verified, extend `VipUpgradeService`'s pattern (or a sibling service) to cover a Conference plan purchase/upgrade, replacing the admin-assignment path as the primary route (keeping it available as a support/override tool).
+
 ### VIP privacy/messaging perks not yet built (ADR 0012)
 
 **What's missing:** the tier split, `VipUpgradeService`, and Stitch adapter are all real (see above and `docs/adr/0012-normal-vip-tier-split.md`). Still not built: hiding a VIP's phone number from non-Circle contacts, and VIP-to-VIP automatic trusted messaging ("private space").

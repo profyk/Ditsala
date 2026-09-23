@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FlatList, Modal, Pressable, Text, TextInput, View } from "react-native";
 
 import { COUNTRIES, type Country } from "../lib/countries";
-import { useTheme } from "../lib/theme-context";
+import { useTheme, useThemeVars } from "../lib/theme-context";
 
 interface CountryCodePickerProps {
   value: Country;
@@ -16,6 +16,12 @@ interface CountryCodePickerProps {
  * `quick-crypto` deferral for the same reasoning). */
 export function CountryCodePicker({ value, onChange, testID }: CountryCodePickerProps) {
   const { colors } = useTheme();
+  // Re-applies the theme's CSS vars inside the Modal's own native root —
+  // see useThemeVars's docstring (lib/theme-context.tsx) for why a Modal
+  // needs this even though it's nested under ThemeProvider in the React
+  // tree; without it every bg-*/text-* className below resolves to
+  // nothing, same bug ScheduleDateTimePicker's calendar modal had.
+  const themeVars = useThemeVars();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -42,7 +48,7 @@ export function CountryCodePicker({ value, onChange, testID }: CountryCodePicker
       </Pressable>
 
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
-        <View className="flex-1 bg-background px-6 pt-16">
+        <View style={themeVars} className="flex-1 bg-background px-6 pt-16">
           <Text className="mb-4 text-2xl font-semibold text-text-primary">Choose a country</Text>
           <TextInput
             testID="country-search-input"

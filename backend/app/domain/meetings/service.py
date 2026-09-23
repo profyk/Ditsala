@@ -13,6 +13,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.security import hash_secret, verify_secret
+from app.domain.billing.conference_plans import TOOL_ANALYTICS, TOOL_BREAKOUT_ROOMS, TOOL_RECORDING
+from app.domain.billing.plans import PlanService
+from app.domain.meetings.analytics import MeetingAnalyticsReport, build_meeting_analytics
+from app.domain.meetings.entitlements import (
+    clamp_duration_minutes,
+    count_active_participants,
+    guest_capacity_exceeded,
+    has_tool,
+    resolve_conference_entitlements,
+    total_minutes_exceeds_cap,
+)
 from app.domain.meetings.interfaces import RecordingHandle, RoomAccessToken, RoomProvider
 from app.domain.messaging.interfaces import StorageProvider
 from app.domain.translation.service import TranslationService
@@ -163,6 +174,15 @@ class MeetingService:
         conference_language_preferences: ConferenceLanguagePreferenceRepository,
         translation_service: TranslationService,
         users: UserRepository,
+        # Optional — Conference Room plan enforcement (guest cap, duration
+        # cap, tool gating; see app/domain/meetings/entitlements.py).
+        # Every existing test constructs this service without it, and
+        # `entitlements.resolve_conference_entitlements` degrades to
+        # unlimited/every-tool-on when it's `None`, so leaving it unwired
+        # anywhere (a test, a future call site) is a safe no-op rather
+        # than a crash — enforcement only actually applies where
+        # `app/api/v1/deps.py` wires a real `PlanService` in.
+        plans: PlanService | None = None,
     ) -> None:
         self._meetings = meetings
         self._participants = participants
@@ -180,6 +200,7 @@ class MeetingService:
         self._conference_language_preferences = conference_language_preferences
         self._translation = translation_service
         self._users = users
+        self._plans = plans
 
     # ---- Phase 1: create / join / end -----------------------------------
 
@@ -195,6 +216,11 @@ class MeetingService:
         waiting_room_enabled: bool = False,
         prep_lead_minutes: int = DEFAULT_PREP_LEAD_MINUTES,
     ) -> Meeting:
+        # Conference Room plan enforcement — clamp the requested duration
+        # to the host's plan cap and snapshot their guest limit onto the
+        # meeting itself (see `Meeting.max_participants`'s docstring for
+        # why it's snapshotted rather than re-read live).
+        entitlements = await resolve_conference_entitlements(self._plans, host)
         meeting = await self._meetings.add(
             Meeting(
                 host_user_id=host.id,
@@ -202,10 +228,13 @@ class MeetingService:
                 title=title,
                 meeting_type=meeting_type,
                 scheduled_start_at=scheduled_start_at,
-                scheduled_duration_minutes=scheduled_duration_minutes,
+                scheduled_duration_minutes=clamp_duration_minutes(
+                    scheduled_duration_minutes, entitlements
+                ),
                 password_hash=hash_secret(password) if password else None,
                 waiting_room_enabled=waiting_room_enabled,
                 prep_lead_minutes=prep_lead_minutes,
+                max_participants=entitlements.max_guests,
             )
         )
         await self._participants.add(
@@ -243,6 +272,8 @@ class MeetingService:
         participant = await self._participants.get_by_meeting_and_user(meeting_id, user.id)
         if participant is None:
             role = "host" if is_host else "participant"
+            if not is_host:
+                await self._check_guest_capacity(meeting)
             needs_admission = meeting.waiting_room_enabled and role == "participant"
             participant = await self._participants.add(
                 MeetingParticipant(
@@ -289,6 +320,7 @@ class MeetingService:
         attended — never required to join."""
         meeting = await self.get_meeting(meeting_id)
         self._check_joinable(meeting, password=password, is_host=False)
+        await self._check_guest_capacity(meeting)
 
         needs_admission = meeting.waiting_room_enabled
         guest_identity = f"guest-{uuid.uuid4().hex}"
@@ -381,6 +413,19 @@ class MeetingService:
         meeting = await self.get_meeting(meeting_id)
         if meeting.status != "live":
             raise MeetingError("Can only extend a meeting that is currently live.")
+        if meeting.scheduled_duration_minutes is not None:
+            host = await self._users.get(meeting.host_user_id)
+            entitlements = await resolve_conference_entitlements(self._plans, host)
+            projected_total = (
+                meeting.scheduled_duration_minutes
+                + meeting.duration_extended_minutes
+                + additional_minutes
+            )
+            if total_minutes_exceeds_cap(projected_total, entitlements):
+                raise MeetingError(
+                    "This extension would exceed the host's Conference plan's "
+                    "maximum meeting duration."
+                )
         meeting.duration_extended_minutes += additional_minutes
         return meeting
 
@@ -454,6 +499,48 @@ class MeetingService:
                 "This meeting hasn't started yet — scheduled for "
                 f"{meeting.scheduled_start_at.isoformat()}."  # type: ignore[union-attr]
             )
+
+    async def _check_guest_capacity(self, meeting: Meeting) -> None:
+        """Enforced against `meeting.max_participants` (the cap
+        snapshotted from the host's plan at `create_meeting` time — see
+        that field's docstring), not a freshly-resolved entitlement, so
+        a host who downgrades mid-meeting doesn't retroactively strand
+        already-admitted participants below a new, lower cap. The host
+        themself is never subject to this (see both call sites)."""
+        current = count_active_participants(
+            await self._participants.list_for_meeting(meeting.id)
+        )
+        if guest_capacity_exceeded(current, meeting.max_participants):
+            raise MeetingError(
+                "This meeting has reached the guest limit for the host's Conference plan."
+            )
+
+    async def _require_tool(self, meeting: Meeting, tool_id: str, label: str) -> None:
+        """Gate a Conference Room feature behind the host's plan. Always
+        resolved against the *host's* current plan (not the acting
+        co-host's, and not a snapshot — unlike the guest-count cap, a
+        tool becoming available mid-meeting via a plan upgrade should
+        work immediately, so this re-reads live rather than using a
+        column on `Meeting`)."""
+        host = await self._users.get(meeting.host_user_id)
+        entitlements = await resolve_conference_entitlements(self._plans, host)
+        if not has_tool(entitlements, tool_id):
+            raise MeetingError(f"{label} is not included in the host's Conference plan.")
+
+    async def get_meeting_analytics(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID
+    ) -> MeetingAnalyticsReport:
+        """Host/co-host only, Premium+/Enterprise (`conference.tools`
+        includes `"analytics"`) — attendance duration, unique/guest
+        headcount, and real peak-concurrency, computed from data every
+        meeting already records. See `app/domain/meetings/analytics.py`."""
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        meeting = await self.get_meeting(meeting_id)
+        await self._require_tool(meeting, TOOL_ANALYTICS, "Meeting analytics")
+        participants = await self._participants.list_for_meeting(meeting_id)
+        return build_meeting_analytics(
+            meeting_id=meeting_id, participants=participants, as_of=datetime.now(UTC)
+        )
 
     async def get_join_info(self, meeting_id: uuid.UUID) -> JoinInfo:
         meeting = await self.get_meeting(meeting_id)
@@ -630,6 +717,7 @@ class MeetingService:
     ) -> MeetingRecording:
         await self._require_host_or_cohost(meeting_id, acting_user_id)
         meeting = await self.get_meeting(meeting_id)
+        await self._require_tool(meeting, TOOL_RECORDING, "Recording")
         s3_key = f"meetings/{meeting_id}/recordings/{uuid.uuid4().hex}.mp4"
         handle = await self._room_provider.start_recording(
             room_name=meeting.livekit_room_name, s3_key=s3_key
@@ -972,6 +1060,8 @@ class MeetingService:
         self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, names: list[str]
     ) -> list[BreakoutRoom]:
         await self._require_host_or_cohost(meeting_id, acting_user_id)
+        meeting = await self.get_meeting(meeting_id)
+        await self._require_tool(meeting, TOOL_BREAKOUT_ROOMS, "Breakout rooms")
         if not names:
             raise MeetingError("At least one breakout room name is required.")
         rooms = []

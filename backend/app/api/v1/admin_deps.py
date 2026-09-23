@@ -8,13 +8,13 @@ from typing import Annotated, Any
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 
+from app.api.v1.deps import PlanServiceDep as PlanServiceDep  # re-exported, see below
 from app.api.v1.deps import SessionDep, SettingsDep
 from app.core.security import decode_admin_access_token
 from app.domain.admin.auth_service import AdminAuthService
 from app.domain.admin.kyc_review_service import KycReviewService
 from app.domain.admin.rbac import Permission
 from app.domain.admin.service import AdminService
-from app.domain.billing.plans import PlanService
 from app.models.admin import AdminUser
 from app.repositories.admin import (
     AdminRoleRepository,
@@ -22,7 +22,6 @@ from app.repositories.admin import (
     AuditLogRepository,
     SystemConfigRepository,
 )
-from app.repositories.billing import EntitlementRepository, PlanPriceRepository, PlanRepository
 from app.repositories.circle import InvitationRepository, ReportRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
@@ -71,17 +70,10 @@ async def get_kyc_review_service(session: SessionDep) -> KycReviewService:
 
 KycReviewServiceDep = Annotated[KycReviewService, Depends(get_kyc_review_service)]
 
-
-async def get_plan_service(session: SessionDep) -> PlanService:
-    return PlanService(
-        plans=PlanRepository(session),
-        plan_prices=PlanPriceRepository(session),
-        entitlements=EntitlementRepository(session),
-        audit_log=AuditLogRepository(session),
-    )
-
-
-PlanServiceDep = Annotated[PlanService, Depends(get_plan_service)]
+# PlanServiceDep itself now lives in app.api.v1.deps (get_meeting_service
+# needs it too, and admin_deps.py already imports from deps.py, never the
+# reverse) — imported above and re-exported so every existing
+# `from app.api.v1.admin_deps import PlanServiceDep` call site keeps working.
 
 
 async def get_current_admin(

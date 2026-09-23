@@ -4,6 +4,7 @@ from app.api.v1.admin_deps import PlanServiceDep
 from app.api.v1.deps import CurrentUserDep
 from app.schemas.billing import (
     EntitlementResponse,
+    MyConferencePlanResponse,
     MyPlanResponse,
     PlanPriceResponse,
     PublicPlanResponse,
@@ -44,3 +45,17 @@ async def my_plan(user: CurrentUserDep, service: PlanServiceDep) -> MyPlanRespon
     lets the Conference Room screen highlight "Your plan" among the
     list `list_active_plans` returns."""
     return MyPlanResponse(plan_code=service.resolve_plan_code_for_user(user))
+
+
+@router.get("/me/conference", response_model=MyConferencePlanResponse)
+async def my_conference_plan(
+    user: CurrentUserDep, service: PlanServiceDep
+) -> MyConferencePlanResponse:
+    """The Conference Room's own plan axis (Free/Pro/Premium/Enterprise —
+    see app/domain/billing/conference_plans.py), separate from `/me`
+    above. Filter `list_active_plans`'s result to `product == "conference"`
+    and match this code to render "Your plan" on the Conference Room
+    screen, same pattern `/me` already established."""
+    return MyConferencePlanResponse(
+        plan_code=service.resolve_conference_plan_code_for_user(user)
+    )

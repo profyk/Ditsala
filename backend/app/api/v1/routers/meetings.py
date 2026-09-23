@@ -36,6 +36,7 @@ from app.schemas.meetings import (
     LockMeetingRequest,
     MeetHostJoinRequest,
     MeetHostLinkResponse,
+    MeetingAnalyticsResponse,
     MeetingDocumentDownloadResponse,
     MeetingDocumentResponse,
     MeetingDocumentUploadResponse,
@@ -898,6 +899,24 @@ async def close_breakout_rooms(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return [BreakoutRoomResponse.model_validate(r) for r in rooms]
+
+
+# ---- Conference Room plan feature: attendance analytics ---------------------
+# Premium/Enterprise only (`conference.tools` includes "analytics") — see
+# app/domain/meetings/analytics.py and app/domain/billing/conference_plans.py.
+
+
+@router.get("/{meeting_id}/analytics", response_model=MeetingAnalyticsResponse)
+async def get_meeting_analytics(
+    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+) -> MeetingAnalyticsResponse:
+    try:
+        report = await service.get_meeting_analytics(
+            meeting_id=meeting_id, acting_user_id=user.id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingAnalyticsResponse.model_validate(report)
 
 
 # ---- Phase 3: AI pipeline (transcript, notes, Q&A) --------------------------

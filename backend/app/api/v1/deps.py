@@ -12,6 +12,7 @@ from app.core.security import decode_access_token, decode_meet_host_token, decod
 from app.domain.account.profile_service import ProfileService
 from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
+from app.domain.billing.plans import PlanService
 from app.domain.billing.service import VipUpgradeService
 from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
@@ -28,7 +29,12 @@ from app.domain.vip_chat.service import VipChatService
 from app.models.accounts import User
 from app.models.devices import Device
 from app.repositories.admin import AuditLogRepository, SystemConfigRepository
-from app.repositories.billing import VipSubscriptionRepository
+from app.repositories.billing import (
+    EntitlementRepository,
+    PlanPriceRepository,
+    PlanRepository,
+    VipSubscriptionRepository,
+)
 from app.repositories.calls import CallParticipantRepository, CallRepository
 from app.repositories.circle import (
     BlockRepository,
@@ -424,7 +430,28 @@ async def get_compliance_service(
 ComplianceServiceDep = Annotated[ComplianceService, Depends(get_compliance_service)]
 
 
-async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> MeetingService:
+async def get_plan_service(session: SessionDep) -> PlanService:
+    """Defined here (not `admin_deps.py`) since it's now a dependency of
+    `get_meeting_service` below, which admin_deps.py itself imports
+    `SessionDep`/`SettingsDep` from — putting it there instead would be a
+    circular import. `admin_deps.py`'s admin-only `/admin/billing/plans/*`
+    routes import `PlanServiceDep` from here too, so there's exactly one
+    place this service gets constructed."""
+    return PlanService(
+        plans=PlanRepository(session),
+        plan_prices=PlanPriceRepository(session),
+        entitlements=EntitlementRepository(session),
+        audit_log=AuditLogRepository(session),
+        users=UserRepository(session),
+    )
+
+
+PlanServiceDep = Annotated[PlanService, Depends(get_plan_service)]
+
+
+async def get_meeting_service(
+    session: SessionDep, settings: SettingsDep, plans: PlanServiceDep
+) -> MeetingService:
     return MeetingService(
         meetings=MeetingRepository(session),
         participants=MeetingParticipantRepository(session),
@@ -445,6 +472,7 @@ async def get_meeting_service(session: SessionDep, settings: SettingsDep) -> Mee
         # session/settings, so it resolves to an identical TranslationService.
         translation_service=await get_translation_service(session, settings),
         users=UserRepository(session),
+        plans=plans,
     )
 
 

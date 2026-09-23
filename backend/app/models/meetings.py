@@ -95,6 +95,14 @@ class Meeting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     duration_extended_minutes: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
+    # Snapshotted from the host's Conference plan (`conference.max_guests`)
+    # at `create_meeting` time, not re-read live — same "what was actually
+    # granted" reasoning `PlanPrice` archiving already uses, so a host
+    # downgrading their plan mid-meeting-lifecycle doesn't retroactively
+    # shrink a room guests already joined. Null means no cap (an
+    # unlimited plan, or `PlanService` not wired — see
+    # `app/domain/meetings/entitlements.py`).
+    max_participants: Mapped[int | None] = mapped_column(Integer)
     # §18 search — a generated, indexed column rather than computing
     # `to_tsvector` at query time on every row scanned.
     title_search: Mapped[str] = mapped_column(

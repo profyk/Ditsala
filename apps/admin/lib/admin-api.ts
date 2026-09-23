@@ -345,6 +345,16 @@ export const billingApi = {
       token,
       body: { key, value, reason },
     }),
+
+  // Conference Room plan assignment — a separate axis from the plan/price/
+  // entitlement CRUD above (see backend app/domain/billing/conference_plans.py):
+  // this assigns one *user* to one of the four seeded conference_* plan
+  // codes, since there's no self-serve payment flow for them yet.
+  setUserConferencePlan: (token: string, userId: string, planCode: string, reason: string) =>
+    request<{ user_id: string; conference_plan_code: string }>(
+      `/admin/billing/users/${userId}/conference-plan`,
+      { method: "PUT", token, body: { plan_code: planCode, reason } }
+    ),
 };
 
 export const kycApi = {

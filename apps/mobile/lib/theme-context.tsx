@@ -125,3 +125,26 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) throw new Error("useTheme must be used within a ThemeProvider");
   return ctx;
 }
+
+/**
+ * The same `vars()` style `ThemeProvider` applies on its wrapping <View> —
+ * for re-applying inside a React Native `<Modal>`.
+ *
+ * `<Modal>` renders its children into a separate native root (a new
+ * window on iOS, a new Dialog on Android): NativeWind's `vars()` sets CSS
+ * custom properties via an inline `style` prop, and that style only
+ * cascades through the *native* view tree it's attached to — a `<Modal>`
+ * child is not a native descendant of `ThemeProvider`'s `<View>` even
+ * though it's still a React-tree descendant. The result: every
+ * `className="bg-surface"`/`"text-text-primary"`/etc. *inside* a Modal
+ * resolves each `var(--color-*)` to nothing, rendering transparent with
+ * default text color — the modal's own content becomes unreadable against
+ * whatever's behind it. Every `<Modal>` in this app needs to spread this
+ * hook's return value onto its own outermost View (see
+ * `ScheduleDateTimePicker`/`CountryCodePicker` for the pattern) — a real,
+ * previously-shipped bug, not a hypothetical one.
+ */
+export function useThemeVars(): ReturnType<typeof vars> {
+  const { theme } = useTheme();
+  return THEME_VARS[theme];
+}
