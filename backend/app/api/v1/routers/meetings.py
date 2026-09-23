@@ -181,6 +181,8 @@ async def get_join_info(meeting_id: uuid.UUID, service: MeetingServiceDep) -> Jo
         joinable_now=info.joinable_now,
         room_phase=info.room_phase,
         live_deadline_at=info.live_deadline_at,
+        waiting_room_enabled=info.meeting.waiting_room_enabled,
+        locked=info.meeting.locked_at is not None,
     )
 
 

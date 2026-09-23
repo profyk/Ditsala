@@ -144,17 +144,24 @@ function ToolButton({
 }
 
 function LockControl({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  // Same reasoning as WaitingRoomControl — starts unknown, not a guessed
+  // "unlocked", and fetches the real state from GET /join-info (public)
+  // so a reconnecting host's UI never shows the wrong current state.
   const [locked, setLocked] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    meetingsApi
+      .joinInfo(meetingId)
+      .then((info) => setLocked(info.locked))
+      .catch(() => undefined);
+  }, [meetingId]);
+
   async function toggle() {
+    if (locked === null) return;
     setBusy(true);
     try {
-      const meeting: MeetingResponse = await meetingsApi.lockMeeting(
-        meetingId,
-        !(locked ?? false),
-        hostToken
-      );
+      const meeting: MeetingResponse = await meetingsApi.lockMeeting(meetingId, !locked, hostToken);
       setLocked(meeting.locked_at !== null);
     } catch {
       // Leaves the existing state showing — the host can just retry.
@@ -167,7 +174,7 @@ function LockControl({ meetingId, hostToken }: { meetingId: string; hostToken: s
     <button
       type="button"
       onClick={toggle}
-      disabled={busy}
+      disabled={busy || locked === null}
       title={locked ? "Unlock meeting" : "Lock meeting"}
       className={`rounded px-3 py-1.5 text-sm border disabled:opacity-50 ${
         locked
@@ -175,21 +182,35 @@ function LockControl({ meetingId, hostToken }: { meetingId: string; hostToken: s
           : "bg-surface text-text-primary border-border hover:bg-surface-raised"
       }`}
     >
-      {locked ? "🔒 Locked" : "🔓 Lock"}
+      {locked === null ? "…" : locked ? "🔒 Locked" : "🔓 Lock"}
     </button>
   );
 }
 
 function WaitingRoomControl({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  // Starts unknown (`null`), not a guessed false/true — waiting_room_enabled
+  // defaults to `true` on the mobile Schedule screen, so assuming "off"
+  // here would show the *wrong* current state and, worse, make the very
+  // first click flip it to the opposite of what the label displayed. Real
+  // initial value comes from GET /join-info (public, no token needed —
+  // simpler than adding a host-token-authenticated GET /meetings/{id} call).
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    meetingsApi
+      .joinInfo(meetingId)
+      .then((info) => setEnabled(info.waiting_room_enabled))
+      .catch(() => undefined);
+  }, [meetingId]);
+
   async function toggle() {
+    if (enabled === null) return; // don't guess a direction before the real state loads
     setBusy(true);
     try {
       const meeting: MeetingResponse = await meetingsApi.setWaitingRoom(
         meetingId,
-        !(enabled ?? false),
+        !enabled,
         hostToken
       );
       setEnabled(meeting.waiting_room_enabled);
@@ -204,7 +225,7 @@ function WaitingRoomControl({ meetingId, hostToken }: { meetingId: string; hostT
     <button
       type="button"
       onClick={toggle}
-      disabled={busy}
+      disabled={busy || enabled === null}
       title={
         enabled
           ? "Guests wait to be admitted — click to let them straight in instead"
@@ -216,7 +237,7 @@ function WaitingRoomControl({ meetingId, hostToken }: { meetingId: string; hostT
           : "bg-surface text-text-primary border-border hover:bg-surface-raised"
       }`}
     >
-      {enabled ? "🖐 Hold guests" : "🚪 Let guests in"}
+      {enabled === null ? "…" : enabled ? "🖐 Hold guests" : "🚪 Let guests in"}
     </button>
   );
 }

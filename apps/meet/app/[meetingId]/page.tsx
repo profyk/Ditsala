@@ -93,6 +93,7 @@ export default function MeetingRoom() {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [join, setJoin] = useState<JoinMeetingResponse | null>(null);
@@ -286,14 +287,23 @@ export default function MeetingRoom() {
           className="rounded border border-border bg-surface px-4 py-2 text-text-primary outline-none focus:border-accent"
         />
         {joinInfo?.requires_password ? (
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Meeting password"
-            type="password"
-            required
-            className="rounded border border-border bg-surface px-4 py-2 text-text-primary outline-none focus:border-accent"
-          />
+          <div className="relative">
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Meeting password"
+              type={passwordVisible ? "text" : "password"}
+              required
+              className="w-full rounded border border-border bg-surface px-4 py-2 pr-16 text-text-primary outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              onClick={() => setPasswordVisible((v) => !v)}
+              className="absolute bottom-0 right-0 top-0 px-3 text-xs font-medium text-accent"
+            >
+              {passwordVisible ? "Hide" : "Show"}
+            </button>
+          </div>
         ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <button

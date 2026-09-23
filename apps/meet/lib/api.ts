@@ -75,6 +75,8 @@ export interface JoinInfoResponse {
   joinable_now: boolean;
   room_phase: "scheduled" | "prep" | "live" | "ended";
   live_deadline_at: string | null;
+  waiting_room_enabled: boolean;
+  locked: boolean;
 }
 
 export interface ParticipantResponse {

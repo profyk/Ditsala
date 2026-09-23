@@ -51,6 +51,15 @@ class JoinInfoResponse(BaseModel):
     joinable_now: bool
     room_phase: str
     live_deadline_at: datetime | None
+    # So a UI can show the current "hold guests until admitted" vs "let
+    # them straight in" setting *before* anyone has toggled it (see
+    # `set_waiting_room_enabled` — this was previously not exposed
+    # anywhere a host could read it back, only ever written blind).
+    waiting_room_enabled: bool
+    # Same reasoning for the Lock control — a reconnecting host's UI
+    # shouldn't have to guess (and default-display "unlocked") before
+    # the real state is known.
+    locked: bool
 
 
 class JoinMeetingRequest(BaseModel):
