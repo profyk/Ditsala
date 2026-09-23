@@ -429,6 +429,33 @@ class MeetingService:
         meeting.duration_extended_minutes += additional_minutes
         return meeting
 
+    # ---- admin governance (app/domain/admin/meetings_governance.py) -------
+    # No host/co-host check and no plan-cap check — deliberately: an admin
+    # overriding a live meeting is, by definition, not bound by the host's
+    # own plan limits (that's the point of an override), and authorization
+    # already happened at the admin router layer (RBAC's `require_permission`,
+    # same as every other `AdminService` mutation) rather than being
+    # re-checked here. Never called from the public /meetings router.
+
+    async def admin_extend_duration(
+        self, *, meeting_id: uuid.UUID, additional_minutes: int
+    ) -> Meeting:
+        if additional_minutes <= 0:
+            raise MeetingError("additional_minutes must be positive.")
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.status != "live":
+            raise MeetingError("Can only extend a meeting that is currently live.")
+        meeting.duration_extended_minutes += additional_minutes
+        return meeting
+
+    async def admin_end_meeting(self, *, meeting_id: uuid.UUID) -> Meeting:
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.status == "ended":
+            return meeting
+        meeting.status = "ended"
+        meeting.actual_end_at = datetime.now(UTC)
+        return meeting
+
     async def delete_meeting(self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID) -> None:
         """Host-only, any status, any time — every meeting-scoped child
         table (`meeting_participants`, `meeting_messages`, recordings,
@@ -568,6 +595,18 @@ class MeetingService:
     ) -> list[MeetingParticipant]:
         await self._require_host_or_cohost(meeting_id, acting_user_id)
         return await self._participants.list_waiting(meeting_id)
+
+    async def list_participants(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID
+    ) -> list[MeetingParticipant]:
+        """Every participant (any admission status) — host/co-host only,
+        same reasoning as `list_waiting_participants`. Backs a
+        moderation-style "who's in this meeting" panel (mute/remove/
+        promote), which — unlike LiveKit's own connected-participant list
+        — needs each row's backend `MeetingParticipant.id`, the id those
+        actions are keyed on."""
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        return await self._participants.list_for_meeting(meeting_id)
 
     async def admit_participant(
         self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, participant_id: uuid.UUID
@@ -1148,6 +1187,18 @@ class MeetingService:
         which needs to gate *before* doing anything else) can reuse this
         without reaching into a private method."""
         await self._require_host_or_cohost(meeting_id, acting_user_id)
+
+    async def assert_participant_in_meeting(
+        self, meeting_id: uuid.UUID, participant_id: uuid.UUID
+    ) -> MeetingParticipant:
+        """Same "public wrapper" reasoning as `assert_host_or_cohost` above,
+        for the other trust model this codebase uses: router endpoints
+        that are public given a valid participant_id (reactions/raise-hand/
+        chat/polls/Q&A/breakout-room join — a guest has no JWT to prove
+        membership any other way, same as `list_documents`'s existing
+        pattern) need to validate that id belongs to this meeting before
+        doing anything with it."""
+        return await self._get_participant_in_meeting(meeting_id, participant_id)
 
     async def _require_host_or_cohost(
         self, meeting_id: uuid.UUID, acting_user_id: uuid.UUID

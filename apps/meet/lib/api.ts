@@ -110,6 +110,40 @@ export interface MeetingDocumentResponse {
   created_at: string;
 }
 
+export interface MessageResponse {
+  id: string;
+  meeting_id: string;
+  sender_participant_id: string;
+  recipient_participant_id: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface PollResponse {
+  id: string;
+  meeting_id: string;
+  created_by_participant_id: string;
+  question: string;
+  options: string[];
+  closed_at: string | null;
+  created_at: string;
+}
+
+export interface PollResultsResponse {
+  poll: PollResponse;
+  counts: Record<string, number>;
+}
+
+export interface QuestionResponse {
+  id: string;
+  meeting_id: string;
+  asked_by_participant_id: string;
+  body: string;
+  upvote_count: number;
+  status: "open" | "answered" | "dismissed";
+  created_at: string;
+}
+
 export const meetingsApi = {
   get: (meetingId: string, accessToken: string) =>
     request<MeetingResponse>(`/meetings/${meetingId}`, { method: "GET", token: accessToken }),
@@ -228,6 +262,123 @@ export const meetingsApi = {
     request<MeetingResponse>(`/meetings/${meetingId}/extend`, {
       token,
       body: { additional_minutes: additionalMinutes },
+    }),
+
+  endMeeting: (meetingId: string, token: string) =>
+    request<MeetingResponse>(`/meetings/${meetingId}/end`, { token, method: "POST" }),
+
+  lockMeeting: (meetingId: string, locked: boolean, token: string) =>
+    request<MeetingResponse>(`/meetings/${meetingId}/lock`, { token, body: { locked } }),
+
+  // Host-only, real moderation — every participant regardless of status,
+  // unlike /waiting-room. Backs the Participants panel's mute/remove.
+  listParticipants: (meetingId: string, token: string) =>
+    request<ParticipantResponse[]>(`/meetings/${meetingId}/participants`, {
+      method: "GET",
+      token,
+    }),
+
+  muteParticipant: (meetingId: string, participantId: string, muted: boolean, token: string) =>
+    request<void>(`/meetings/${meetingId}/participants/${participantId}/mute`, {
+      token,
+      body: { muted },
+    }),
+
+  removeParticipant: (meetingId: string, participantId: string, token: string) =>
+    request<void>(`/meetings/${meetingId}/participants/${participantId}/remove`, {
+      method: "POST",
+      token,
+    }),
+
+  promoteCoHost: (meetingId: string, participantId: string, token: string) =>
+    request<ParticipantResponse>(`/meetings/${meetingId}/participants/${participantId}/promote`, {
+      method: "POST",
+      token,
+    }),
+
+  // --- reactions / raise hand — public given a valid participant_id, no
+  // token: every participant, guests included, can use these. ---
+  sendReaction: (meetingId: string, participantId: string, reaction: string) =>
+    request<void>(`/meetings/${meetingId}/reactions`, {
+      body: { participant_id: participantId, reaction },
+    }),
+
+  setHandRaised: (meetingId: string, participantId: string, raised: boolean) =>
+    request<void>(`/meetings/${meetingId}/raise-hand`, {
+      body: { participant_id: participantId, raised },
+    }),
+
+  // --- in-meeting chat — same "public given a valid participant_id" model ---
+  sendMessage: (meetingId: string, participantId: string, body: string) =>
+    request<MessageResponse>(`/meetings/${meetingId}/messages`, {
+      body: { participant_id: participantId, body },
+    }),
+
+  listMessages: (meetingId: string, participantId: string) =>
+    request<MessageResponse[]>(
+      `/meetings/${meetingId}/messages?participant_id=${participantId}`,
+      { method: "GET" }
+    ),
+
+  // --- polls — create/close are host-only (token); vote/list/results are
+  // public given a valid participant_id ---
+  createPoll: (meetingId: string, question: string, options: string[], token: string) =>
+    request<PollResponse>(`/meetings/${meetingId}/polls`, {
+      token,
+      body: { question, options },
+    }),
+
+  listPolls: (meetingId: string, participantId: string) =>
+    request<PollResponse[]>(`/meetings/${meetingId}/polls?participant_id=${participantId}`, {
+      method: "GET",
+    }),
+
+  votePoll: (meetingId: string, pollId: string, participantId: string, optionIndex: number) =>
+    request<void>(`/meetings/${meetingId}/polls/${pollId}/vote`, {
+      body: { participant_id: participantId, option_index: optionIndex },
+    }),
+
+  closePoll: (meetingId: string, pollId: string, token: string) =>
+    request<PollResponse>(`/meetings/${meetingId}/polls/${pollId}/close`, {
+      method: "POST",
+      token,
+    }),
+
+  getPollResults: (meetingId: string, pollId: string, participantId: string) =>
+    request<PollResultsResponse>(
+      `/meetings/${meetingId}/polls/${pollId}/results?participant_id=${participantId}`,
+      { method: "GET" }
+    ),
+
+  // --- Q&A — ask/list/upvote are public given a valid participant_id;
+  // answer/dismiss are host-only (token) ---
+  askQuestion: (meetingId: string, participantId: string, body: string) =>
+    request<QuestionResponse>(`/meetings/${meetingId}/questions`, {
+      body: { participant_id: participantId, body },
+    }),
+
+  listQuestions: (meetingId: string, participantId: string) =>
+    request<QuestionResponse[]>(
+      `/meetings/${meetingId}/questions?participant_id=${participantId}`,
+      { method: "GET" }
+    ),
+
+  upvoteQuestion: (meetingId: string, questionId: string, participantId: string) =>
+    request<QuestionResponse>(
+      `/meetings/${meetingId}/questions/${questionId}/upvote?participant_id=${participantId}`,
+      { method: "POST" }
+    ),
+
+  answerQuestion: (meetingId: string, questionId: string, token: string) =>
+    request<QuestionResponse>(`/meetings/${meetingId}/questions/${questionId}/answer`, {
+      method: "POST",
+      token,
+    }),
+
+  dismissQuestion: (meetingId: string, questionId: string, token: string) =>
+    request<QuestionResponse>(`/meetings/${meetingId}/questions/${questionId}/dismiss`, {
+      method: "POST",
+      token,
     }),
 };
 

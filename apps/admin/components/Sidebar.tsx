@@ -24,6 +24,12 @@ const NAV_ITEMS: { href: string; label: string; permission: Permission }[] = [
     permission: "billing_plans:view",
   },
   {
+    href: "/live-meetings",
+    label: "Live Meetings",
+    permission: "meetings_governance:view",
+  },
+  { href: "/revenue", label: "Revenue", permission: "revenue:view" },
+  {
     href: "/data-requests",
     label: "Data Subject Requests",
     permission: "data_subject_requests:view",
@@ -35,14 +41,14 @@ export function Sidebar() {
   const { role, email, logout } = useAuth();
 
   return (
-    <aside className="flex h-screen w-64 flex-col border-r border-border bg-surface">
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface">
       <div className="shrink-0 border-b border-border px-5 py-5">
         <p className="font-display text-lg font-semibold tracking-wide text-text-primary">
           DITSALA
         </p>
         <p className="text-xs text-text-tertiary">Admin</p>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <nav className="flex flex-col gap-0.5 p-3">
           {NAV_ITEMS.filter((item) => role && roleHasPermission(role, item.permission)).map(
             (item) => {

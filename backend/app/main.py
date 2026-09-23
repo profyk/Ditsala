@@ -11,6 +11,8 @@ from app.api.v1.routers import (
     admin_auth,
     admin_billing,
     admin_kyc,
+    admin_meetings,
+    admin_revenue,
     auth,
     billing,
     calls,
@@ -84,6 +86,8 @@ app.include_router(admin_auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(admin_kyc.router, prefix="/api/v1")
 app.include_router(admin_billing.router, prefix="/api/v1")
+app.include_router(admin_meetings.router, prefix="/api/v1")
+app.include_router(admin_revenue.router, prefix="/api/v1")
 app.include_router(recovery.router, prefix="/api/v1")
 app.include_router(account.router, prefix="/api/v1")
 app.include_router(meetings.router, prefix="/api/v1")

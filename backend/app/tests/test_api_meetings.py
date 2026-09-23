@@ -297,21 +297,36 @@ async def test_host_can_mute_and_remove_a_participant(
 async def test_chat_poll_and_question_endpoints(
     client: AsyncClient, session: AsyncSession
 ) -> None:
+    """Chat/polls/questions are public-given-a-participant_id (not
+    CurrentUserDep) — apps/meet's web client only ever has a guest or
+    host-link session, never a real DITSALA access token, so every one
+    of these needs to work from just a participant_id. See
+    test_guest_can_set_conference_language_and_translate_chat for the
+    same reasoning applied to multilingual chat."""
     host = await _make_active_user(session)
     other = await _make_active_user(session)
     r = await client.post(
         "/api/v1/meetings", json={"title": "Town hall"}, headers=_bearer_for(host)
     )
     meeting_id = r.json()["id"]
-    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other))
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(host)
+    )
+    host_participant_id = r.json()["participant_id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    other_participant_id = r.json()["participant_id"]
 
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/messages",
-        json={"body": "Hello!"},
-        headers=_bearer_for(host),
+        json={"participant_id": host_participant_id, "body": "Hello!"},
     )
     assert r.status_code == 201, r.text
-    r = await client.get(f"/api/v1/meetings/{meeting_id}/messages", headers=_bearer_for(other))
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/messages",
+        params={"participant_id": other_participant_id},
+    )
     assert r.status_code == 200, r.text
     assert [m["body"] for m in r.json()] == ["Hello!"]
 
@@ -324,20 +339,19 @@ async def test_chat_poll_and_question_endpoints(
     poll_id = r.json()["id"]
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/vote",
-        json={"option_index": 1},
-        headers=_bearer_for(other),
+        json={"participant_id": other_participant_id, "option_index": 1},
     )
     assert r.status_code == 204, r.text
     r = await client.get(
-        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/results", headers=_bearer_for(host)
+        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/results",
+        params={"participant_id": host_participant_id},
     )
     assert r.status_code == 200, r.text
     assert r.json()["counts"] == {"0": 0, "1": 1}
 
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/questions",
-        json={"body": "What's next?"},
-        headers=_bearer_for(other),
+        json={"participant_id": other_participant_id, "body": "What's next?"},
     )
     assert r.status_code == 201, r.text
     question_id = r.json()["id"]
@@ -400,7 +414,7 @@ async def test_breakout_rooms_end_to_end(client: AsyncClient, session: AsyncSess
 
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/join",
-        headers=_bearer_for(other),
+        params={"participant_id": participant_id},
     )
     assert r.status_code == 200, r.text
     assert r.json()["token"]
@@ -631,6 +645,216 @@ async def test_waiting_room_admit_and_extend_work_via_the_host_token(
     assert r.json()["duration_extended_minutes"] == 15
 
 
+async def test_full_host_toolset_works_via_the_host_token(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The exact regression apps/meet's host was hitting: lock, mute,
+    promote, remove, polls, breakout rooms, and meeting analytics all
+    used to require CurrentUserDep (a real DITSALA access token) — which
+    apps/meet, a separate origin with no session of its own, never has.
+    Every one of these now goes through MeetingActorDep instead, so the
+    host-link token alone (exactly what apps/meet actually holds) must
+    be able to drive all of them, with no Authorization header carrying
+    a real access token anywhere in this test."""
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Full toolset"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/host-link", headers=_bearer_for(host)
+    )
+    host_token_headers = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(other)
+    )
+    participant_id = r.json()["participant_id"]
+
+    # Full participant list (unlike /waiting-room, includes admitted ones)
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/participants", headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert {p["id"] for p in r.json()} >= {participant_id}
+
+    # Lock / unlock
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/lock", json={"locked": True}, headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["locked_at"] is not None
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/lock", json={"locked": False}, headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["locked_at"] is None
+
+    # Mute / promote / remove
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/mute",
+        json={"muted": True},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 204, r.text
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/promote",
+        headers=host_token_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "co_host"
+
+    # Polls: create + close via the host token
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls",
+        json={"question": "Ship it?", "options": ["Yes", "No"]},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 201, r.text
+    poll_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/close", headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["closed_at"] is not None
+
+    # Breakout rooms: create + assign + close via the host token
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms",
+        json={"names": ["Room 1"]},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 201, r.text
+    breakout_room_id = r.json()[0]["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/assign",
+        json={"participant_id": participant_id},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 204, r.text
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/close", headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert all(room["closed_at"] is not None for room in r.json())
+
+    # Attendance analytics — the plan-gated tool this session's own new
+    # feature added; DEFAULT_ENTITLEMENTS (this test's MeetingService has
+    # no PlanService wired) is permissive, so it should just work.
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/analytics", headers=host_token_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["unique_attendees"] >= 1
+
+    # End the meeting itself — also host-only, also via the host token.
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/end", headers=host_token_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ended"
+
+
+async def test_guest_can_use_reactions_chat_polls_questions_and_breakout_rooms(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """The other half of the same fix: a guest (no DITSALA account, no
+    JWT, nothing but the participant_id guest-join handed back) must be
+    able to actually use every one of these tools — previously every one
+    of them required CurrentUserDep and would have 401'd a guest outright."""
+    host = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Open to guests"}, headers=_bearer_for(host)
+    )
+    meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Visitor"},
+    )
+    guest_id = r.json()["participant_id"]
+
+    # Reactions and raise-hand — no Authorization header at all.
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/reactions",
+        json={"participant_id": guest_id, "reaction": "👍"},
+    )
+    assert r.status_code == 204, r.text
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/raise-hand",
+        json={"participant_id": guest_id, "raised": True},
+    )
+    assert r.status_code == 204, r.text
+
+    # Chat
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages",
+        json={"participant_id": guest_id, "body": "Hi from a guest!"},
+    )
+    assert r.status_code == 201, r.text
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/messages", params={"participant_id": guest_id}
+    )
+    assert r.status_code == 200, r.text
+    assert [m["body"] for m in r.json()] == ["Hi from a guest!"]
+
+    # Polls: host creates (via a real token), guest votes and reads results.
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls",
+        json={"question": "Coffee or tea?", "options": ["Coffee", "Tea"]},
+        headers=_bearer_for(host),
+    )
+    poll_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/polls/{poll_id}/vote",
+        json={"participant_id": guest_id, "option_index": 0},
+    )
+    assert r.status_code == 204, r.text
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/polls", params={"participant_id": guest_id}
+    )
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+
+    # Q&A
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/questions",
+        json={"participant_id": guest_id, "body": "Will there be a recording?"},
+    )
+    assert r.status_code == 201, r.text
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/questions", params={"participant_id": guest_id}
+    )
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/questions/{r.json()[0]['id']}/upvote",
+        params={"participant_id": guest_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["upvote_count"] == 1
+
+    # Breakout rooms: host creates + assigns (real token), guest joins with
+    # nothing but their own participant_id.
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms",
+        json={"names": ["Guests"]},
+        headers=_bearer_for(host),
+    )
+    breakout_room_id = r.json()[0]["id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/assign",
+        json={"participant_id": guest_id},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 204, r.text
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/breakout-rooms/{breakout_room_id}/join",
+        params={"participant_id": guest_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["token"]
+
+
 async def test_host_join_rejects_token_for_a_different_meeting(
     client: AsyncClient, session: AsyncSession
 ) -> None:
@@ -721,7 +945,8 @@ async def test_guest_can_set_conference_language_and_translate_chat(
     headers = _bearer_for(host)
     r = await client.post("/api/v1/meetings", json={"title": "Global Standup"}, headers=headers)
     meeting_id = r.json()["id"]
-    await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=headers)
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=headers)
+    host_participant_id = r.json()["participant_id"]
 
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/guest-join",
@@ -744,8 +969,7 @@ async def test_guest_can_set_conference_language_and_translate_chat(
 
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/messages",
-        json={"body": "Hello, nice to meet you."},
-        headers=headers,
+        json={"participant_id": host_participant_id, "body": "Hello, nice to meet you."},
     )
     assert r.status_code == 201, r.text
     message_id = r.json()["id"]

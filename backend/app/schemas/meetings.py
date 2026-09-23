@@ -109,10 +109,15 @@ class LockMeetingRequest(BaseModel):
 
 
 class ReactionRequest(BaseModel):
+    # Public given a valid participant_id, same trust model as
+    # `list_documents`/`set_participant_language` — a guest has no JWT,
+    # so the request itself carries which participant this is from.
+    participant_id: uuid.UUID
     reaction: str = Field(min_length=1, max_length=32)
 
 
 class RaiseHandRequest(BaseModel):
+    participant_id: uuid.UUID
     raised: bool
 
 
@@ -138,6 +143,8 @@ class RecordingResponse(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
+    # Public given a valid participant_id — same reasoning as ReactionRequest.
+    participant_id: uuid.UUID
     body: str = Field(min_length=1, max_length=4000)
     recipient_participant_id: uuid.UUID | None = None
 
@@ -182,6 +189,8 @@ class CreatePollRequest(BaseModel):
 
 
 class VotePollRequest(BaseModel):
+    # Public given a valid participant_id — same reasoning as ReactionRequest.
+    participant_id: uuid.UUID
     option_index: int = Field(ge=0)
 
 
@@ -203,6 +212,8 @@ class PollResultsResponse(BaseModel):
 
 
 class AskQuestionRequest(BaseModel):
+    # Public given a valid participant_id — same reasoning as ReactionRequest.
+    participant_id: uuid.UUID
     body: str = Field(min_length=1, max_length=2000)
 
 

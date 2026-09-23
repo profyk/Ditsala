@@ -71,6 +71,22 @@ class UserRepository(Repository[User]):
         )
         return result.scalar_one()
 
+    async def count_grouped_by_account_tier(self) -> dict[str, int]:
+        """Backs the admin revenue overview (`RevenueService`) — how many
+        accounts currently resolve to each messaging-tier plan code."""
+        result = await self.session.execute(
+            select(User.account_tier, func.count()).group_by(User.account_tier)
+        )
+        return {tier: count for tier, count in result.all()}
+
+    async def count_grouped_by_conference_plan(self) -> dict[str, int]:
+        """Same as `count_grouped_by_account_tier`, for the separate
+        Conference Room plan axis (`users.conference_plan_code`)."""
+        result = await self.session.execute(
+            select(User.conference_plan_code, func.count()).group_by(User.conference_plan_code)
+        )
+        return {code: count for code, count in result.all()}
+
     async def count_created_since(self, since: datetime) -> int:
         # users.created_at (TimestampMixin) is `timestamp without time zone`
         # — unlike purpose-built columns such as locked_until, it was never

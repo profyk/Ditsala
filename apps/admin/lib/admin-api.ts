@@ -373,3 +373,101 @@ export const kycApi = {
   requestRecapture: (token: string, userId: string, reason: string) =>
     request<UserSummary>(`/admin/kyc/${userId}/request-recapture`, { token, body: { reason } }),
 };
+
+// --- meetings governance (live/scheduled meetings, platform-wide) ---
+
+export interface AdminMeeting {
+  id: string;
+  host_user_id: string;
+  title: string;
+  meeting_type: string;
+  status: string;
+  scheduled_start_at: string | null;
+  scheduled_duration_minutes: number | null;
+  actual_start_at: string | null;
+  duration_extended_minutes: number;
+  max_participants: number | null;
+  waiting_room_enabled: boolean;
+  locked_at: string | null;
+  active_participant_count: number;
+}
+
+export interface AdminMeetingParticipant {
+  id: string;
+  user_id: string | null;
+  guest_display_name: string | null;
+  role: string;
+  admission_status: string;
+  joined_at: string | null;
+  left_at: string | null;
+}
+
+export interface AdminMeetingAnalytics {
+  meeting_id: string;
+  as_of: string;
+  total_participant_rows: number;
+  unique_attendees: number;
+  guest_attendees: number;
+  total_attendance_seconds: number;
+  average_attendance_seconds: number;
+  peak_concurrent_attendees: number;
+  attendees: {
+    participant_id: string;
+    display_name: string;
+    role: string;
+    is_guest: boolean;
+    joined_at: string | null;
+    left_at: string | null;
+    attended_seconds: number;
+  }[];
+}
+
+export const meetingsGovernanceApi = {
+  list: (token: string) =>
+    request<AdminMeeting[]>("/admin/meetings", { method: "GET", token }),
+
+  listParticipants: (token: string, meetingId: string) =>
+    request<AdminMeetingParticipant[]>(`/admin/meetings/${meetingId}/participants`, {
+      method: "GET",
+      token,
+    }),
+
+  getAnalytics: (token: string, meetingId: string) =>
+    request<AdminMeetingAnalytics>(`/admin/meetings/${meetingId}/analytics`, {
+      method: "GET",
+      token,
+    }),
+
+  extend: (token: string, meetingId: string, additionalMinutes: number, reason: string) =>
+    request<AdminMeeting>(`/admin/meetings/${meetingId}/extend`, {
+      token,
+      body: { additional_minutes: additionalMinutes, reason },
+    }),
+
+  end: (token: string, meetingId: string, reason: string) =>
+    request<AdminMeeting>(`/admin/meetings/${meetingId}/end`, { token, body: { reason } }),
+};
+
+// --- revenue / subscriptions overview ---
+
+export interface PlanRevenueLine {
+  plan_id: string;
+  plan_code: string;
+  plan_name: string;
+  product: string;
+  subscriber_count: number;
+  price_amount_cents: number | null;
+  price_currency: string | null;
+  estimated_monthly_cents: number;
+}
+
+export interface RevenueOverview {
+  lines: PlanRevenueLine[];
+  total_estimated_monthly_cents: number;
+  total_subscribers: number;
+}
+
+export const revenueApi = {
+  getOverview: (token: string) =>
+    request<RevenueOverview>("/admin/revenue", { method: "GET", token }),
+};

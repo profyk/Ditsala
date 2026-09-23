@@ -8,12 +8,14 @@ from typing import Annotated, Any
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 
+from app.api.v1.deps import MeetingServiceDep, SessionDep, SettingsDep
 from app.api.v1.deps import PlanServiceDep as PlanServiceDep  # re-exported, see below
-from app.api.v1.deps import SessionDep, SettingsDep
 from app.core.security import decode_admin_access_token
 from app.domain.admin.auth_service import AdminAuthService
 from app.domain.admin.kyc_review_service import KycReviewService
+from app.domain.admin.meetings_governance import AdminMeetingGovernanceService
 from app.domain.admin.rbac import Permission
+from app.domain.admin.revenue import RevenueService
 from app.domain.admin.service import AdminService
 from app.models.admin import AdminUser
 from app.repositories.admin import (
@@ -25,6 +27,7 @@ from app.repositories.admin import (
 from app.repositories.circle import InvitationRepository, ReportRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
+from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
 from app.repositories.users import UserRepository
 
 
@@ -74,6 +77,33 @@ KycReviewServiceDep = Annotated[KycReviewService, Depends(get_kyc_review_service
 # needs it too, and admin_deps.py already imports from deps.py, never the
 # reverse) — imported above and re-exported so every existing
 # `from app.api.v1.admin_deps import PlanServiceDep` call site keeps working.
+
+
+async def get_admin_meeting_governance_service(
+    session: SessionDep, meeting_service: MeetingServiceDep
+) -> AdminMeetingGovernanceService:
+    """Reuses the exact same `MeetingService` instance `deps.py` already
+    builds (real `RoomProvider`, `PlanService`, etc.) rather than
+    re-deriving that construction here — the governance service's own
+    extend/end mutations delegate to it."""
+    return AdminMeetingGovernanceService(
+        meetings=MeetingRepository(session),
+        participants=MeetingParticipantRepository(session),
+        meeting_service=meeting_service,
+        audit_log=AuditLogRepository(session),
+    )
+
+
+AdminMeetingGovernanceServiceDep = Annotated[
+    AdminMeetingGovernanceService, Depends(get_admin_meeting_governance_service)
+]
+
+
+async def get_revenue_service(session: SessionDep, plans: PlanServiceDep) -> RevenueService:
+    return RevenueService(plans=plans, users=UserRepository(session))
+
+
+RevenueServiceDep = Annotated[RevenueService, Depends(get_revenue_service)]
 
 
 async def get_current_admin(

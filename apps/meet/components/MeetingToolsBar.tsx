@@ -2,9 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { ParticipantsPanel } from "@/components/ParticipantsPanel";
+import { PollsPanel } from "@/components/PollsPanel";
+import { QuestionsPanel } from "@/components/QuestionsPanel";
+import { ReactionsBar } from "@/components/ReactionsBar";
 import {
   ApiError,
   type MeetingDocumentResponse,
+  type MeetingResponse,
   type ParticipantResponse,
   type RecordingResponse,
   meetingsApi,
@@ -13,12 +18,13 @@ import {
 
 /**
  * Real in-call tools, rendered alongside LiveKit's stock <VideoConference />
- * rather than replacing it (docs/DITSALA_MEET_SPEC.md §9) — recording for
- * the host/co-host, and a documents panel every participant (including
- * guests with no DITSALA account) can see. `hostToken` is the short-lived
- * meet-host token from the `?hj=` handoff; it's the only bearer credential
- * this page ever has, since apps/meet has no session of its own — recording
- * controls simply don't render without it.
+ * rather than replacing it (docs/DITSALA_MEET_SPEC.md §9) — recording,
+ * lock, participants/polls/Q&A panels for the host/co-host, a documents
+ * panel and reactions/raise-hand for every participant (guests included).
+ * `hostToken` is the short-lived meet-host token from the `?hj=` handoff;
+ * it's the only bearer credential this page ever has, since apps/meet has
+ * no session of its own — every host-only control simply doesn't render
+ * without it.
  */
 
 interface MeetingToolsBarProps {
@@ -28,46 +34,197 @@ interface MeetingToolsBarProps {
   hostToken: string | null;
 }
 
+type Panel = "none" | "documents" | "waiting-room" | "participants" | "polls" | "questions";
+
 const HOST_ROLES = new Set(["host", "co_host"]);
 
 export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: MeetingToolsBarProps) {
   const isHost = HOST_ROLES.has(role) && hostToken !== null;
-  const [panel, setPanel] = useState<"none" | "documents" | "waiting-room">("none");
+  const [panel, setPanel] = useState<Panel>("none");
+
+  function toggle(next: Panel) {
+    setPanel((current) => (current === next ? "none" : next));
+  }
 
   return (
-    <div className="fixed right-3 top-3 z-50 flex flex-col items-end gap-2">
-      {isHost ? <LiveCountdown meetingId={meetingId} hostToken={hostToken!} /> : null}
-      <div className="flex gap-2">
-        {isHost ? <RecordingControl meetingId={meetingId} hostToken={hostToken!} /> : null}
+    <>
+      <div className="fixed right-3 top-3 z-50 flex flex-col items-end gap-2">
         {isHost ? (
-          <button
-            type="button"
-            onClick={() => setPanel(panel === "waiting-room" ? "none" : "waiting-room")}
-            className="rounded bg-surface px-3 py-1.5 text-sm text-text-primary border border-border hover:bg-surface-raised"
-          >
-            Waiting room
-          </button>
+          <div className="flex items-center gap-2">
+            <LiveCountdown meetingId={meetingId} hostToken={hostToken!} />
+            <LockControl meetingId={meetingId} hostToken={hostToken!} />
+            <EndMeetingControl meetingId={meetingId} hostToken={hostToken!} />
+          </div>
         ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          {isHost ? <RecordingControl meetingId={meetingId} hostToken={hostToken!} /> : null}
+          {isHost ? (
+            <ToolButton active={panel === "waiting-room"} onClick={() => toggle("waiting-room")}>
+              Waiting room
+            </ToolButton>
+          ) : null}
+          {isHost ? (
+            <ToolButton active={panel === "participants"} onClick={() => toggle("participants")}>
+              Participants
+            </ToolButton>
+          ) : null}
+          <ToolButton active={panel === "polls"} onClick={() => toggle("polls")}>
+            Polls
+          </ToolButton>
+          <ToolButton active={panel === "questions"} onClick={() => toggle("questions")}>
+            Q&amp;A
+          </ToolButton>
+          <ToolButton active={panel === "documents"} onClick={() => toggle("documents")}>
+            Documents
+          </ToolButton>
+        </div>
+        {panel === "documents" ? (
+          <DocumentsPanel
+            meetingId={meetingId}
+            participantId={participantId}
+            canUpload={isHost}
+            hostToken={hostToken}
+          />
+        ) : null}
+        {panel === "waiting-room" && isHost ? (
+          <WaitingRoomPanel meetingId={meetingId} hostToken={hostToken!} />
+        ) : null}
+        {panel === "participants" && isHost ? (
+          <ParticipantsPanel
+            meetingId={meetingId}
+            hostToken={hostToken!}
+            selfParticipantId={participantId}
+          />
+        ) : null}
+        {panel === "polls" ? (
+          <PollsPanel
+            meetingId={meetingId}
+            participantId={participantId}
+            isHost={isHost}
+            hostToken={hostToken}
+          />
+        ) : null}
+        {panel === "questions" ? (
+          <QuestionsPanel
+            meetingId={meetingId}
+            participantId={participantId}
+            isHost={isHost}
+            hostToken={hostToken}
+          />
+        ) : null}
+      </div>
+      <ReactionsBar meetingId={meetingId} participantId={participantId} />
+    </>
+  );
+}
+
+function ToolButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded px-3 py-1.5 text-sm border ${
+        active
+          ? "bg-accent-muted text-accent border-accent"
+          : "bg-surface text-text-primary border-border hover:bg-surface-raised"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LockControl({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  const [locked, setLocked] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      const meeting: MeetingResponse = await meetingsApi.lockMeeting(
+        meetingId,
+        !(locked ?? false),
+        hostToken
+      );
+      setLocked(meeting.locked_at !== null);
+    } catch {
+      // Leaves the existing state showing — the host can just retry.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={busy}
+      title={locked ? "Unlock meeting" : "Lock meeting"}
+      className={`rounded px-3 py-1.5 text-sm border disabled:opacity-50 ${
+        locked
+          ? "bg-warning/10 text-warning border-warning"
+          : "bg-surface text-text-primary border-border hover:bg-surface-raised"
+      }`}
+    >
+      {locked ? "🔒 Locked" : "🔓 Lock"}
+    </button>
+  );
+}
+
+function EndMeetingControl({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function end() {
+    setBusy(true);
+    try {
+      await meetingsApi.endMeeting(meetingId, hostToken);
+      window.location.reload();
+    } catch {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-1 rounded border border-danger bg-danger/10 px-2 py-1">
+        <span className="text-xs text-danger">End for everyone?</span>
         <button
           type="button"
-          onClick={() => setPanel(panel === "documents" ? "none" : "documents")}
-          className="rounded bg-surface px-3 py-1.5 text-sm text-text-primary border border-border hover:bg-surface-raised"
+          onClick={end}
+          disabled={busy}
+          className="rounded bg-danger px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
         >
-          Documents
+          {busy ? "…" : "Yes"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirming(false)}
+          className="rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface-raised"
+        >
+          No
         </button>
       </div>
-      {panel === "documents" ? (
-        <DocumentsPanel
-          meetingId={meetingId}
-          participantId={participantId}
-          canUpload={isHost}
-          hostToken={hostToken}
-        />
-      ) : null}
-      {panel === "waiting-room" && isHost ? (
-        <WaitingRoomPanel meetingId={meetingId} hostToken={hostToken!} />
-      ) : null}
-    </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      className="rounded bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+    >
+      End meeting
+    </button>
   );
 }
 

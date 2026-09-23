@@ -31,3 +31,6 @@ class Permission(StrEnum):
     ADMIN_USERS_ACTION = "admin_users:action"
     BILLING_PLANS_VIEW = "billing_plans:view"
     BILLING_PLANS_ACTION = "billing_plans:action"
+    MEETINGS_GOVERNANCE_VIEW = "meetings_governance:view"
+    MEETINGS_GOVERNANCE_ACTION = "meetings_governance:action"
+    REVENUE_VIEW = "revenue:view"

@@ -38,6 +38,19 @@ class MeetingRepository(Repository[Meeting]):
         )
         return list(result.scalars().all())
 
+    async def list_by_statuses(self, statuses: list[str], *, limit: int = 200) -> list[Meeting]:
+        """Platform-wide, not scoped to any one host — backs the admin
+        meeting-governance view (`AdminMeetingGovernanceService`), the
+        first place in this codebase that needs to see meetings across
+        every host rather than just "my own"."""
+        result = await self.session.execute(
+            self._select()
+            .where(Meeting.status.in_(statuses))
+            .order_by(Meeting.scheduled_start_at.asc().nulls_last(), Meeting.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def list_due_to_start(self, now: datetime) -> list[Meeting]:
         """Conference Room kickoff prompt — meetings whose scheduled start
         has arrived (or passed) but that aren't ended/cancelled yet, for

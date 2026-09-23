@@ -25,7 +25,10 @@ export type Permission =
   | "admin_users:view"
   | "admin_users:action"
   | "billing_plans:view"
-  | "billing_plans:action";
+  | "billing_plans:action"
+  | "meetings_governance:view"
+  | "meetings_governance:action"
+  | "revenue:view";
 
 const ALL_PERMISSIONS: Permission[] = [
   "dashboard:view",
@@ -47,6 +50,9 @@ const ALL_PERMISSIONS: Permission[] = [
   "admin_users:action",
   "billing_plans:view",
   "billing_plans:action",
+  "meetings_governance:view",
+  "meetings_governance:action",
+  "revenue:view",
 ];
 
 export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
@@ -61,6 +67,8 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "security:view",
     "data_subject_requests:view",
     "data_subject_requests:action",
+    "meetings_governance:view",
+    "meetings_governance:action",
   ],
   support_readonly: ["dashboard:view", "users:view"],
 };

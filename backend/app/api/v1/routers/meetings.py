@@ -87,14 +87,31 @@ def _join_response(result: JoinResult) -> JoinMeetingResponse:
 
 
 async def _current_participant(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, user_id: uuid.UUID, service: MeetingServiceDep
 ) -> MeetingParticipant:
-    participant = await service.get_participant_for_user(meeting_id=meeting_id, user_id=user.id)
+    """Takes a bare `user_id` (not a `CurrentUserDep`-typed `User`) so it
+    works from both a real access token (`CurrentUserDep`'s `.id`) and a
+    `MeetingActorDep` resolution (host or meet-host-token holder), which
+    is a bare `uuid.UUID` already."""
+    participant = await service.get_participant_for_user(meeting_id=meeting_id, user_id=user_id)
     if participant is None:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "You are not a participant in this meeting."
         )
     return participant
+
+
+async def _public_participant(
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
+) -> MeetingParticipant:
+    """The guest-facing counterpart to `_current_participant` above —
+    public given a valid participant_id, no JWT required (a guest has no
+    DITSALA account). See `MeetingService.assert_participant_in_meeting`'s
+    docstring for the trust model this mirrors."""
+    try:
+        return await service.assert_participant_in_meeting(meeting_id, participant_id)
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
 
 
 @router.post("", response_model=MeetingResponse, status_code=201)
@@ -268,10 +285,15 @@ async def leave_meeting(
 
 @router.post("/{meeting_id}/end", response_model=MeetingResponse)
 async def end_meeting(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> MeetingResponse:
+    """Host-only, via either a real access token or the meet-host token —
+    same reasoning as recording/waiting-room/extend: a host ending their
+    own live meeting from apps/meet (an "End for everyone" button) only
+    ever has one of those two credentials, never a `CurrentUserDep`
+    session."""
     try:
-        meeting = await service.end_meeting(meeting_id=meeting_id, acting_user_id=user.id)
+        meeting = await service.end_meeting(meeting_id=meeting_id, acting_user_id=acting_user_id)
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return MeetingResponse.model_validate(meeting)
@@ -309,12 +331,12 @@ async def delete_meeting(
 async def invite_co_host(
     meeting_id: uuid.UUID,
     body: InviteCoHostRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> ParticipantResponse:
     try:
         participant = await service.invite_co_host(
-            meeting_id=meeting_id, acting_user_id=user.id, invitee_phone=body.phone
+            meeting_id=meeting_id, acting_user_id=acting_user_id, invitee_phone=body.phone
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -339,6 +361,23 @@ async def list_waiting_participants(
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return [ParticipantResponse.model_validate(p) for p in waiting]
+
+
+@router.get("/{meeting_id}/participants", response_model=list[ParticipantResponse])
+async def list_participants(
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
+) -> list[ParticipantResponse]:
+    """Host-only — every participant regardless of admission status, for
+    a moderation panel (mute/remove/promote). See
+    `MeetingService.list_participants`'s docstring for why this is a
+    separate endpoint from `/waiting-room`."""
+    try:
+        participants = await service.list_participants(
+            meeting_id=meeting_id, acting_user_id=acting_user_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return [ParticipantResponse.model_validate(p) for p in participants]
 
 
 @router.post(
@@ -366,12 +405,12 @@ async def admit_participant(
 async def remove_participant(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> None:
     try:
         await service.remove_participant(
-            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -383,12 +422,12 @@ async def remove_participant(
 async def promote_co_host(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> ParticipantResponse:
     try:
         participant = await service.promote_co_host(
-            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -400,13 +439,13 @@ async def mute_participant(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
     body: MuteParticipantRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> None:
     try:
         await service.set_participant_muted(
             meeting_id=meeting_id,
-            acting_user_id=user.id,
+            acting_user_id=acting_user_id,
             participant_id=participant_id,
             muted=body.muted,
         )
@@ -418,12 +457,12 @@ async def mute_participant(
 async def lock_meeting(
     meeting_id: uuid.UUID,
     body: LockMeetingRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> MeetingResponse:
     try:
         meeting = await service.set_locked(
-            meeting_id=meeting_id, acting_user_id=user.id, locked=body.locked
+            meeting_id=meeting_id, acting_user_id=acting_user_id, locked=body.locked
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -437,10 +476,12 @@ async def lock_meeting(
 async def send_reaction(
     meeting_id: uuid.UUID,
     body: ReactionRequest,
-    user: CurrentUserDep,
     service: MeetingServiceDep,
 ) -> None:
-    participant = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id (`body.participant_id`) —
+    every participant, guests included, can react. See
+    `_public_participant`'s docstring."""
+    participant = await _public_participant(meeting_id, body.participant_id, service)
     await service.send_reaction(
         meeting_id=meeting_id, participant=participant, reaction=body.reaction
     )
@@ -450,10 +491,10 @@ async def send_reaction(
 async def raise_hand(
     meeting_id: uuid.UUID,
     body: RaiseHandRequest,
-    user: CurrentUserDep,
     service: MeetingServiceDep,
 ) -> None:
-    participant = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id — same reasoning as `send_reaction`."""
+    participant = await _public_participant(meeting_id, body.participant_id, service)
     await service.set_hand_raised(
         meeting_id=meeting_id, participant=participant, raised=body.raised
     )
@@ -587,10 +628,11 @@ async def delete_document(
 async def send_message(
     meeting_id: uuid.UUID,
     body: SendMessageRequest,
-    user: CurrentUserDep,
     service: MeetingServiceDep,
 ) -> MessageResponse:
-    sender = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id (`body.participant_id`) — a
+    guest has no JWT, and this chat is meant for exactly them too."""
+    sender = await _public_participant(meeting_id, body.participant_id, service)
     try:
         message = await service.send_message(
             meeting_id=meeting_id,
@@ -605,10 +647,11 @@ async def send_message(
 
 @router.get("/{meeting_id}/messages", response_model=list[MessageResponse])
 async def list_messages(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
 ) -> list[MessageResponse]:
-    participant = await _current_participant(meeting_id, user, service)
-    messages = await service.list_messages(meeting_id=meeting_id, participant_id=participant.id)
+    """Public given a valid participant_id, same as `send_message`."""
+    await _public_participant(meeting_id, participant_id, service)
+    messages = await service.list_messages(meeting_id=meeting_id, participant_id=participant_id)
     return [MessageResponse.model_validate(m) for m in messages]
 
 
@@ -682,14 +725,17 @@ async def translate_message(
 async def create_poll(
     meeting_id: uuid.UUID,
     body: CreatePollRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> PollResponse:
-    creator = await _current_participant(meeting_id, user, service)
+    """Host/co-host only — via either a real access token or the
+    meet-host token (`MeetingActorDep`), matching every other host
+    action apps/meet needs to call."""
+    creator = await _current_participant(meeting_id, acting_user_id, service)
     try:
         poll = await service.create_poll(
             meeting_id=meeting_id,
-            acting_user_id=user.id,
+            acting_user_id=acting_user_id,
             creator=creator,
             question=body.question,
             options=body.options,
@@ -701,8 +747,11 @@ async def create_poll(
 
 @router.get("/{meeting_id}/polls", response_model=list[PollResponse])
 async def list_polls(
-    meeting_id: uuid.UUID, _user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
 ) -> list[PollResponse]:
+    """Public given a valid participant_id — any participant, guests
+    included, needs to see and vote on a meeting's polls."""
+    await _public_participant(meeting_id, participant_id, service)
     polls = await service.list_polls(meeting_id=meeting_id)
     return [PollResponse.model_validate(p) for p in polls]
 
@@ -712,10 +761,10 @@ async def vote_poll(
     meeting_id: uuid.UUID,
     poll_id: uuid.UUID,
     body: VotePollRequest,
-    user: CurrentUserDep,
     service: MeetingServiceDep,
 ) -> None:
-    voter = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id (`body.participant_id`)."""
+    voter = await _public_participant(meeting_id, body.participant_id, service)
     try:
         await service.vote_poll(poll_id=poll_id, voter=voter, option_index=body.option_index)
     except MeetingError as exc:
@@ -726,12 +775,12 @@ async def vote_poll(
 async def close_poll(
     meeting_id: uuid.UUID,
     poll_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> PollResponse:
     try:
         poll = await service.close_poll(
-            meeting_id=meeting_id, acting_user_id=user.id, poll_id=poll_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, poll_id=poll_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -742,9 +791,11 @@ async def close_poll(
 async def get_poll_results(
     meeting_id: uuid.UUID,
     poll_id: uuid.UUID,
-    _user: CurrentUserDep,
+    participant_id: uuid.UUID,
     service: MeetingServiceDep,
 ) -> PollResultsResponse:
+    """Public given a valid participant_id, same as `list_polls`."""
+    await _public_participant(meeting_id, participant_id, service)
     try:
         results = await service.get_poll_results(poll_id=poll_id)
     except MeetingError as exc:
@@ -761,18 +812,20 @@ async def get_poll_results(
 async def ask_question(
     meeting_id: uuid.UUID,
     body: AskQuestionRequest,
-    user: CurrentUserDep,
     service: MeetingServiceDep,
 ) -> QuestionResponse:
-    asker = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id (`body.participant_id`)."""
+    asker = await _public_participant(meeting_id, body.participant_id, service)
     question = await service.ask_question(meeting_id=meeting_id, asker=asker, body=body.body)
     return QuestionResponse.model_validate(question)
 
 
 @router.get("/{meeting_id}/questions", response_model=list[QuestionResponse])
 async def list_questions(
-    meeting_id: uuid.UUID, _user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
 ) -> list[QuestionResponse]:
+    """Public given a valid participant_id."""
+    await _public_participant(meeting_id, participant_id, service)
     questions = await service.list_questions(meeting_id=meeting_id)
     return [QuestionResponse.model_validate(q) for q in questions]
 
@@ -781,9 +834,13 @@ async def list_questions(
 async def upvote_question(
     meeting_id: uuid.UUID,
     question_id: uuid.UUID,
-    _user: CurrentUserDep,
+    participant_id: uuid.UUID,
     service: MeetingServiceDep,
 ) -> QuestionResponse:
+    """Public given a valid participant_id — previously accepted any
+    authenticated user regardless of meeting membership (the `_user`
+    param was unused); now actually scoped to this meeting's participants."""
+    await _public_participant(meeting_id, participant_id, service)
     try:
         question = await service.upvote_question(question_id=question_id)
     except MeetingError as exc:
@@ -795,12 +852,12 @@ async def upvote_question(
 async def answer_question(
     meeting_id: uuid.UUID,
     question_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> QuestionResponse:
     try:
         question = await service.answer_question(
-            meeting_id=meeting_id, acting_user_id=user.id, question_id=question_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, question_id=question_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -811,12 +868,12 @@ async def answer_question(
 async def dismiss_question(
     meeting_id: uuid.UUID,
     question_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> QuestionResponse:
     try:
         question = await service.dismiss_question(
-            meeting_id=meeting_id, acting_user_id=user.id, question_id=question_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, question_id=question_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -832,12 +889,12 @@ async def dismiss_question(
 async def create_breakout_rooms(
     meeting_id: uuid.UUID,
     body: CreateBreakoutRoomsRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> list[BreakoutRoomResponse]:
     try:
         rooms = await service.create_breakout_rooms(
-            meeting_id=meeting_id, acting_user_id=user.id, names=body.names
+            meeting_id=meeting_id, acting_user_id=acting_user_id, names=body.names
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -846,8 +903,11 @@ async def create_breakout_rooms(
 
 @router.get("/{meeting_id}/breakout-rooms", response_model=list[BreakoutRoomResponse])
 async def list_breakout_rooms(
-    meeting_id: uuid.UUID, _user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, participant_id: uuid.UUID, service: MeetingServiceDep
 ) -> list[BreakoutRoomResponse]:
+    """Public given a valid participant_id — every participant needs to
+    see which breakout room they've been assigned to."""
+    await _public_participant(meeting_id, participant_id, service)
     rooms = await service.list_breakout_rooms(meeting_id=meeting_id)
     return [BreakoutRoomResponse.model_validate(r) for r in rooms]
 
@@ -857,13 +917,13 @@ async def assign_to_breakout_room(
     meeting_id: uuid.UUID,
     breakout_room_id: uuid.UUID,
     body: AssignBreakoutRoomRequest,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> None:
     try:
         await service.assign_to_breakout_room(
             meeting_id=meeting_id,
-            acting_user_id=user.id,
+            acting_user_id=acting_user_id,
             breakout_room_id=breakout_room_id,
             participant_id=body.participant_id,
         )
@@ -877,10 +937,12 @@ async def assign_to_breakout_room(
 async def join_breakout_room(
     meeting_id: uuid.UUID,
     breakout_room_id: uuid.UUID,
-    user: CurrentUserDep,
+    participant_id: uuid.UUID,
     service: MeetingServiceDep,
 ) -> RoomAccessTokenResponse:
-    participant = await _current_participant(meeting_id, user, service)
+    """Public given a valid participant_id — a guest assigned to a
+    breakout room has no JWT to join it with otherwise."""
+    participant = await _public_participant(meeting_id, participant_id, service)
     try:
         token = await service.join_breakout_room(
             meeting_id=meeting_id, breakout_room_id=breakout_room_id, participant=participant
@@ -892,10 +954,12 @@ async def join_breakout_room(
 
 @router.post("/{meeting_id}/breakout-rooms/close", response_model=list[BreakoutRoomResponse])
 async def close_breakout_rooms(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> list[BreakoutRoomResponse]:
     try:
-        rooms = await service.close_breakout_rooms(meeting_id=meeting_id, acting_user_id=user.id)
+        rooms = await service.close_breakout_rooms(
+            meeting_id=meeting_id, acting_user_id=acting_user_id
+        )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
     return [BreakoutRoomResponse.model_validate(r) for r in rooms]
@@ -908,11 +972,16 @@ async def close_breakout_rooms(
 
 @router.get("/{meeting_id}/analytics", response_model=MeetingAnalyticsResponse)
 async def get_meeting_analytics(
-    meeting_id: uuid.UUID, user: CurrentUserDep, service: MeetingServiceDep
+    meeting_id: uuid.UUID, acting_user_id: MeetingActorDep, service: MeetingServiceDep
 ) -> MeetingAnalyticsResponse:
+    """Host/co-host only, via either a real access token or the
+    meet-host token — same MeetingActorDep fix as every other in-room
+    host action apps/meet needs to call (this endpoint's own first
+    version, from earlier in this session, had the same CurrentUserDep
+    bug every pre-existing host action had before it)."""
     try:
         report = await service.get_meeting_analytics(
-            meeting_id=meeting_id, acting_user_id=user.id
+            meeting_id=meeting_id, acting_user_id=acting_user_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -948,7 +1017,7 @@ async def get_transcript(
     meeting_service: MeetingServiceDep,
     intel_service: MeetingIntelligenceServiceDep,
 ) -> list[TranscriptSegmentResponse]:
-    await _current_participant(meeting_id, user, meeting_service)
+    await _current_participant(meeting_id, user.id, meeting_service)
     segments = await intel_service.list_transcript(meeting_id=meeting_id)
     return [TranscriptSegmentResponse.model_validate(s) for s in segments]
 
@@ -976,7 +1045,7 @@ async def list_notes(
     meeting_service: MeetingServiceDep,
     intel_service: MeetingIntelligenceServiceDep,
 ) -> list[AiNoteResponse]:
-    await _current_participant(meeting_id, user, meeting_service)
+    await _current_participant(meeting_id, user.id, meeting_service)
     notes = await intel_service.list_notes(meeting_id=meeting_id)
     return [AiNoteResponse.model_validate(n) for n in notes]
 
@@ -990,7 +1059,7 @@ async def edit_note(
     meeting_service: MeetingServiceDep,
     intel_service: MeetingIntelligenceServiceDep,
 ) -> AiNoteResponse:
-    editor = await _current_participant(meeting_id, user, meeting_service)
+    editor = await _current_participant(meeting_id, user.id, meeting_service)
     try:
         note = await intel_service.edit_note(
             meeting_id=meeting_id,
@@ -1011,7 +1080,7 @@ async def ask_about_meeting(
     meeting_service: MeetingServiceDep,
     intel_service: MeetingIntelligenceServiceDep,
 ) -> AskQuestionAboutMeetingResponse:
-    await _current_participant(meeting_id, user, meeting_service)
+    await _current_participant(meeting_id, user.id, meeting_service)
     try:
         answer = await intel_service.ask(meeting_id=meeting_id, question=body.question)
     except MeetingError as exc:
@@ -1029,12 +1098,12 @@ async def ask_about_meeting(
 async def invite_to_stage(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> ParticipantResponse:
     try:
         participant = await service.invite_to_stage(
-            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
@@ -1048,12 +1117,12 @@ async def invite_to_stage(
 async def move_to_audience(
     meeting_id: uuid.UUID,
     participant_id: uuid.UUID,
-    user: CurrentUserDep,
+    acting_user_id: MeetingActorDep,
     service: MeetingServiceDep,
 ) -> ParticipantResponse:
     try:
         participant = await service.move_to_audience(
-            meeting_id=meeting_id, acting_user_id=user.id, participant_id=participant_id
+            meeting_id=meeting_id, acting_user_id=acting_user_id, participant_id=participant_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc

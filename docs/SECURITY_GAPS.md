@@ -12,6 +12,24 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
+### Admin has no live-call moderation, and message/call content moderation is deliberately impossible
+
+**What's missing:** the new `AdminMeetingGovernanceService` (list/extend/end any Conference Room meeting platform-wide) has no equivalent for `domain/calls` (1:1 voice/video calls) — an admin can't see or force-end a call in progress. The same pattern (an admin-override method with no participant-check, RBAC-gated at the router) would transfer directly; just not built this pass.
+
+**Why:** Out of scope for the session that added meeting governance — calls are a materially different data model (`domain/calls/service.py`'s signaling state machine, not `Meeting`), and adding it without dedicated attention risked doing it hastily.
+
+**Tracked for:** A follow-up pass, mirroring `meetings_governance:view`/`:action`'s exact shape for calls.
+
+**Not a gap, a hard boundary — documented here so it isn't mistaken for an oversight:** "control user messaging" and "voice/video calling" admin requests stop at account-level and metadata actions (suspend/ban already blocks messaging and calling entirely; Reports & Moderation surfaces what's reportable) because §7's E2EE non-negotiable means **no admin path can ever retrieve decrypted message content** — a content-moderation admin feature is not a smaller version of this gap, it's the thing that non-negotiable exists to prevent. Voice/video calls are DTLS-SRTP end-to-end for the same reason (spec's locked "Calls" decision) — admin has never had, and won't have, a way to listen in.
+
+### admin app's Sidebar scroll fix not visually confirmed
+
+**What's missing:** a user report ("fix nav bar to scroll") was addressed by removing a redundant nested `h-screen` (the `<aside>` now uses `h-full`, inheriting the outer layout's already-constrained height) and adding `overscroll-contain` — the standard fix for this exact class of symptom, and the CSS was already using the textbook-correct scrollable-flex-child pattern beforehand. Never reproduced or re-confirmed in an actual browser.
+
+**Why:** The Chrome extension bridge (`mcp__claude-in-chrome__*`) wasn't connected in this session, and the admin app requires a real login (password + TOTP MFA) this session had no credentials for.
+
+**Tracked for:** A quick visual check — shrink the browser window short enough that the nav list (12 items as of this writing) overflows, confirm it scrolls independently of the page.
+
 ### Stitch payment adapter is unverified against a live account (ADR 0012)
 
 **What's missing:** `services/billing/stitch.py` (`StitchPaymentProvider`) implements OAuth2 client-credentials auth + a GraphQL payment-initiation mutation + HMAC webhook verification, following Stitch's publicly documented API shape — but the exact mutation/field names and the webhook signature header are unverified against a live Stitch account, the same caveat `services/kyc/smile_id.py` already carries for Smile ID.
@@ -27,6 +45,8 @@ Living document of features shipped behind an interface because they couldn't ye
 **Why:** No LiveKit account or self-hosted `livekit-server` instance exists in this environment to test against — same class of gap as the Stitch/Smile ID adapters above.
 
 **Tracked for:** Before going live — provision a real LiveKit Cloud project (or self-hosted instance), re-verify each RoomService/EgressService call against it, and remove this section. Also worth adding then: LiveKit's egress-completion webhook, so a recording's `status` moves from `processing` to a confirmed terminal state asynchronously rather than only being known from `stop_recording`'s own synchronous response.
+
+**Update:** this was the actual root cause of a real user-reported "can't join the meeting, host or guest" bug — `LIVEKIT_URL`/`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` were still unset on the live Railway deployment (the `wss://localhost:7880` default, unreachable from any real client), confirming this gap was never closed before going live as flagged. The user has since provisioned a real LiveKit Cloud project and set all three variables in Railway. **Still not independently verified from this session** — no browser/credentials access here to confirm an actual join succeeds end-to-end post-configuration; worth a real click-through (host joins, a guest joins, video/audio actually connects) before considering this section fully closed.
 
 ### Live in-meeting AI captions/transcription not built — post-meeting pipeline only (DITSALA_MEET_SPEC.md §6, §9 Phase 3)
 
