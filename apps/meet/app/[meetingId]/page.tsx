@@ -39,6 +39,46 @@ function formatScheduledTime(iso: string): string {
   });
 }
 
+function formatCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Live countdown to `scheduledStartAt` — shown both before the room's
+ * own early-join window opens ("not-yet") and while sitting in the
+ * waiting room, since the backend's `auto_promote_waiting_conference_
+ * participants` scheduler job (polls every 60s) admits every `waiting`
+ * participant the moment this hits zero with no host action required.
+ */
+function StartCountdown({ scheduledStartAt }: { scheduledStartAt: string }) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const remainingMs = new Date(scheduledStartAt).getTime() - now.getTime();
+  const isDue = remainingMs <= 0;
+
+  return (
+    <p
+      className={`rounded border px-4 py-3 text-center text-2xl font-semibold tabular-nums ${
+        isDue ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface text-text-primary"
+      }`}
+    >
+      {isDue ? "Starting…" : formatCountdown(remainingMs)}
+    </p>
+  );
+}
+
 export default function MeetingRoom() {
   const params = useParams<{ meetingId: string }>();
   const meetingId = params.meetingId;
@@ -163,9 +203,12 @@ export default function MeetingRoom() {
         <h1 className="font-display text-2xl text-text-primary">{joinInfo.title}</h1>
         <p className="text-text-secondary">This meeting hasn&apos;t started yet.</p>
         {joinInfo.scheduled_start_at ? (
-          <p className="rounded border border-border bg-surface px-4 py-3 text-center text-accent">
-            Scheduled for {formatScheduledTime(joinInfo.scheduled_start_at)}
-          </p>
+          <>
+            <p className="text-sm text-text-secondary">
+              Scheduled for {formatScheduledTime(joinInfo.scheduled_start_at)}
+            </p>
+            <StartCountdown scheduledStartAt={joinInfo.scheduled_start_at} />
+          </>
         ) : null}
         <p className="text-sm text-text-tertiary">
           Come back closer to the start time — this page checks automatically.
@@ -178,7 +221,17 @@ export default function MeetingRoom() {
     return (
       <Centered>
         <h1 className="font-display text-2xl text-text-primary">You&apos;re in the waiting room</h1>
-        <p className="text-text-secondary">The host will let you in shortly.</p>
+        {join?.meeting.scheduled_start_at ? (
+          <>
+            <p className="text-text-secondary">
+              You&apos;ll be let in automatically at the scheduled time, or sooner if the host
+              admits you.
+            </p>
+            <StartCountdown scheduledStartAt={join.meeting.scheduled_start_at} />
+          </>
+        ) : (
+          <p className="text-text-secondary">The host will let you in shortly.</p>
+        )}
       </Centered>
     );
   }

@@ -23,7 +23,9 @@ export type IconName =
   | "edit"
   | "more"
   | "lock"
-  | "mic";
+  | "mic"
+  | "sun"
+  | "moon";
 
 interface IconProps {
   name: IconName;
@@ -489,6 +491,51 @@ export function Icon({ name, size = 24, color = "#FFFFFF", strokeWidth = 2 }: Ic
               borderColor: color,
               borderBottomLeftRadius: s * 0.25,
               borderBottomRightRadius: s * 0.25,
+            }}
+          />
+        </View>
+      );
+
+    case "sun":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          {[0, 45, 90, 135].map((deg) => (
+            <View
+              key={deg}
+              style={{
+                position: "absolute",
+                width: s * 0.72,
+                height: sw,
+                backgroundColor: color,
+                borderRadius: sw / 2,
+                transform: [{ rotate: `${deg}deg` }],
+              }}
+            />
+          ))}
+          <View
+            style={{
+              width: s * 0.36,
+              height: s * 0.36,
+              borderRadius: 999,
+              backgroundColor: color,
+            }}
+          />
+        </View>
+      );
+
+    case "moon":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: s * 0.62,
+              height: s * 0.62,
+              borderRadius: 999,
+              borderWidth: sw * 1.3,
+              borderColor: color,
+              borderLeftColor: "transparent",
+              borderBottomColor: "transparent",
+              transform: [{ rotate: "45deg" }],
             }}
           />
         </View>

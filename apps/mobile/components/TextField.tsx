@@ -1,7 +1,7 @@
-import { dark } from "@ditsala/ui-tokens";
 import { Text, TextInput, View, type TextInputProps } from "react-native";
 
 import { Icon, type IconName } from "./Icon";
+import { useTheme } from "../lib/theme-context";
 
 interface TextFieldProps extends TextInputProps {
   label: string;
@@ -13,6 +13,7 @@ interface TextFieldProps extends TextInputProps {
  * icon, and a wrapped input so the icon can sit inline without
  * disturbing `TextInput`'s own padding/hit box. */
 export function TextField({ label, error, icon, className = "", ...inputProps }: TextFieldProps) {
+  const { colors } = useTheme();
   return (
     <View className="mb-5">
       <Text className="mb-2 text-sm font-medium text-text-secondary">{label}</Text>
@@ -24,12 +25,12 @@ export function TextField({ label, error, icon, className = "", ...inputProps }:
       >
         {icon ? (
           <View style={{ marginRight: 10 }}>
-            <Icon name={icon} size={18} color={dark.textTertiary} />
+            <Icon name={icon} size={18} color={colors.textTertiary} />
           </View>
         ) : null}
         <TextInput
           className={["flex-1 py-3 text-base text-text-primary", className].join(" ")}
-          placeholderTextColor={dark.textTertiary}
+          placeholderTextColor={colors.textTertiary}
           {...inputProps}
         />
       </View>

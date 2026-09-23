@@ -1,7 +1,7 @@
-import { dark } from "@ditsala/ui-tokens";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 import { Icon, type IconName } from "./Icon";
+import { useTheme } from "../lib/theme-context";
 
 interface ButtonProps {
   label: string;
@@ -45,6 +45,7 @@ export function Button({
   icon,
   testID,
 }: ButtonProps) {
+  const { colors } = useTheme();
   const style = VARIANT_STYLE[variant];
   const padding = size === "lg" ? "py-4 px-6" : "py-3 px-5";
 
@@ -56,7 +57,7 @@ export function Button({
       style={
         style.shadow && !disabled && !loading
           ? {
-              shadowColor: dark.accent,
+              shadowColor: colors.accent,
               shadowOpacity: 0.35,
               shadowRadius: 12,
               shadowOffset: { width: 0, height: 6 },
@@ -73,7 +74,7 @@ export function Button({
       ].join(" ")}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "secondary" || variant === "ghost" ? dark.textPrimary : "#FFFFFF"} />
+        <ActivityIndicator color={variant === "secondary" || variant === "ghost" ? colors.textPrimary : "#FFFFFF"} />
       ) : (
         <>
           {icon ? (
@@ -81,7 +82,7 @@ export function Button({
               <Icon
                 name={icon}
                 size={18}
-                color={variant === "secondary" || variant === "ghost" ? dark.textPrimary : "#FFFFFF"}
+                color={variant === "secondary" || variant === "ghost" ? colors.textPrimary : "#FFFFFF"}
               />
             </View>
           ) : null}

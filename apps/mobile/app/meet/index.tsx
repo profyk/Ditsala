@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "react-native";
@@ -8,6 +7,7 @@ import { Screen } from "../../components/Screen";
 import { ApiError } from "../../lib/api";
 import { type MeetingResponse, meetingJoinLink, meetingsApi } from "../../lib/meetings-api";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 function formatScheduled(meeting: MeetingResponse): string {
   if (!meeting.scheduled_start_at) return "No scheduled time";
@@ -31,6 +31,7 @@ type ExpandedPanel = "none" | "delete" | "co-host";
 
 export default function MyMeetings() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [meetings, setMeetings] = useState<MeetingResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -139,7 +140,7 @@ export default function MyMeetings() {
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
       {meetings === null ? (
-        <ActivityIndicator color={dark.accent} />
+        <ActivityIndicator color={colors.accent} />
       ) : meetings.length === 0 ? (
         <View className="items-center rounded-xl border border-border bg-surface p-6">
           <Text className="text-center text-text-secondary">
@@ -162,9 +163,9 @@ export default function MyMeetings() {
               >
                 <View
                   className="h-9 w-9 items-center justify-center rounded-full"
-                  style={{ backgroundColor: dark.accentMuted }}
+                  style={{ backgroundColor: colors.accentMuted }}
                 >
-                  <Icon name="video" size={18} color={dark.accent} />
+                  <Icon name="video" size={18} color={colors.accent} />
                 </View>
                 <View className="flex-1">
                   <Text className="text-base font-medium text-text-primary">{meeting.title}</Text>
@@ -180,9 +181,9 @@ export default function MyMeetings() {
                   </Text>
                 </View>
                 {openingId === meeting.id ? (
-                  <ActivityIndicator color={dark.accent} />
+                  <ActivityIndicator color={colors.accent} />
                 ) : (
-                  <Icon name="chevron-right" size={16} color={dark.textTertiary} />
+                  <Icon name="chevron-right" size={16} color={colors.textTertiary} />
                 )}
               </Pressable>
 
@@ -215,7 +216,7 @@ export default function MyMeetings() {
                     onChangeText={setCoHostPhone}
                     placeholder="+27..."
                     keyboardType="phone-pad"
-                    placeholderTextColor={dark.textTertiary}
+                    placeholderTextColor={colors.textTertiary}
                     className="rounded-lg border border-border bg-background px-3 py-2 text-text-primary"
                   />
                   <Pressable

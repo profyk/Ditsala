@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
@@ -10,6 +9,7 @@ import { TextField } from "../../components/TextField";
 import { ApiError, onboardingApi } from "../../lib/api";
 import { DEFAULT_COUNTRY, toE164, type Country } from "../../lib/countries";
 import { useOnboarding } from "../../lib/onboarding-context";
+import { useTheme } from "../../lib/theme-context";
 
 /**
  * ADR 0014 — the entire normal-tier signup: display name + a phone number
@@ -19,6 +19,7 @@ import { useOnboarding } from "../../lib/onboarding-context";
 export default function Signup() {
   const router = useRouter();
   const { setSession } = useOnboarding();
+  const { colors } = useTheme();
 
   const [displayName, setDisplayName] = useState("");
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
@@ -70,7 +71,7 @@ export default function Signup() {
             value={localNumber}
             onChangeText={setLocalNumber}
             placeholder="82 123 4567"
-            placeholderTextColor={dark.textTertiary}
+            placeholderTextColor={colors.textTertiary}
             keyboardType="number-pad"
             testID="phone-input"
             className="flex-1 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"

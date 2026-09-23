@@ -45,6 +45,9 @@ export interface MeetingResponse {
   status: string;
   waiting_room_enabled: boolean;
   locked_at: string | null;
+  scheduled_start_at: string | null;
+  scheduled_duration_minutes: number | null;
+  prep_lead_minutes: number;
 }
 
 export interface RoomAccessTokenResponse {

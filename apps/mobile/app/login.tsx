@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Platform, Pressable, Text, TextInput, View } from "react-native";
@@ -10,6 +9,7 @@ import { TextField } from "../components/TextField";
 import { ApiError, authApi } from "../lib/api";
 import { DEFAULT_COUNTRY, toE164, type Country } from "../lib/countries";
 import { saveIdentity, saveSession } from "../lib/session";
+import { useTheme } from "../lib/theme-context";
 
 type LoginMode = "phone" | "email";
 
@@ -26,6 +26,7 @@ type LoginMode = "phone" | "email";
  */
 export default function Login() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [mode, setMode] = useState<LoginMode>("phone");
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
   const [localNumber, setLocalNumber] = useState("");
@@ -145,7 +146,7 @@ export default function Login() {
                   value={localNumber}
                   onChangeText={setLocalNumber}
                   placeholder="82 123 4567"
-                  placeholderTextColor={dark.textTertiary}
+                  placeholderTextColor={colors.textTertiary}
                   keyboardType="number-pad"
                   testID="login-phone-input"
                   className="flex-1 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"
@@ -173,7 +174,7 @@ export default function Login() {
                 secureTextEntry={!codeVisible}
                 autoCapitalize="none"
                 placeholder="••••••••"
-                placeholderTextColor={dark.textTertiary}
+                placeholderTextColor={colors.textTertiary}
                 testID="login-code-input"
                 className="rounded-xl border border-border bg-surface px-4 py-3 pr-16 text-base text-text-primary"
               />

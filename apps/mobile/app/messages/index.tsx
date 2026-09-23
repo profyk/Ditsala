@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
@@ -9,6 +8,7 @@ import { TabScreen } from "../../components/TabScreen";
 import { authApi } from "../../lib/api";
 import { type Conversation, type ConversationMember, messagingApi } from "../../lib/messaging-api";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 interface ConversationRow {
   conversation: Conversation;
@@ -28,6 +28,7 @@ function formatWhen(iso: string | null): string {
 
 export default function MessagesList() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -121,9 +122,9 @@ export default function MessagesList() {
             <View className="items-center rounded-xl border border-dashed border-border py-12">
               <View
                 className="mb-3 h-14 w-14 items-center justify-center rounded-full"
-                style={{ backgroundColor: dark.accentMuted }}
+                style={{ backgroundColor: colors.accentMuted }}
               >
-                <Icon name="messages" size={26} color={dark.accent} />
+                <Icon name="messages" size={26} color={colors.accent} />
               </View>
               <Text className="mb-1 text-base font-semibold text-text-primary">
                 No conversations yet

@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -7,6 +6,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { TabScreen } from "../../components/TabScreen";
 import { authApi } from "../../lib/api";
 import { clearSession, getAccessToken, getRefreshToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 interface SettingsRowProps {
   testID: string;
@@ -18,6 +18,7 @@ interface SettingsRowProps {
 }
 
 function SettingsRow({ testID, label, description, icon, onPress, destructive }: SettingsRowProps) {
+  const { colors } = useTheme();
   return (
     <Pressable
       testID={testID}
@@ -26,9 +27,9 @@ function SettingsRow({ testID, label, description, icon, onPress, destructive }:
     >
       <View
         className="h-9 w-9 items-center justify-center rounded-full"
-        style={{ backgroundColor: destructive ? `${dark.danger}22` : dark.accentMuted }}
+        style={{ backgroundColor: destructive ? `${colors.danger}22` : colors.accentMuted }}
       >
-        <Icon name={icon} size={18} color={destructive ? dark.danger : dark.accent} />
+        <Icon name={icon} size={18} color={destructive ? colors.danger : colors.accent} />
       </View>
       <View className="flex-1">
         <Text className={`text-base font-medium ${destructive ? "text-danger" : "text-text-primary"}`}>
@@ -38,7 +39,7 @@ function SettingsRow({ testID, label, description, icon, onPress, destructive }:
           <Text className="mt-0.5 text-xs text-text-tertiary">{description}</Text>
         ) : null}
       </View>
-      <Icon name="chevron-right" size={16} color={dark.textTertiary} />
+      <Icon name="chevron-right" size={16} color={colors.textTertiary} />
     </Pressable>
   );
 }
@@ -51,6 +52,7 @@ export default function Settings() {
   // "just exit" — so the routine "Log out" row only makes sense for vip.
   // Defaults to hidden until we know the tier, rather than flashing it.
   const [accountTier, setAccountTier] = useState<"normal" | "vip" | null>(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     getAccessToken().then((accessToken) => {
@@ -106,21 +108,25 @@ export default function Settings() {
       />
 
       <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        Appearance
+      </Text>
+      <SettingsRow
+        testID="settings-theme-row"
+        label={theme === "dark" ? "Dark mode" : "Light mode"}
+        description={`Tap to switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        icon={theme === "dark" ? "moon" : "sun"}
+        onPress={toggleTheme}
+      />
+
+      <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">
         Meet Conference Call
       </Text>
       <SettingsRow
-        testID="settings-meet-schedule-row"
-        label="Schedule a meeting"
-        description="Set a time, password, and share the link"
+        testID="settings-conference-room-row"
+        label="Conference Room"
+        description="Open, schedule, or join a meeting — plus plans & tools"
         icon="video"
-        onPress={() => router.push("/meet/schedule")}
-      />
-      <SettingsRow
-        testID="settings-meet-my-meetings-row"
-        label="My meetings"
-        description="Everything you've scheduled"
-        icon="video"
-        onPress={() => router.push("/meet")}
+        onPress={() => router.push("/meet/conference-room")}
       />
 
       <Text className="mb-2 mt-6 text-xs font-medium uppercase tracking-widest text-text-tertiary">

@@ -247,6 +247,104 @@ export const adminApi = {
       token,
       body: { role },
     }),
+
+  // data subject requests (§34.4)
+  listDataSubjectRequests: (token: string, status = "pending") =>
+    request<DataSubjectRequest[]>("/admin/data-subject-requests", {
+      method: "GET",
+      token,
+      params: { status },
+    }),
+
+  markDataSubjectRequestInProgress: (token: string, requestId: string) =>
+    request<DataSubjectRequest>(`/admin/data-subject-requests/${requestId}/in-progress`, {
+      token,
+    }),
+
+  completeDataSubjectRequest: (token: string, requestId: string, resolutionNotes: string) =>
+    request<DataSubjectRequest>(`/admin/data-subject-requests/${requestId}/complete`, {
+      token,
+      body: { resolution_notes: resolutionNotes },
+    }),
+
+  rejectDataSubjectRequest: (token: string, requestId: string, resolutionNotes: string) =>
+    request<DataSubjectRequest>(`/admin/data-subject-requests/${requestId}/reject`, {
+      token,
+      body: { resolution_notes: resolutionNotes },
+    }),
+};
+
+// --- billing / plans (§27-29) ---
+
+export interface Plan {
+  id: string;
+  code: string;
+  product: "free" | "vip" | "business" | "conference";
+  name: string;
+  status: "active" | "archived";
+}
+
+export interface PlanPrice {
+  id: string;
+  currency: string;
+  amount_cents: number;
+  billing_interval: "month" | "year" | "one_time";
+  status: "active" | "archived";
+  effective_from: string;
+  effective_until: string | null;
+}
+
+export interface Entitlement {
+  key: string;
+  value: unknown;
+}
+
+export interface DataSubjectRequest {
+  id: string;
+  user_id: string;
+  request_type: string;
+  status: string;
+  details: string | null;
+  due_at: string;
+  resolved_at: string | null;
+  resolution_notes: string | null;
+  created_at: string;
+}
+
+export const billingApi = {
+  listPlans: (token: string) => request<Plan[]>("/admin/billing/plans", { method: "GET", token }),
+
+  createPlan: (token: string, code: string, product: Plan["product"], name: string) =>
+    request<Plan>("/admin/billing/plans", { token, body: { code, product, name } }),
+
+  setPlanStatus: (token: string, planId: string, status: Plan["status"], reason: string) =>
+    request<Plan>(`/admin/billing/plans/${planId}/status`, {
+      method: "PUT",
+      token,
+      body: { status, reason },
+    }),
+
+  listPlanPrices: (token: string, planId: string) =>
+    request<PlanPrice[]>(`/admin/billing/plans/${planId}/prices`, { method: "GET", token }),
+
+  setPlanPrice: (
+    token: string,
+    planId: string,
+    price: { currency: string; amount_cents: number; billing_interval: PlanPrice["billing_interval"]; reason: string }
+  ) => request<PlanPrice>(`/admin/billing/plans/${planId}/prices`, { token, body: price }),
+
+  listEntitlements: (token: string, planId: string) =>
+    request<Entitlement[]>(`/admin/billing/plans/${planId}/entitlements`, {
+      method: "GET",
+      token,
+    }),
+
+  setEntitlement: (token: string, planId: string, key: string, value: unknown, reason: string) =>
+    request<Entitlement>(`/admin/billing/plans/${planId}/entitlements`, {
+      method: "PUT",
+      token,
+      body: { key, value, reason },
+    }),
 };
 
 export const kycApi = {

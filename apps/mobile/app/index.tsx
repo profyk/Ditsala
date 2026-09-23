@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Platform, Text, View } from "react-native";
@@ -17,9 +16,11 @@ import {
   saveIdentity,
   saveSession,
 } from "../lib/session";
+import { useTheme } from "../lib/theme-context";
 
 export default function Welcome() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [hasSession, setHasSession] = useState<boolean | null>(null);
   const [biometricsAvailable, setBiometricsAvailable] = useState<boolean | null>(null);
   const [pinMode, setPinMode] = useState(false);
@@ -116,7 +117,7 @@ export default function Welcome() {
         <View
           className="mb-8 h-24 w-24 items-center justify-center rounded-3xl bg-accent"
           style={{
-            shadowColor: dark.accent,
+            shadowColor: colors.accent,
             shadowOpacity: 0.5,
             shadowRadius: 24,
             shadowOffset: { width: 0, height: 12 },

@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
@@ -13,6 +12,7 @@ import { useCall } from "../../lib/call-context";
 import { circleApi, type Contact } from "../../lib/circle-api";
 import { messagingApi } from "../../lib/messaging-api";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 const TIER_LABEL: Record<Contact["tier"], string> = {
   unverified: "Request pending",
@@ -39,6 +39,7 @@ const TIER_TONE: Record<Contact["tier"], "neutral" | "info" | "accent" | "danger
  */
 export default function Circle() {
   const router = useRouter();
+  const { colors } = useTheme();
   const { startCall } = useCall();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [incomingCount, setIncomingCount] = useState(0);
@@ -144,7 +145,7 @@ export default function Circle() {
           <Text className="text-sm font-medium text-text-primary">
             {incomingCount > 0 ? `Requests (${incomingCount})` : "Requests"}
           </Text>
-          <Icon name="chevron-right" size={16} color={dark.textTertiary} />
+          <Icon name="chevron-right" size={16} color={colors.textTertiary} />
         </Pressable>
         <Pressable
           testID="circle-location-button"
@@ -152,7 +153,7 @@ export default function Circle() {
           className="flex-1 flex-row items-center justify-between rounded-xl border border-border bg-surface p-3.5"
         >
           <Text className="text-sm font-medium text-text-primary">Location</Text>
-          <Icon name="chevron-right" size={16} color={dark.textTertiary} />
+          <Icon name="chevron-right" size={16} color={colors.textTertiary} />
         </Pressable>
       </View>
 
@@ -223,9 +224,9 @@ export default function Circle() {
           <View className="items-center rounded-xl border border-dashed border-border py-12">
             <View
               className="mb-3 h-14 w-14 items-center justify-center rounded-full"
-              style={{ backgroundColor: dark.accentMuted }}
+              style={{ backgroundColor: colors.accentMuted }}
             >
-              <Icon name="circle" size={26} color={dark.accent} />
+              <Icon name="circle" size={26} color={colors.accent} />
             </View>
             <Text className="mb-1 text-base font-semibold text-text-primary">No contacts yet</Text>
             <Text className="px-8 text-center text-sm text-text-tertiary">

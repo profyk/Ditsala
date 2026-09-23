@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -10,6 +9,7 @@ import { Screen } from "../../components/Screen";
 import { sosApi, type SosEvent } from "../../lib/sos-api";
 import { triggerSosWithRetry, type SosTriggerHandle, type SosTriggerStatus } from "../../lib/sos-queue";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 const STATUS_LABEL: Record<SosTriggerStatus, string> = {
   sending: "Sending SOS…",
@@ -28,6 +28,7 @@ const STATUS_LABEL: Record<SosTriggerStatus, string> = {
  */
 export default function Sos() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [activeEvent, setActiveEvent] = useState<SosEvent | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [triggerStatus, setTriggerStatus] = useState<SosTriggerStatus | null>(null);
@@ -126,7 +127,7 @@ export default function Sos() {
           <View
             className="mb-6 h-40 w-40 items-center justify-center rounded-full border-4 border-danger"
             style={{
-              shadowColor: dark.danger,
+              shadowColor: colors.danger,
               shadowOpacity: 0.5,
               shadowRadius: 30,
               shadowOffset: { width: 0, height: 0 },
@@ -152,9 +153,9 @@ export default function Sos() {
         <View className="flex-1 items-center justify-center">
           <View
             className="mb-6 h-20 w-20 items-center justify-center rounded-full"
-            style={{ backgroundColor: escalated ? `${dark.danger}22` : dark.accentMuted }}
+            style={{ backgroundColor: escalated ? `${colors.danger}22` : colors.accentMuted }}
           >
-            <Icon name={escalated ? "shield" : "check"} size={32} color={escalated ? dark.danger : dark.accent} />
+            <Icon name={escalated ? "shield" : "check"} size={32} color={escalated ? colors.danger : colors.accent} />
           </View>
           <Text className="mb-3 text-2xl font-extrabold text-text-primary">
             {escalated ? "Circle notified" : "SOS cancelled"}
@@ -175,9 +176,9 @@ export default function Sos() {
       <View className="flex-1 items-center justify-center">
         <View
           className="mb-8 h-24 w-24 items-center justify-center rounded-full"
-          style={{ backgroundColor: `${dark.danger}1A` }}
+          style={{ backgroundColor: `${colors.danger}1A` }}
         >
-          <Icon name="shield" size={44} color={dark.danger} />
+          <Icon name="shield" size={44} color={colors.danger} />
         </View>
         <Text className="mb-2 text-3xl font-extrabold text-text-primary">Emergency SOS</Text>
         <Text className="mb-12 max-w-xs text-center text-base text-text-secondary">

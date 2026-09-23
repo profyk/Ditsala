@@ -1,9 +1,9 @@
-import { dark } from "@ditsala/ui-tokens";
 import { usePathname, useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon, type IconName } from "./Icon";
+import { useTheme } from "../lib/theme-context";
 
 const TABS: { path: string; label: string; icon: IconName; testID: string }[] = [
   { path: "/home", label: "Home", icon: "home", testID: "tab-home" },
@@ -27,6 +27,7 @@ export function TabBar() {
   const pathname = usePathname();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   return (
     <View
@@ -44,7 +45,7 @@ export function TabBar() {
             }}
             className="flex-1 items-center gap-1 pt-2.5"
           >
-            <Icon name={tab.icon} size={22} color={active ? dark.accent : dark.textTertiary} strokeWidth={2.2} />
+            <Icon name={tab.icon} size={22} color={active ? colors.accent : colors.textTertiary} strokeWidth={2.2} />
             <Text
               className={["text-xs font-medium", active ? "text-accent" : "text-text-tertiary"].join(" ")}
             >

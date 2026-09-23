@@ -76,5 +76,5 @@ export const avatarPalette = [
   "#B98CFF",
 ] as const;
 
-export type ColorPalette = typeof dark;
+export type ColorPalette = Record<keyof typeof dark, string>;
 export type TrustTierKey = keyof typeof trustTier;

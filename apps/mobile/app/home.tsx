@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -10,6 +9,7 @@ import { authApi, type CurrentUser } from "../lib/api";
 import { registerWithBackend } from "../lib/crypto/keystore";
 import { messagingSocket } from "../lib/messaging-ws";
 import { getAccessToken } from "../lib/session";
+import { useTheme } from "../lib/theme-context";
 
 interface QuickActionProps {
   testID: string;
@@ -20,6 +20,7 @@ interface QuickActionProps {
 }
 
 function QuickAction({ testID, label, sub, icon, onPress }: QuickActionProps) {
+  const { colors } = useTheme();
   return (
     <Pressable
       testID={testID}
@@ -28,9 +29,9 @@ function QuickAction({ testID, label, sub, icon, onPress }: QuickActionProps) {
     >
       <View
         className="mb-3 h-10 w-10 items-center justify-center rounded-full"
-        style={{ backgroundColor: dark.accentMuted }}
+        style={{ backgroundColor: colors.accentMuted }}
       >
-        <Icon name={icon} size={20} color={dark.accent} />
+        <Icon name={icon} size={20} color={colors.accent} />
       </View>
       <Text className="text-base font-semibold text-text-primary">{label}</Text>
       <Text className="text-xs text-text-tertiary">{sub}</Text>
@@ -46,6 +47,7 @@ function QuickAction({ testID, label, sub, icon, onPress }: QuickActionProps) {
  */
 export default function Home() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   // SOS is a VIP-tier feature (backend/app/api/v1/routers/sos.py enforces
@@ -108,7 +110,7 @@ export default function Home() {
           onPress={() => router.push("/sos")}
           className="mb-6 flex-row items-center gap-4 rounded-2xl bg-danger p-5 active:opacity-90"
           style={{
-            shadowColor: dark.danger,
+            shadowColor: colors.danger,
             shadowOpacity: 0.4,
             shadowRadius: 16,
             shadowOffset: { width: 0, height: 8 },

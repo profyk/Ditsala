@@ -1,8 +1,7 @@
 import { Image, Text, View } from "react-native";
 
-import { dark } from "@ditsala/ui-tokens";
-
 import { avatarColorFor, initialsFor } from "../lib/avatar-color";
+import { useTheme } from "../lib/theme-context";
 
 interface AvatarProps {
   name: string;
@@ -17,6 +16,7 @@ interface AvatarProps {
  * `ring` draws a thin accent ring around it — used for online/active or
  * Circle-trusted indicators by callers, not decided here. */
 export function Avatar({ name, id, imageUrl, size = 44, ring = false }: AvatarProps) {
+  const { colors } = useTheme();
   const color = avatarColorFor(id);
   const fontSize = Math.max(11, size * 0.38);
 
@@ -28,9 +28,9 @@ export function Avatar({ name, id, imageUrl, size = 44, ring = false }: AvatarPr
         borderRadius: size / 2,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: imageUrl ? dark.surfaceRaised : color,
+        backgroundColor: imageUrl ? colors.surfaceRaised : color,
         borderWidth: ring ? 2 : 0,
-        borderColor: dark.accent,
+        borderColor: colors.accent,
       }}
     >
       {imageUrl ? (

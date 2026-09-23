@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
@@ -17,6 +16,7 @@ import {
 } from "../../lib/messaging-api";
 import { messagingSocket } from "../../lib/messaging-ws";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 interface DecryptedMessage extends Message {
   plaintext: string | null;
@@ -28,6 +28,7 @@ function formatTime(iso: string): string {
 
 export default function ChatScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -145,7 +146,7 @@ export default function ChatScreen() {
           onPress={() => router.back()}
           className="h-9 w-9 items-center justify-center rounded-full active:bg-surface-raised"
         >
-          <Icon name="chevron-left" size={20} color={dark.textPrimary} />
+          <Icon name="chevron-left" size={20} color={colors.textPrimary} />
         </Pressable>
         <Avatar
           id={conversation?.id ?? "chat"}
@@ -192,9 +193,9 @@ export default function ChatScreen() {
           <View className="flex-1 items-center justify-center py-16">
             <View
               className="mb-3 h-14 w-14 items-center justify-center rounded-full"
-              style={{ backgroundColor: dark.accentMuted }}
+              style={{ backgroundColor: colors.accentMuted }}
             >
-              <Icon name="messages" size={26} color={dark.accent} />
+              <Icon name="messages" size={26} color={colors.accent} />
             </View>
             <Text className="text-base font-semibold text-text-primary">Say hello</Text>
             <Text className="mt-1 text-center text-sm text-text-tertiary">
@@ -211,7 +212,7 @@ export default function ChatScreen() {
             value={draft}
             onChangeText={setDraft}
             placeholder="Message"
-            placeholderTextColor={dark.textTertiary}
+            placeholderTextColor={colors.textTertiary}
             multiline
             className="flex-1 rounded-2xl border border-border bg-surface px-4 py-2.5 text-text-primary"
           />

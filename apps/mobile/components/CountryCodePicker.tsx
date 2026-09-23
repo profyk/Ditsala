@@ -1,8 +1,8 @@
-import { dark } from "@ditsala/ui-tokens";
 import { useState } from "react";
 import { FlatList, Modal, Pressable, Text, TextInput, View } from "react-native";
 
 import { COUNTRIES, type Country } from "../lib/countries";
+import { useTheme } from "../lib/theme-context";
 
 interface CountryCodePickerProps {
   value: Country;
@@ -15,6 +15,7 @@ interface CountryCodePickerProps {
  * native modules where React Native primitives suffice (see ADR 0013's
  * `quick-crypto` deferral for the same reasoning). */
 export function CountryCodePicker({ value, onChange, testID }: CountryCodePickerProps) {
+  const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -48,7 +49,7 @@ export function CountryCodePicker({ value, onChange, testID }: CountryCodePicker
             value={query}
             onChangeText={setQuery}
             placeholder="Search by country or code"
-            placeholderTextColor={dark.textTertiary}
+            placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 text-base text-text-primary"
           />

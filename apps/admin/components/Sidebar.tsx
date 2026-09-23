@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth-context";
 import { roleHasPermission, type Permission } from "@/lib/rbac";
 
@@ -16,6 +17,12 @@ const NAV_ITEMS: { href: string; label: string; permission: Permission }[] = [
   { href: "/audit-log", label: "Audit Log", permission: "audit:view" },
   { href: "/system-config", label: "System Configuration", permission: "system_config:view" },
   { href: "/admins", label: "Admins", permission: "admin_users:view" },
+  { href: "/pricing", label: "Pricing", permission: "billing_plans:view" },
+  {
+    href: "/data-requests",
+    label: "Data Subject Requests",
+    permission: "data_subject_requests:view",
+  },
 ];
 
 export function Sidebar() {
@@ -23,14 +30,14 @@ export function Sidebar() {
   const { role, email, logout } = useAuth();
 
   return (
-    <aside className="flex h-screen w-64 flex-col justify-between border-r border-border bg-surface">
-      <div>
-        <div className="border-b border-border px-5 py-5">
-          <p className="font-display text-lg font-semibold tracking-wide text-text-primary">
-            DITSALA
-          </p>
-          <p className="text-xs text-text-tertiary">Admin</p>
-        </div>
+    <aside className="flex h-screen w-64 flex-col border-r border-border bg-surface">
+      <div className="shrink-0 border-b border-border px-5 py-5">
+        <p className="font-display text-lg font-semibold tracking-wide text-text-primary">
+          DITSALA
+        </p>
+        <p className="text-xs text-text-tertiary">Admin</p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <nav className="flex flex-col gap-0.5 p-3">
           {NAV_ITEMS.filter((item) => role && roleHasPermission(role, item.permission)).map(
             (item) => {
@@ -52,7 +59,10 @@ export function Sidebar() {
           )}
         </nav>
       </div>
-      <div className="border-t border-border p-4">
+      <div className="shrink-0 border-t border-border p-2">
+        <ThemeToggle />
+      </div>
+      <div className="shrink-0 border-t border-border p-4">
         <p className="mb-1 truncate text-sm text-text-primary">{email}</p>
         <p className="mb-3 text-xs capitalize text-text-tertiary">{role?.replace(/_/g, " ")}</p>
         <button

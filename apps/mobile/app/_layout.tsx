@@ -11,21 +11,33 @@ import "../global.css";
 import { CallProvider } from "../lib/call-context";
 import { OnboardingProvider } from "../lib/onboarding-context";
 import { RecoveryProvider } from "../lib/recovery-context";
+import { ThemeProvider, useTheme } from "../lib/theme-context";
+
+function RootStack() {
+  const { theme, colors } = useTheme();
+  return (
+    <>
+      <StatusBar style={theme === "dark" ? "light" : "dark"} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      />
+    </>
+  );
+}
 
 export default function RootLayout() {
   return (
-    <OnboardingProvider>
-      <RecoveryProvider>
-        <CallProvider>
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: "#0B0B12" },
-            }}
-          />
-        </CallProvider>
-      </RecoveryProvider>
-    </OnboardingProvider>
+    <ThemeProvider>
+      <OnboardingProvider>
+        <RecoveryProvider>
+          <CallProvider>
+            <RootStack />
+          </CallProvider>
+        </RecoveryProvider>
+      </OnboardingProvider>
+    </ThemeProvider>
   );
 }

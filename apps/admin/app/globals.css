@@ -1,33 +1,59 @@
 @import "tailwindcss";
 
 /**
- * Colors mirror packages/ui-tokens/src/colors.ts (dark palette) exactly
- * — same duplication rationale as apps/mobile/tailwind.config.js: Tailwind
- * v4 reads its theme from plain CSS custom properties, and ui-tokens
- * ships raw TypeScript with no build step. Keep these in sync by hand.
+ * Colors mirror packages/ui-tokens/src/colors.ts (both dark and light
+ * palettes) — same duplication rationale as apps/mobile/tailwind.config.js:
+ * Tailwind v4 reads its theme from plain CSS custom properties, and
+ * ui-tokens ships raw TypeScript with no build step. Keep these in sync
+ * by hand. Dark is the default (brand's "dark-first" decision,
+ * CLAUDE.md); light is an explicit opt-in via the toggle in
+ * components/ThemeToggle.tsx, persisted to localStorage and applied as
+ * `data-theme` on <html> before paint (see app/layout.tsx's inline
+ * script) so there's no flash of the wrong theme.
  */
 @theme {
-  --color-background: #0a0a0b;
-  --color-surface: #141518;
-  --color-surface-raised: #1c1e22;
-  --color-border: #2a2c31;
-  --color-border-strong: #3a3d44;
+  --color-background: #0b0b12;
+  --color-surface: #15151f;
+  --color-surface-raised: #1d1d2a;
+  --color-border: #2a2a3a;
+  --color-border-strong: #3d3d52;
 
-  --color-text-primary: #f5f5f2;
-  --color-text-secondary: #9b9ea6;
-  --color-text-tertiary: #6b6e76;
+  --color-text-primary: #f6f6f9;
+  --color-text-secondary: #a3a3b5;
+  --color-text-tertiary: #6e6e85;
 
-  --color-accent: #c8a059;
-  --color-accent-pressed: #b08b47;
-  --color-accent-muted: #3a3222;
+  --color-accent: #7c6aff;
+  --color-accent-pressed: #6453e8;
+  --color-accent-muted: #241f45;
 
-  --color-success: #4c9a8e;
-  --color-warning: #d9a441;
-  --color-danger: #c1493a;
-  --color-info: #5b8aa6;
+  --color-success: #2fd999;
+  --color-warning: #f5a623;
+  --color-danger: #ff5a5f;
+  --color-info: #4fa8ff;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+}
+
+:root[data-theme="light"] {
+  --color-background: #fafafc;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-border: #e6e6ef;
+  --color-border-strong: #d1d1e0;
+
+  --color-text-primary: #15151f;
+  --color-text-secondary: #5c5c70;
+  --color-text-tertiary: #8c8c9e;
+
+  --color-accent: #6653e0;
+  --color-accent-pressed: #5440be;
+  --color-accent-muted: #edeaff;
+
+  --color-success: #0f9d6e;
+  --color-warning: #b9720a;
+  --color-danger: #e1373d;
+  --color-info: #2277d6;
 }
 
 body {

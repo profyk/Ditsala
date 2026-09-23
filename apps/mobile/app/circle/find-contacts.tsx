@@ -1,4 +1,3 @@
-import { dark } from "@ditsala/ui-tokens";
 import * as Contacts from "expo-contacts";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -11,6 +10,7 @@ import { Screen } from "../../components/Screen";
 import { ApiError } from "../../lib/api";
 import { circleApi, type MatchedContact } from "../../lib/circle-api";
 import { getAccessToken } from "../../lib/session";
+import { useTheme } from "../../lib/theme-context";
 
 type RequestState = "idle" | "sending" | "sent" | "error";
 
@@ -24,6 +24,7 @@ type RequestState = "idle" | "sending" | "sent" | "error";
  */
 export default function FindContacts() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [status, setStatus] = useState<"idle" | "loading" | "done">("idle");
   const [matches, setMatches] = useState<MatchedContact[]>([]);
   const [requestState, setRequestState] = useState<Record<string, RequestState>>({});
@@ -84,9 +85,9 @@ export default function FindContacts() {
         <View className="flex-1 items-center justify-center">
           <View
             className="mb-6 h-20 w-20 items-center justify-center rounded-full"
-            style={{ backgroundColor: dark.accentMuted }}
+            style={{ backgroundColor: colors.accentMuted }}
           >
-            <Icon name="circle" size={32} color={dark.accent} />
+            <Icon name="circle" size={32} color={colors.accent} />
           </View>
           <Text className="mb-2 text-2xl font-extrabold text-text-primary">
             Find people you know
@@ -149,9 +150,9 @@ export default function FindContacts() {
           <View className="items-center rounded-xl border border-dashed border-border py-12">
             <View
               className="mb-3 h-14 w-14 items-center justify-center rounded-full"
-              style={{ backgroundColor: dark.accentMuted }}
+              style={{ backgroundColor: colors.accentMuted }}
             >
-              <Icon name="circle" size={26} color={dark.accent} />
+              <Icon name="circle" size={26} color={colors.accent} />
             </View>
             <Text className="mb-1 text-base font-semibold text-text-primary">No matches yet</Text>
             <Text className="px-8 text-center text-sm text-text-tertiary">

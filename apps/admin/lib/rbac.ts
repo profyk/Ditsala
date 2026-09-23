@@ -23,7 +23,9 @@ export type Permission =
   | "data_subject_requests:view"
   | "data_subject_requests:action"
   | "admin_users:view"
-  | "admin_users:action";
+  | "admin_users:action"
+  | "billing_plans:view"
+  | "billing_plans:action";
 
 const ALL_PERMISSIONS: Permission[] = [
   "dashboard:view",
@@ -43,6 +45,8 @@ const ALL_PERMISSIONS: Permission[] = [
   "data_subject_requests:action",
   "admin_users:view",
   "admin_users:action",
+  "billing_plans:view",
+  "billing_plans:action",
 ];
 
 export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
