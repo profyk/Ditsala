@@ -17,3 +17,10 @@ class StorageProvider(Protocol):
     async def create_download_url(self, *, key: str) -> str:
         """A short-lived presigned URL to GET the object directly."""
         ...
+
+    async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
+        """A direct server-side write — unlike `create_upload_url`, there is
+        no client on the other end (e.g. §34.4's server-generated data-export
+        bundle), so the backend uploads the bytes itself rather than issuing
+        a presigned URL for someone else to PUT to."""
+        ...

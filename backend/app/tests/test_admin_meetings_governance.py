@@ -61,6 +61,9 @@ class StubStorageProvider(StorageProvider):
     async def create_download_url(self, *, key: str) -> str:
         return f"https://stub-download.test/{key}"
 
+    async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
+        pass
+
 
 @dataclass
 class Harness:

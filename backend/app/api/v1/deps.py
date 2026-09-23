@@ -16,6 +16,7 @@ from app.domain.billing.plans import PlanService
 from app.domain.billing.service import VipUpgradeService
 from app.domain.calls.service import CallService
 from app.domain.circle.service import CircleService
+from app.domain.compliance.export import DataExportService
 from app.domain.compliance.service import ComplianceService
 from app.domain.location.service import LocationService
 from app.domain.meet_ai.service import MeetingIntelligenceService
@@ -418,12 +419,13 @@ ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
 
 
 async def get_compliance_service(
-    session: SessionDep, account_lifecycle: AccountLifecycleServiceDep
+    session: SessionDep, account_lifecycle: AccountLifecycleServiceDep, settings: SettingsDep
 ) -> ComplianceService:
     return ComplianceService(
         requests=DataSubjectRequestRepository(session),
         users=UserRepository(session),
         account_lifecycle=account_lifecycle,
+        export=DataExportService(session=session, storage=get_storage_provider(settings)),
     )
 
 

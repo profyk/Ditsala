@@ -8,10 +8,11 @@ from typing import Annotated, Any
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 
-from app.api.v1.deps import MeetingServiceDep, SessionDep, SettingsDep
+from app.api.v1.deps import CallServiceDep, MeetingServiceDep, SessionDep, SettingsDep
 from app.api.v1.deps import PlanServiceDep as PlanServiceDep  # re-exported, see below
 from app.core.security import decode_admin_access_token
 from app.domain.admin.auth_service import AdminAuthService
+from app.domain.admin.calls_governance import AdminCallGovernanceService
 from app.domain.admin.kyc_review_service import KycReviewService
 from app.domain.admin.meetings_governance import AdminMeetingGovernanceService
 from app.domain.admin.rbac import Permission
@@ -24,6 +25,7 @@ from app.repositories.admin import (
     AuditLogRepository,
     SystemConfigRepository,
 )
+from app.repositories.calls import CallRepository
 from app.repositories.circle import InvitationRepository, ReportRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
@@ -96,6 +98,24 @@ async def get_admin_meeting_governance_service(
 
 AdminMeetingGovernanceServiceDep = Annotated[
     AdminMeetingGovernanceService, Depends(get_admin_meeting_governance_service)
+]
+
+
+async def get_admin_call_governance_service(
+    session: SessionDep, call_service: CallServiceDep
+) -> AdminCallGovernanceService:
+    """Reuses the exact same `CallService` instance `deps.py` already
+    builds, same "delegate the actual mutation, add the admin concern"
+    shape as `get_admin_meeting_governance_service` above."""
+    return AdminCallGovernanceService(
+        calls=CallRepository(session),
+        call_service=call_service,
+        audit_log=AuditLogRepository(session),
+    )
+
+
+AdminCallGovernanceServiceDep = Annotated[
+    AdminCallGovernanceService, Depends(get_admin_call_governance_service)
 ]
 
 

@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Share, Text, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
 import { Button } from "../../components/Button";
 import { Screen } from "../../components/Screen";
@@ -14,12 +15,11 @@ import { getAccessToken } from "../../lib/session";
 /**
  * §22: relationship establishment via QR scan or invite link — both are
  * the same underlying `ditsala://circle/add?userId=<id>` link, QR is just
- * that link encoded as an image. This app can scan a QR encoding that
- * link (expo-camera's barcode scanner) and can share the link itself
- * (native Share sheet), but doesn't render its own QR code image yet —
- * that needs a QR-generation library, deliberately not added here to
- * avoid a new native dependency on this memory-constrained dev machine.
- * See docs/SECURITY_GAPS.md.
+ * that link encoded as an image. Scanning (expo-camera) and sharing the
+ * link (native Share sheet) were already real; this screen now also
+ * renders the user's own link as a scannable QR code (react-native-svg +
+ * react-native-qrcode-svg — pure-JS rendering, no native config plugin
+ * needed), closing the gap tracked in docs/SECURITY_GAPS.md.
  */
 export default function AddToCircle() {
   const router = useRouter();
@@ -29,6 +29,8 @@ export default function AddToCircle() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [myLink, setMyLink] = useState<string | null>(null);
+  const [loadingLink, setLoadingLink] = useState(false);
 
   const sendRequest = useCallback(
     async (targetUserId: string, channel: "qr" | "invite_link") => {
@@ -58,16 +60,39 @@ export default function AddToCircle() {
     }
   }, [incomingUserId, sendRequest]);
 
-  async function handleShare() {
+  async function getMyLink(): Promise<string | null> {
     const token = await getAccessToken();
-    if (!token) return;
+    if (!token) return null;
+    const me = await authApi.getMe(token);
+    return Linking.createURL("/circle/add", { queryParams: { userId: me.id } });
+  }
+
+  async function handleShare() {
     setError(null);
     try {
-      const me = await authApi.getMe(token);
-      const link = Linking.createURL("/circle/add", { queryParams: { userId: me.id } });
+      const link = await getMyLink();
+      if (!link) return;
       await Share.share({ message: `Add me on DITSALA: ${link}` });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create your Circle link.");
+    }
+  }
+
+  async function handleShowQr() {
+    if (myLink) {
+      setMyLink(null);
+      return;
+    }
+    setError(null);
+    setLoadingLink(true);
+    try {
+      const link = await getMyLink();
+      if (!link) return;
+      setMyLink(link);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not create your Circle code.");
+    } finally {
+      setLoadingLink(false);
     }
   }
 
@@ -124,7 +149,7 @@ export default function AddToCircle() {
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Add to Circle</Text>
       <Text className="mb-8 text-base text-text-secondary">
-        Find people you know, scan someone&apos;s Circle QR code, or share your own link.
+        Find people you know, scan someone&apos;s Circle QR code, or share your own.
       </Text>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
@@ -143,6 +168,22 @@ export default function AddToCircle() {
         onPress={handleStartScan}
         loading={busy}
       />
+      <View className="h-3" />
+      <Button
+        testID="show-qr-button"
+        label={myLink ? "Hide my QR code" : "Show my QR code"}
+        variant="secondary"
+        onPress={handleShowQr}
+        loading={loadingLink}
+      />
+
+      {myLink ? (
+        <View className="mt-6 items-center rounded-2xl bg-white p-6">
+          {/* Fixed black-on-white regardless of app theme — max scanner contrast/compatibility, not a themed surface */}
+          <QRCode testID="my-qr-code" value={myLink} size={220} color="#000000" backgroundColor="#FFFFFF" />
+        </View>
+      ) : null}
+
       <View className="h-3" />
       <Button
         testID="share-link-button"

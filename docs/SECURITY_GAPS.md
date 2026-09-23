@@ -12,15 +12,9 @@ Living document of features shipped behind an interface because they couldn't ye
 
 ## Open
 
-### Admin has no live-call moderation, and message/call content moderation is deliberately impossible
+### Message/call content moderation is deliberately impossible (not a gap, a hard boundary)
 
-**What's missing:** the new `AdminMeetingGovernanceService` (list/extend/end any Conference Room meeting platform-wide) has no equivalent for `domain/calls` (1:1 voice/video calls) — an admin can't see or force-end a call in progress. The same pattern (an admin-override method with no participant-check, RBAC-gated at the router) would transfer directly; just not built this pass.
-
-**Why:** Out of scope for the session that added meeting governance — calls are a materially different data model (`domain/calls/service.py`'s signaling state machine, not `Meeting`), and adding it without dedicated attention risked doing it hastily.
-
-**Tracked for:** A follow-up pass, mirroring `meetings_governance:view`/`:action`'s exact shape for calls.
-
-**Not a gap, a hard boundary — documented here so it isn't mistaken for an oversight:** "control user messaging" and "voice/video calling" admin requests stop at account-level and metadata actions (suspend/ban already blocks messaging and calling entirely; Reports & Moderation surfaces what's reportable) because §7's E2EE non-negotiable means **no admin path can ever retrieve decrypted message content** — a content-moderation admin feature is not a smaller version of this gap, it's the thing that non-negotiable exists to prevent. Voice/video calls are DTLS-SRTP end-to-end for the same reason (spec's locked "Calls" decision) — admin has never had, and won't have, a way to listen in.
+Documented here so it isn't mistaken for an oversight: "control user messaging" and "voice/video calling" admin requests stop at account-level and metadata actions (suspend/ban already blocks messaging and calling entirely; Reports & Moderation surfaces what's reportable; `AdminCallGovernanceService`/`AdminMeetingGovernanceService` cover force-ending a live call/meeting) because §7's E2EE non-negotiable means **no admin path can ever retrieve decrypted message content** — a content-moderation admin feature is not a smaller version of a gap, it's the thing that non-negotiable exists to prevent. Voice/video calls are DTLS-SRTP end-to-end for the same reason (spec's locked "Calls" decision) — admin has never had, and won't have, a way to listen in.
 
 ### admin app's Sidebar scroll fix not visually confirmed
 
@@ -130,9 +124,9 @@ Living document of features shipped behind an interface because they couldn't ye
 
 **Tracked for:** Whoever next has EAS/Xcode/Android Studio access — run a real device build and place a call between two devices before trusting this beyond "code review passed." See the ADR for the full reasoning.
 
-### Circle QR code generation and safety-number display gaps carried over from Phase 5
+### Safety-number display gap carried over from Phase 5
 
-See the two entries below this one for the pre-existing Circle gaps (QR rendering, safety-number fingerprint display) — unchanged by Phase 6.
+See the entry below for the pre-existing Circle gap (safety-number fingerprint display) — unchanged by Phase 6.
 
 ### Location sharing is foreground-only (spec §25)
 
@@ -158,14 +152,6 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 **Tracked for:** Before Phase 2 goes live against production or sandbox credentials — re-verify every field/endpoint against Smile ID's current partner API docs, then remove this section.
 
-### Circle QR code generation (spec §22-23)
-
-**What's missing:** `app/circle/add.tsx` can *scan* a QR code (via `expo-camera`'s barcode scanner, real and working) and can *share* the user's own add-contact link (`ditsala://circle/add?userId=<id>`, via React Native's built-in `Share` sheet — also real and working), but cannot *render* its own link as a scannable QR code image. A second DITSALA user has no on-screen QR code to point their camera at yet.
-
-**Why:** Deliberate, not a capability gap. Rendering a QR image needs a QR-generation library (e.g. `react-native-qrcode-svg`), which isn't in the dependency tree — this session already flagged the host machine's real memory constraints (3.84GB RAM) mid-Phase-4 and has been conservative about new native dependencies since. Link-sharing covers the same flow end to end without one.
-
-**Tracked for:** Add a QR-generation library and render the link from `handleShare` (already computed there via `Linking.createURL`) as an image, then remove this section. Low risk, no architecture change — `extractContactUserId` (`lib/circle-link.ts`) already parses whatever a camera scans, so the scanning half needs no changes.
-
 ### Safety-number display is not rendered (spec §23)
 
 **What's missing:** §23's safety number is "a human-readable fingerprint derived from both parties' Signal identity keys" — a real cryptographic value the Signal Protocol produces from real `IdentityKey` material. `app/circle/index.tsx`'s "Verify in person" action calls the real `POST /circle/safety-number/verify` endpoint and really does promote a contact to `trusted` server-side, but the screen never displays the two-sided fingerprint string a user is supposed to compare — because there's no real value to show.
@@ -182,13 +168,13 @@ See the two entries below this one for the pre-existing Circle gaps (QR renderin
 
 **Tracked for:** Same milestone as the Smile ID field/endpoint-accuracy gap above — before Phase 2/3 go live against real credentials, add a test that POSTs a properly-signed payload (using real or sandbox Smile ID credentials) to `/webhooks/smile-id` and asserts the full path end to end.
 
-### Data subject access requests are tracked, not auto-fulfilled (spec §34.4)
+### Data export bundle only reaches tables one hop from `users.id` (spec §34.4)
 
-**What's missing:** `domain/compliance/service.py` (`ComplianceService`) implements full request-tracking against the 30-day SLA — filing, listing, admin mark-in-progress/complete/reject with resolution notes — for all three request types (access, correction, deletion). Completing a **deletion** request genuinely triggers the real deletion cascade (delegates to `AccountLifecycleService.request_deactivation`, same code path as self-service deactivation, ADR 0009). Completing an **access** request does not generate an actual data-export bundle (a file containing everything DITSALA holds about that user across all P0-P3 tables) — the admin records how it was fulfilled in `resolution_notes`, but no code assembles that export.
+**What's missing:** `domain/compliance/export.py` (`DataExportService`) now generates a real downloadable bundle when an admin completes an **access** request (`ComplianceService.complete` calls it automatically, uploads via `StorageProvider.put_object`, and stores the key on `DataSubjectRequest.export_storage_key`; `GET /account/data-requests/{id}/download` mints a fresh presigned URL). It's reflection-driven — walks every mapped model for a *direct* foreign key to `users.id` — plus one hand-written join for `messages` (whose sender is one hop away via `sender_device_id -> devices.user_id`, and which this feature's own design explicitly promises as "metadata, never content"). Every column is filtered through the existing §5 classification registry: P0 excluded, P2 (ciphertext, precise location) redacted to a placeholder, P1/P3 included as-is. Tables reachable only through a *deeper* chain — `media_objects` (via `messages`), `location_pings`/`location_access_log` (via `location_shares`), `meeting_participants`-adjacent meeting data reachable only via a hosted meeting, etc. — are not walked and so don't appear in the bundle.
 
-**Why:** A full data-export pipeline is a materially larger, separate feature than request tracking — it needs to enumerate every table touching a user (30+ tables as of Phase 8), decide a sensible export format, and handle P1 data (KYC result summaries) and P2 data (the user's own message metadata, never content — §7.3 forbids that regardless) with care. Building it well deserves its own design pass rather than a rushed pass bolted onto the request-tracking feature.
+**Why:** A fully generic multi-hop graph walker is a materially larger, separate piece of engineering than the single- and double-hop cases built here, and risks silently traversing relationships that shouldn't be treated as "this user's own data" (e.g. every *other* participant's row in a meeting the user merely attended). The one-hop-plus-messages scope was chosen as the largest safe, mechanically verifiable slice rather than guessing at which deeper joins are "this user's data" vs. "data about an interaction the user was part of."
 
-**Tracked for:** Add an export-generation job (likely triggered the same way the scheduled sweeps in `app/tasks/scheduler.py` are, given it may take a while for a user with a lot of history) that gathers a user's P0(-hash-only)/P1(-summary-only)/P3 data into a downloadable bundle, then wire `ComplianceService.complete` to produce and deliver it automatically for `request_type == "access"`.
+**Tracked for:** Add deliberate, named joins for the specific deeper tables that matter most for a real access request (media_objects, location history) the same way `messages` was added here, rather than attempting a fully generic multi-hop walker. Not yet run against a real S3-compatible endpoint in this environment — same `SandboxStorageProvider`-unverified caveat as the "Local S3-compatible storage" entry above; `put_object` is new and shares that adapter's untested-against-a-live-bucket status.
 
 ### Rate limiting and scheduled sweeps are in-process, single-instance (spec §32, §34.2)
 

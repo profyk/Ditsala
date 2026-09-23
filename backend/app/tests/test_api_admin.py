@@ -14,16 +14,19 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api.v1.deps import get_compliance_service
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import hash_secret
 from app.domain.account.service import AccountLifecycleService
+from app.domain.compliance.export import DataExportService
 from app.domain.compliance.service import ComplianceService
 from app.main import app
 from app.models.accounts import User
 from app.models.admin import AdminUser
 from app.repositories.admin import AdminRoleRepository, AuditLogRepository
 from app.repositories.users import DataSubjectRequestRepository, UserRepository
+from app.tests.test_compliance_service import StubStorageProvider
 
 
 @pytest.fixture
@@ -244,6 +247,23 @@ async def test_trust_safety_can_action_data_subject_requests(
     admin = await _make_admin(session, role_name="trust_safety")
     token = await _login(client, admin, "SuperSecret123!")
 
+    # No local S3/MinIO in this environment (docs/SECURITY_GAPS.md) — the
+    # real `get_compliance_service` wires a real S3StorageProvider that
+    # would try to actually PUT to it when completing the access request
+    # below, so swap in a stub for this test, same pattern
+    # test_api_messaging.py already uses for its own storage-touching calls.
+    async def _override_compliance_service() -> ComplianceService:
+        return ComplianceService(
+            requests=DataSubjectRequestRepository(session),
+            users=UserRepository(session),
+            account_lifecycle=AccountLifecycleService(
+                users=UserRepository(session), audit_log=AuditLogRepository(session)
+            ),
+            export=DataExportService(session=session, storage=StubStorageProvider()),
+        )
+
+    app.dependency_overrides[get_compliance_service] = _override_compliance_service
+
     requester = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -281,6 +301,7 @@ async def test_trust_safety_can_action_data_subject_requests(
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "completed"
     assert r.json()["resolution_notes"] == "Emailed the export to the requester."
+    assert r.json()["export_available"] is True
 
 
 async def test_kyc_reviewer_cannot_access_data_subject_requests(

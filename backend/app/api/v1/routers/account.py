@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.v1.deps import (
@@ -16,7 +18,11 @@ from app.schemas.account import (
     RequestAvatarUploadRequest,
     RequestAvatarUploadResponse,
 )
-from app.schemas.compliance import DataSubjectRequestResponse, FileDataSubjectRequestRequest
+from app.schemas.compliance import (
+    DataExportDownloadResponse,
+    DataSubjectRequestResponse,
+    FileDataSubjectRequestRequest,
+)
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -101,3 +107,14 @@ async def list_own_data_subject_requests(
 ) -> list[DataSubjectRequestResponse]:
     requests = await service.list_for_user(user.id)
     return [DataSubjectRequestResponse.model_validate(r) for r in requests]
+
+
+@router.get("/data-requests/{request_id}/download", response_model=DataExportDownloadResponse)
+async def download_data_export(
+    request_id: uuid.UUID, user: CurrentUserDep, service: ComplianceServiceDep
+) -> DataExportDownloadResponse:
+    try:
+        url = await service.get_export_download_url(user=user, request_id=request_id)
+    except ComplianceError as exc:
+        raise _as_http_error(exc) from exc
+    return DataExportDownloadResponse(download_url=url)

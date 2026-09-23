@@ -53,6 +53,15 @@ class S3StorageProvider(StorageProvider):
             ExpiresIn=self._ttl_seconds,
         )
 
+    async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
+        await asyncio.to_thread(
+            self._client.put_object,
+            Bucket=self._bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type,
+        )
+
     @classmethod
     def from_settings(cls, settings: Settings) -> "S3StorageProvider":
         return cls(

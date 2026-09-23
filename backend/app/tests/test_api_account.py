@@ -11,9 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import create_access_token
+from app.domain.account.service import AccountLifecycleService
+from app.domain.compliance.export import DataExportService
+from app.domain.compliance.service import ComplianceService
 from app.main import app
 from app.models.accounts import User
-from app.repositories.users import UserRepository
+from app.repositories.admin import AuditLogRepository
+from app.repositories.users import DataSubjectRequestRepository, UserRepository
+from app.tests.test_compliance_service import StubStorageProvider
 
 
 @pytest.fixture
@@ -138,6 +143,50 @@ async def test_file_data_subject_request_rejects_unknown_type(
         headers=_bearer_for(user),
     )
     assert r.status_code == 422
+
+
+async def test_download_completed_access_export(client: AsyncClient, session: AsyncSession) -> None:
+    user = await _make_active_user(session)
+    headers = _bearer_for(user)
+
+    # Completed directly (not via the admin HTTP path — that's covered in
+    # test_api_admin.py) with a stub storage provider standing in for the
+    # bundle upload itself (no local S3/MinIO in this environment). The
+    # download endpoint under test only mints a presigned URL, a local
+    # signature computation with no network call, so it needs no stub.
+    compliance = ComplianceService(
+        requests=DataSubjectRequestRepository(session),
+        users=UserRepository(session),
+        account_lifecycle=AccountLifecycleService(
+            users=UserRepository(session), audit_log=AuditLogRepository(session)
+        ),
+        export=DataExportService(session=session, storage=StubStorageProvider()),
+    )
+    request = await compliance.file_request(user, request_type="access", details=None)
+    await compliance.complete(
+        admin_id=uuid.uuid4(), request_id=request.id, resolution_notes="Bundle generated."
+    )
+
+    r = await client.get(f"/api/v1/account/data-requests/{request.id}/download", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["download_url"]
+
+
+async def test_download_export_rejects_before_completion(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+    headers = _bearer_for(user)
+
+    r = await client.post(
+        "/api/v1/account/data-requests",
+        json={"request_type": "access", "details": None},
+        headers=headers,
+    )
+    request_id = r.json()["id"]
+
+    r = await client.get(f"/api/v1/account/data-requests/{request_id}/download", headers=headers)
+    assert r.status_code == 400
 
 
 async def test_avatar_upload_confirm_and_remove(client: AsyncClient, session: AsyncSession) -> None:

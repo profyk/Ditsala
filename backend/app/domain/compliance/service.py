@@ -16,19 +16,21 @@ fix itself.
 reversible grace window as self-service deactivation (docs/adr/0009), so
 there is exactly one deletion-cascade code path in the system, not two.
 
-**Access requests**: a full data-export bundle (gathering every P0-P3
-field for a user across every table into a downloadable file) is not
-built here — that is a materially larger, separate feature than request
-tracking, and doing it well needs its own design pass (a large dump of a
-user's own P0/P1 data has its own handling requirements). This service
-tracks the request and lets an admin record how it was actually
-fulfilled (`resolution_notes`) — see docs/SECURITY_GAPS.md.
+**Access requests**: completing one calls `DataExportService.generate_export`
+(`domain/compliance/export.py`) when an export service is wired in,
+producing a real downloadable bundle rather than just a `resolution_notes`
+description of how it was fulfilled — see that module's docstring for
+what it includes/redacts. `export` is optional (defaults to `None`, same
+additive pattern `MeetingService`'s `plans: PlanService | None` already
+uses) so every existing call site/test that doesn't pass one keeps working
+unchanged, just without export generation.
 """
 
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.account.service import AccountLifecycleService
+from app.domain.compliance.export import DataExportService
 from app.models.accounts import DataSubjectRequest, User
 from app.repositories.users import DataSubjectRequestRepository, UserRepository
 
@@ -46,10 +48,12 @@ class ComplianceService:
         requests: DataSubjectRequestRepository,
         users: UserRepository,
         account_lifecycle: AccountLifecycleService,
+        export: DataExportService | None = None,
     ) -> None:
         self._requests = requests
         self._users = users
         self._account_lifecycle = account_lifecycle
+        self._export = export
 
     # --- filed by the user themselves ---
 
@@ -71,6 +75,16 @@ class ComplianceService:
     async def list_for_user(self, user_id: uuid.UUID) -> list[DataSubjectRequest]:
         return await self._requests.list_for_user(user_id)
 
+    async def get_export_download_url(self, *, user: User, request_id: uuid.UUID) -> str:
+        request = await self._requests.get(request_id)
+        if request is None or request.user_id != user.id:
+            raise ComplianceError("No such data subject request.")
+        if request.request_type != "access" or not request.export_storage_key:
+            raise ComplianceError("No export is available for this request.")
+        if self._export is None:
+            raise ComplianceError("Export downloads are not available.")
+        return await self._export.create_download_url(request.export_storage_key)
+
     # --- §28: admin-actionable ---
 
     async def list_by_status(self, status: str = "pending") -> list[DataSubjectRequest]:
@@ -88,11 +102,14 @@ class ComplianceService:
         self, *, admin_id: uuid.UUID, request_id: uuid.UUID, resolution_notes: str
     ) -> DataSubjectRequest:
         request = await self._get_actionable(request_id)
-        if request.request_type == "deletion":
+        if request.request_type in ("deletion", "access"):
             user = await self._users.get(request.user_id)
             if user is None:
                 raise ComplianceError("The user this request belongs to no longer exists.")
-            await self._account_lifecycle.request_deactivation(user)
+            if request.request_type == "deletion":
+                await self._account_lifecycle.request_deactivation(user)
+            elif self._export is not None:
+                request.export_storage_key = await self._export.generate_export(user)
         request.status = "completed"
         request.resolved_at = datetime.now(UTC)
         request.resolution_notes = resolution_notes

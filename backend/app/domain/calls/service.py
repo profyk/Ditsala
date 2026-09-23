@@ -135,6 +135,28 @@ class CallService:
         await self._notify_user(other.user_id, {"type": "call.ended", "call_id": str(call.id)})
         return call
 
+    async def admin_end_call(self, *, call_id: uuid.UUID) -> Call:
+        """Same admin-override shape as `MeetingService.admin_end_meeting`
+        — deliberately no participant-check (an admin override is an
+        override; RBAC already gated entry at the router), and notifies
+        *every* participant rather than just "the other side," since the
+        admin isn't a participant to exclude."""
+        call = await self._calls.get(call_id)
+        if call is None:
+            raise CallError("No such call.")
+        if call.status in ("ended", "declined", "missed"):
+            return call
+        call.status = "missed" if call.status == "ringing" else "ended"
+        call.ended_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        for participant in await self._participants.list_for_call(call_id):
+            if participant.left_at is None:
+                participant.left_at = now
+            await self._notify_user(
+                participant.user_id, {"type": "call.ended", "call_id": str(call.id)}
+            )
+        return call
+
     async def relay_signal(
         self, *, call_id: uuid.UUID, from_user_id: uuid.UUID, payload: dict[str, Any]
     ) -> None:

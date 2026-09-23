@@ -250,3 +250,8 @@ class DataSubjectRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     actioned_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL")
     )
+    # Set when `complete()` auto-generates a data-export bundle for an
+    # `access` request (`domain/compliance/export.py`) — the storage object
+    # key, not a URL, since presigned download URLs are short-lived and are
+    # re-minted fresh on each `GET /account/data-requests/{id}/download`.
+    export_storage_key: Mapped[str | None] = mapped_column(Text)

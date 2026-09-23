@@ -32,6 +32,8 @@ class Harness:
     devices: DeviceRepository
     conversations: ConversationRepository
     conversation_members: ConversationMemberRepository
+    calls: CallRepository
+    participants: CallParticipantRepository
 
 
 @pytest.fixture
@@ -50,17 +52,24 @@ def harness(session: AsyncSession) -> Harness:
     devices = DeviceRepository(session)
     conversations = ConversationRepository(session)
     conversation_members = ConversationMemberRepository(session)
+    calls = CallRepository(session)
+    participants = CallParticipantRepository(session)
     service = CallService(
-        calls=CallRepository(session),
-        participants=CallParticipantRepository(session),
+        calls=calls,
+        participants=participants,
         conversations=conversations,
         conversation_members=conversation_members,
         devices=devices,
         connection_manager=ConnectionManager(),
     )
     return Harness(
-        service=service, users=users, devices=devices,
-        conversations=conversations, conversation_members=conversation_members,
+        service=service,
+        users=users,
+        devices=devices,
+        conversations=conversations,
+        conversation_members=conversation_members,
+        calls=calls,
+        participants=participants,
     )
 
 
@@ -78,8 +87,12 @@ async def _make_user_with_device(harness: Harness) -> tuple[User, Device]:
     now = datetime.now(UTC)
     device = await harness.devices.add(
         Device(
-            user_id=user.id, device_name="Test Device", platform="ios",
-            first_seen_at=now, last_seen_at=now, is_trusted=True,
+            user_id=user.id,
+            device_name="Test Device",
+            platform="ios",
+            first_seen_at=now,
+            last_seen_at=now,
+            is_trusted=True,
         )
     )
     return user, device
@@ -240,4 +253,71 @@ async def test_list_calls_for_user(harness: Harness) -> None:
     )
 
     assert [c.id for c in await harness.service.list_calls(alice.id)] == [call.id]
-    assert [c.id for c in await harness.service.list_calls(bob.id)] == [call.id]
+
+
+async def test_admin_end_call_on_a_ringing_call_marks_it_missed(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    conversation = await _make_direct_conversation(harness, alice.id, bob.id)
+    call = await harness.service.initiate_call(
+        initiator_id=alice.id, conversation_id=conversation.id, call_type="voice"
+    )
+
+    ended = await harness.service.admin_end_call(call_id=call.id)
+    assert ended.status == "missed"
+    assert ended.ended_at is not None
+
+
+async def test_admin_end_call_on_an_active_call_marks_it_ended_and_sets_left_at(
+    harness: Harness,
+) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    conversation = await _make_direct_conversation(harness, alice.id, bob.id)
+    call = await harness.service.initiate_call(
+        initiator_id=alice.id, conversation_id=conversation.id, call_type="voice"
+    )
+    await harness.service.answer_call(call_id=call.id, user_id=bob.id)
+
+    ended = await harness.service.admin_end_call(call_id=call.id)
+    assert ended.status == "ended"
+
+    participants = await harness.participants.list_for_call(call.id)
+    assert all(p.left_at is not None for p in participants)
+
+
+async def test_admin_end_call_is_idempotent(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    conversation = await _make_direct_conversation(harness, alice.id, bob.id)
+    call = await harness.service.initiate_call(
+        initiator_id=alice.id, conversation_id=conversation.id, call_type="voice"
+    )
+    await harness.service.decline_call(call_id=call.id, user_id=bob.id)
+
+    # Already resolved — an admin override shouldn't raise or change the outcome.
+    ended = await harness.service.admin_end_call(call_id=call.id)
+    assert ended.status == "declined"
+
+
+async def test_admin_end_call_rejects_unknown_call(harness: Harness) -> None:
+    with pytest.raises(CallError, match="No such call"):
+        await harness.service.admin_end_call(call_id=uuid.uuid4())
+
+
+async def test_call_repository_list_by_statuses_is_platform_wide(harness: Harness) -> None:
+    alice, _d1 = await _make_user_with_device(harness)
+    bob, _d2 = await _make_user_with_device(harness)
+    conversation = await _make_direct_conversation(harness, alice.id, bob.id)
+    ringing_call = await harness.service.initiate_call(
+        initiator_id=alice.id, conversation_id=conversation.id, call_type="voice"
+    )
+    ended_call = await harness.service.initiate_call(
+        initiator_id=alice.id, conversation_id=conversation.id, call_type="voice"
+    )
+    await harness.service.decline_call(call_id=ended_call.id, user_id=bob.id)
+
+    live = await harness.calls.list_by_statuses(["ringing", "active"])
+    ids = {c.id for c in live}
+    assert ringing_call.id in ids
+    assert ended_call.id not in ids

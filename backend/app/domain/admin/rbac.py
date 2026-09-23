@@ -34,3 +34,5 @@ class Permission(StrEnum):
     MEETINGS_GOVERNANCE_VIEW = "meetings_governance:view"
     MEETINGS_GOVERNANCE_ACTION = "meetings_governance:action"
     REVENUE_VIEW = "revenue:view"
+    CALLS_GOVERNANCE_VIEW = "calls_governance:view"
+    CALLS_GOVERNANCE_ACTION = "calls_governance:action"
