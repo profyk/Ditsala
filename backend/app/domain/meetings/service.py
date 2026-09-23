@@ -669,6 +669,33 @@ class MeetingService:
         meeting.locked_at = datetime.now(UTC) if locked else None
         return meeting
 
+    async def set_waiting_room_enabled(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, enabled: bool
+    ) -> Meeting:
+        """The host's choice between the two guest-entry experiences a
+        non-host gets within their `prep_lead_minutes` early-join window
+        (`_is_within_join_window`) — `enabled=True`: "hold to be
+        admitted" (`join`/`guest_join` set a new participant's
+        `admission_status` to `waiting`; they need `admit_participant`,
+        or the scheduler's `auto_promote_waiting_conference_participants`
+        auto-admits everyone the moment `scheduled_start_at` arrives, no
+        host action required either way). `enabled=False`: "enter the
+        room and wait there" — a new participant is `admitted`
+        immediately and lands straight in the (possibly still-empty)
+        room instead of a separate waiting state.
+
+        Previously only settable once, at `create_meeting` time
+        (`CreateMeetingRequest.waiting_room_enabled`) — this is the same
+        setting, now changeable live during `prep`/`live` too, same
+        "host-only, mirrors `set_locked`" restriction. Changing it only
+        affects participants who join *after* the change; anyone already
+        `waiting` or `admitted` keeps their current status."""
+        meeting = await self.get_meeting(meeting_id)
+        if meeting.host_user_id != acting_user_id:
+            raise MeetingError("Only the host can change the waiting room setting.")
+        meeting.waiting_room_enabled = enabled
+        return meeting
+
     # ---- Phase 4: webinar/large-audience stage control ---------------------
 
     async def invite_to_stage(

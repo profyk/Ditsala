@@ -52,6 +52,7 @@ export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: M
         {isHost ? (
           <div className="flex items-center gap-2">
             <LiveCountdown meetingId={meetingId} hostToken={hostToken!} />
+            <WaitingRoomControl meetingId={meetingId} hostToken={hostToken!} />
             <LockControl meetingId={meetingId} hostToken={hostToken!} />
             <EndMeetingControl meetingId={meetingId} hostToken={hostToken!} />
           </div>
@@ -175,6 +176,47 @@ function LockControl({ meetingId, hostToken }: { meetingId: string; hostToken: s
       }`}
     >
       {locked ? "🔒 Locked" : "🔓 Lock"}
+    </button>
+  );
+}
+
+function WaitingRoomControl({ meetingId, hostToken }: { meetingId: string; hostToken: string }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      const meeting: MeetingResponse = await meetingsApi.setWaitingRoom(
+        meetingId,
+        !(enabled ?? false),
+        hostToken
+      );
+      setEnabled(meeting.waiting_room_enabled);
+    } catch {
+      // Leaves the existing state showing — the host can just retry.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={busy}
+      title={
+        enabled
+          ? "Guests wait to be admitted — click to let them straight in instead"
+          : "Guests join straight into the room — click to hold them until admitted instead"
+      }
+      className={`rounded px-3 py-1.5 text-sm border disabled:opacity-50 ${
+        enabled
+          ? "bg-accent-muted text-accent border-accent"
+          : "bg-surface text-text-primary border-border hover:bg-surface-raised"
+      }`}
+    >
+      {enabled ? "🖐 Hold guests" : "🚪 Let guests in"}
     </button>
   );
 }

@@ -270,6 +270,16 @@ export const meetingsApi = {
   lockMeeting: (meetingId: string, locked: boolean, token: string) =>
     request<MeetingResponse>(`/meetings/${meetingId}/lock`, { token, body: { locked } }),
 
+  // The host's live choice between "hold guests until admitted" and "let
+  // them straight into the room to wait" — previously only settable once,
+  // at scheduling time.
+  setWaitingRoom: (meetingId: string, enabled: boolean, token: string) =>
+    request<MeetingResponse>(`/meetings/${meetingId}/waiting-room`, {
+      method: "PUT",
+      token,
+      body: { enabled },
+    }),
+
   // Host-only, real moderation — every participant regardless of status,
   // unlike /waiting-room. Backs the Participants panel's mute/remove.
   listParticipants: (meetingId: string, token: string) =>

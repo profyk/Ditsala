@@ -691,6 +691,37 @@ async def test_full_host_toolset_works_via_the_host_token(
     assert r.status_code == 200, r.text
     assert r.json()["locked_at"] is None
 
+    # Waiting room: host toggles it live, via the host token, and the
+    # change actually applies to the next guest who joins.
+    r = await client.put(
+        f"/api/v1/meetings/{meeting_id}/waiting-room",
+        json={"enabled": True},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["waiting_room_enabled"] is True
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Early bird"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "waiting"
+
+    r = await client.put(
+        f"/api/v1/meetings/{meeting_id}/waiting-room",
+        json={"enabled": False},
+        headers=host_token_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["waiting_room_enabled"] is False
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/guest-join",
+        json={"guest_display_name": "Straight in"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["admission_status"] == "admitted"
+    assert r.json()["access"]["token"]
+
     # Mute / promote / remove
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/participants/{participant_id}/mute",

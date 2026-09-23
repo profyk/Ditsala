@@ -108,6 +108,10 @@ class LockMeetingRequest(BaseModel):
     locked: bool
 
 
+class SetWaitingRoomRequest(BaseModel):
+    enabled: bool
+
+
 class ReactionRequest(BaseModel):
     # Public given a valid participant_id, same trust model as
     # `list_documents`/`set_participant_language` — a guest has no JWT,

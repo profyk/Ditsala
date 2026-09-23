@@ -58,6 +58,7 @@ from app.schemas.meetings import (
     RoomAccessTokenResponse,
     SendMessageRequest,
     SetParticipantLanguageRequest,
+    SetWaitingRoomRequest,
     TranscriptSegmentResponse,
     TranslateMessageResponse,
     VotePollRequest,
@@ -463,6 +464,26 @@ async def lock_meeting(
     try:
         meeting = await service.set_locked(
             meeting_id=meeting_id, acting_user_id=acting_user_id, locked=body.locked
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingResponse.model_validate(meeting)
+
+
+@router.put("/{meeting_id}/waiting-room", response_model=MeetingResponse)
+async def set_waiting_room(
+    meeting_id: uuid.UUID,
+    body: SetWaitingRoomRequest,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> MeetingResponse:
+    """Host chooses between "hold guests until admitted" and "let them
+    straight into the room to wait" — previously only settable once, at
+    scheduling time. See `MeetingService.set_waiting_room_enabled`'s
+    docstring."""
+    try:
+        meeting = await service.set_waiting_room_enabled(
+            meeting_id=meeting_id, acting_user_id=acting_user_id, enabled=body.enabled
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc

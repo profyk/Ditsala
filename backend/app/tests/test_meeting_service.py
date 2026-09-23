@@ -493,6 +493,41 @@ async def test_lock_meeting_only_by_host_and_blocks_join(harness: Harness) -> No
     assert unlocked.locked_at is None
 
 
+async def test_set_waiting_room_enabled_only_by_host_and_changes_next_join(
+    harness: Harness,
+) -> None:
+    """The host's live "hold guests until admitted" vs "let them straight
+    into the room" choice — previously only settable once, at creation."""
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    # Created with waiting_room_enabled defaulting to False.
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    with pytest.raises(MeetingError, match="Only the host"):
+        await harness.service.set_waiting_room_enabled(
+            meeting_id=meeting.id, acting_user_id=other.id, enabled=True
+        )
+
+    updated = await harness.service.set_waiting_room_enabled(
+        meeting_id=meeting.id, acting_user_id=host.id, enabled=True
+    )
+    assert updated.waiting_room_enabled is True
+
+    result = await harness.service.join(meeting_id=meeting.id, user=other)
+    assert result.participant.admission_status == "waiting"
+    assert result.access_token is None
+
+    reverted = await harness.service.set_waiting_room_enabled(
+        meeting_id=meeting.id, acting_user_id=host.id, enabled=False
+    )
+    assert reverted.waiting_room_enabled is False
+
+    third = await _make_user(harness)
+    result2 = await harness.service.join(meeting_id=meeting.id, user=third)
+    assert result2.participant.admission_status == "admitted"
+    assert result2.access_token is not None
+
+
 # ---- Phase 2: reactions / raise-hand -----------------------------------------
 
 
