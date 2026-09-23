@@ -7,6 +7,7 @@ import { ScheduleDateTimePicker } from "../../components/ScheduleDateTimePicker"
 import { Screen } from "../../components/Screen";
 import { TextField } from "../../components/TextField";
 import { ApiError } from "../../lib/api";
+import { saveMeetingSecret } from "../../lib/meeting-secrets";
 import { type MeetingResponse, meetingJoinLink, meetingsApi } from "../../lib/meetings-api";
 import { getAccessToken } from "../../lib/session";
 
@@ -47,6 +48,16 @@ export default function ScheduleMeeting() {
         scheduled_start_at: scheduledAt.toISOString(),
         password,
         waiting_room_enabled: waitingRoomEnabled,
+      });
+      // The only two moments either value is ever in plaintext anywhere:
+      // this device just typed the password, and the PIN just arrived
+      // once over the wire — see lib/meeting-secrets.ts for why this is
+      // saved locally instead of being lost the moment this screen closes.
+      await saveMeetingSecret({
+        meetingId: meeting.id,
+        title: meeting.title,
+        password,
+        hostPin: meeting.host_pin ?? null,
       });
       setCreated(meeting);
     } catch (err) {

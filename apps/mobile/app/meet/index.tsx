@@ -13,6 +13,11 @@ import {
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
 import { ApiError } from "../../lib/api";
+import {
+  deleteMeetingSecret,
+  getMeetingSecrets,
+  type MeetingSecret,
+} from "../../lib/meeting-secrets";
 import { type MeetingResponse, meetingJoinLink, meetingsApi } from "../../lib/meetings-api";
 import { getAccessToken } from "../../lib/session";
 import { useTheme } from "../../lib/theme-context";
@@ -36,17 +41,23 @@ function formatScheduled(meeting: MeetingResponse): string {
  * scoped token (`POST /meetings/{id}/host-link`) so it opens straight into
  * the live room as host, not the guest-join form.
  */
-type ExpandedPanel = "none" | "delete" | "co-host";
+type ExpandedPanel = "none" | "delete" | "co-host" | "secrets";
 
 export default function MyMeetings() {
   const router = useRouter();
   const { colors } = useTheme();
   const [meetings, setMeetings] = useState<MeetingResponse[] | null>(null);
+  const [secrets, setSecrets] = useState<Record<string, MeetingSecret>>({});
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<{ id: string; panel: ExpandedPanel } | null>(null);
   const [coHostPhone, setCoHostPhone] = useState("");
   const [busy, setBusy] = useState(false);
+  // Two independent reveal sets — a shown password shouldn't force the
+  // PIN to show too, and vice versa, and each meeting's toggles are
+  // independent of every other meeting's.
+  const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
+  const [revealedPins, setRevealedPins] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     const accessToken = await getAccessToken();
@@ -62,6 +73,9 @@ export default function MyMeetings() {
         return bTime - aTime;
       });
       setMeetings(list);
+      // Local-only — see lib/meeting-secrets.ts. Only ever finds
+      // anything for a meeting scheduled from this same device.
+      setSecrets(await getMeetingSecrets(list.map((m) => m.id)));
     } catch {
       setError("Could not load your meetings.");
     }
@@ -79,6 +93,13 @@ export default function MyMeetings() {
     setExpanded((current) =>
       current?.id === meetingId && current.panel === panel ? null : { id: meetingId, panel }
     );
+  }
+
+  function toggleRevealed(set: Set<string>, setSet: (next: Set<string>) => void, key: string) {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSet(next);
   }
 
   async function handleOpen(meeting: MeetingResponse) {
@@ -128,6 +149,7 @@ export default function MyMeetings() {
         return;
       }
       await meetingsApi.delete(accessToken, meetingId);
+      await deleteMeetingSecret(meetingId);
       setExpanded(null);
       setMeetings((current) => current?.filter((m) => m.id !== meetingId) ?? current);
     } catch (err) {
@@ -216,6 +238,13 @@ export default function MyMeetings() {
 
               <View className="flex-row gap-2 border-t border-border px-4 py-2">
                 <Pressable
+                  testID={`my-meeting-secrets-${meeting.id}`}
+                  onPress={() => toggle(meeting.id, "secrets")}
+                  className="flex-1 items-center rounded-lg py-2 active:bg-surface-raised"
+                >
+                  <Text className="text-xs font-medium text-text-secondary">🔑 ID, password & PIN</Text>
+                </Pressable>
+                <Pressable
                   testID={`my-meeting-invite-cohost-${meeting.id}`}
                   onPress={() => toggle(meeting.id, "co-host")}
                   className="flex-1 items-center rounded-lg py-2 active:bg-surface-raised"
@@ -230,6 +259,44 @@ export default function MyMeetings() {
                   <Text className="text-xs font-medium text-danger">Delete</Text>
                 </Pressable>
               </View>
+
+              {isExpanded && expanded?.panel === "secrets" ? (
+                <View className="gap-3 border-t border-border p-4">
+                  <View>
+                    <Text className="mb-1 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+                      Meeting ID
+                    </Text>
+                    <Text selectable className="text-sm text-text-primary">
+                      {meeting.id}
+                    </Text>
+                  </View>
+                  {secrets[meeting.id]?.password ? (
+                    <SecretField
+                      label="Password"
+                      value={secrets[meeting.id].password!}
+                      revealed={revealedPasswords.has(meeting.id)}
+                      onToggle={() =>
+                        toggleRevealed(revealedPasswords, setRevealedPasswords, meeting.id)
+                      }
+                    />
+                  ) : null}
+                  {secrets[meeting.id]?.hostPin ? (
+                    <SecretField
+                      label="Host PIN"
+                      value={secrets[meeting.id].hostPin!}
+                      revealed={revealedPins.has(meeting.id)}
+                      onToggle={() => toggleRevealed(revealedPins, setRevealedPins, meeting.id)}
+                    />
+                  ) : null}
+                  {!secrets[meeting.id]?.password && !secrets[meeting.id]?.hostPin ? (
+                    <Text className="text-xs text-text-tertiary">
+                      Password &amp; PIN aren&apos;t available on this device — they&apos;re only
+                      ever shown once, right when a meeting is scheduled, and never sent back by
+                      the server afterward.
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
 
               {isExpanded && expanded?.panel === "co-host" ? (
                 <View className="gap-2 border-t border-border p-4">
@@ -281,5 +348,33 @@ export default function MyMeetings() {
         })
       )}
     </Screen>
+  );
+}
+
+function SecretField({
+  label,
+  value,
+  revealed,
+  onToggle,
+}: {
+  label: string;
+  value: string;
+  revealed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <View>
+      <Text className="mb-1 text-xs font-medium uppercase tracking-widest text-text-tertiary">
+        {label}
+      </Text>
+      <View className="flex-row items-center justify-between">
+        <Text selectable className="text-base tracking-widest text-text-primary">
+          {revealed ? value : "•".repeat(value.length)}
+        </Text>
+        <Pressable onPress={onToggle} hitSlop={8}>
+          <Text className="text-xs font-medium text-accent">{revealed ? "Hide" : "Show"}</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
