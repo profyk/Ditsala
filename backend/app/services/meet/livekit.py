@@ -141,6 +141,14 @@ class LiveKitRoomProvider(RoomProvider):
             info = await client.egress.start_room_composite_egress(
                 livekit_api.RoomCompositeEgressRequest(
                     room_name=room_name,
+                    # Was previously unset, which silently defaults to
+                    # LiveKit's own zero-value preset (720p30) — this is
+                    # the highest resolution/frame rate LiveKit's Egress
+                    # actually offers as a built-in preset; there is no
+                    # 4K option in its protocol at all (checked directly
+                    # against livekit.protocol.egress's EncodingOptions
+                    # Preset enum).
+                    preset=livekit_api.EncodingOptionsPreset.H264_1080P_60,
                     file_outputs=[
                         livekit_api.EncodedFileOutput(
                             filepath=s3_key,

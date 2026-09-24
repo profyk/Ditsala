@@ -27,26 +27,30 @@ import {
 const POLL_INTERVAL_MS = 4000;
 const RECHECK_INTERVAL_MS = 30000;
 
-// HD video + clearer audio (explicit user ask). h720 rather than h1080 as
-// the capture default — a meaningful, widely-recognized "HD" bar without
-// the upload-bandwidth cost 1080p asks of every participant on a
-// constrained connection; simulcast still lets LiveKit downgrade
-// per-subscriber rather than every viewer paying the top layer's cost.
-// musicHighQuality (96kbps mono) over the SDK's music/48kbps default for
-// clearer voice, without musicHighQualityStereo's needless doubling for
-// what's almost always a single mono mic source.
+// The real ceiling for *live* video/audio (explicit user ask for "4K
+// HDR" — neither is achievable for real-time calling: most cameras
+// can't capture it, a 4K upload needs ~15-25Mbps this product's actual
+// target networks don't have, and LiveKit has no HDR capture/encode
+// path at all — see the matching note on start_recording for the
+// recording side of this same ask). h1080 is the practical maximum
+// every mainstream video-calling product converges on for exactly
+// those reasons. A 3-rung simulcast ladder still lets LiveKit drop a
+// weak connection down to h360/h540 automatically — this raises the
+// ceiling for good connections without forcing bad ones to fail.
+// musicHighQualityStereo (128kbps) is the actual highest-quality audio
+// preset this SDK offers.
 const ROOM_OPTIONS = {
   adaptiveStream: true,
   dynacast: true,
-  videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
+  videoCaptureDefaults: { resolution: VideoPresets.h1080.resolution },
   audioCaptureDefaults: {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
   },
   publishDefaults: {
-    videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360, VideoPresets.h720],
-    audioPreset: AudioPresets.musicHighQuality,
+    videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h540, VideoPresets.h1080],
+    audioPreset: AudioPresets.musicHighQualityStereo,
     dtx: false,
     red: true,
   },
