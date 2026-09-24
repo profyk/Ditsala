@@ -85,13 +85,17 @@ async def _make_user(harness: Harness, *, account_tier: str = "normal") -> User:
 
 
 async def test_create_plan(harness: Harness, admin_id: uuid.UUID) -> None:
+    # A generic CRUD test — deliberately not code="vip", which migration
+    # a1f5b8e3c2d7 now seeds for real (see test_get_entitlement_for_user_
+    # resolves_through_plan below for the test that actually needs that
+    # real row).
     plan = await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="Ditsala VIP"
+        admin_id=admin_id, code="vip_test", product="vip", name="Ditsala VIP Test"
     )
-    assert plan.code == "vip"
+    assert plan.code == "vip_test"
     assert plan.status == "active"
 
-    fetched = await harness.service.get_plan_by_code("vip")
+    fetched = await harness.service.get_plan_by_code("vip_test")
     assert fetched is not None and fetched.id == plan.id
 
 
@@ -99,11 +103,11 @@ async def test_create_plan_rejects_duplicate_code(
     harness: Harness, admin_id: uuid.UUID
 ) -> None:
     await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="Ditsala VIP"
+        admin_id=admin_id, code="vip_test", product="vip", name="Ditsala VIP Test"
     )
     with pytest.raises(PlanError, match="already exists"):
         await harness.service.create_plan(
-            admin_id=admin_id, code="vip", product="vip", name="Ditsala VIP (dup)"
+            admin_id=admin_id, code="vip_test", product="vip", name="Ditsala VIP Test (dup)"
         )
 
 
@@ -131,7 +135,7 @@ async def test_set_price_creates_and_archives_previous(
     harness: Harness, admin_id: uuid.UUID
 ) -> None:
     plan = await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="VIP"
+        admin_id=admin_id, code="vip_test", product="vip", name="VIP Test"
     )
 
     first = await harness.service.set_price(
@@ -141,7 +145,7 @@ async def test_set_price_creates_and_archives_previous(
     assert first.status == "active"
 
     active = await harness.service.get_active_price(
-        plan_code="vip", currency="ZAR", billing_interval="month"
+        plan_code="vip_test", currency="ZAR", billing_interval="month"
     )
     assert active is not None and active.id == first.id
 
@@ -157,7 +161,7 @@ async def test_set_price_creates_and_archives_previous(
     assert by_id[second.id].status == "active"
 
     active_now = await harness.service.get_active_price(
-        plan_code="vip", currency="ZAR", billing_interval="month"
+        plan_code="vip_test", currency="ZAR", billing_interval="month"
     )
     assert active_now is not None and active_now.id == second.id
     assert active_now.amount_cents == 12900
@@ -188,7 +192,7 @@ async def test_set_price_requires_existing_plan(harness: Harness, admin_id: uuid
 
 async def test_set_and_list_entitlements(harness: Harness, admin_id: uuid.UUID) -> None:
     plan = await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="VIP"
+        admin_id=admin_id, code="vip_test", product="vip", name="VIP Test"
     )
 
     await harness.service.set_entitlement(
@@ -208,7 +212,7 @@ async def test_set_entitlement_overwrites_and_is_audit_logged(
     harness: Harness, admin_id: uuid.UUID
 ) -> None:
     plan = await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="VIP"
+        admin_id=admin_id, code="vip_test", product="vip", name="VIP Test"
     )
     await harness.service.set_entitlement(
         admin_id=admin_id, plan_id=plan.id, key="interpretation.minutes_per_month", value=600,
@@ -250,9 +254,11 @@ async def test_resolve_plan_code_for_user(harness: Harness) -> None:
 async def test_get_entitlement_for_user_resolves_through_plan(
     harness: Harness, admin_id: uuid.UUID
 ) -> None:
-    vip_plan = await harness.service.create_plan(
-        admin_id=admin_id, code="vip", product="vip", name="VIP"
-    )
+    # resolve_plan_code_for_user hardcodes "vip" for VIP-tier users
+    # (DEFAULT_VIP_PLAN_CODE) — real Postgres, so the real row migration
+    # a1f5b8e3c2d7 seeds is already there; not creating a duplicate.
+    vip_plan = await harness.service.get_plan_by_code("vip")
+    assert vip_plan is not None, "expected migration a1f5b8e3c2d7 to have seeded the 'vip' plan"
     await harness.service.set_entitlement(
         admin_id=admin_id, plan_id=vip_plan.id, key="translation.text", value=True,
         reason="VIP feature",

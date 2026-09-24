@@ -14,16 +14,15 @@ from app.core.db import get_db_session
 from app.core.security import create_access_token, hash_secret
 from app.domain.billing.conference_upgrade import ConferencePlanUpgradeService
 from app.domain.billing.plans import PlanService
-from app.domain.billing.service import VIP_PRICING_CONFIG_KEY, VipUpgradeService
+from app.domain.billing.service import (
+    VIP_PLAN_CODE,
+    VIP_PRICING_BILLING_INTERVAL,
+    VipUpgradeService,
+)
 from app.main import app
 from app.models.accounts import User
 from app.models.admin import AdminUser
-from app.repositories.admin import (
-    AdminRoleRepository,
-    AdminUserRepository,
-    AuditLogRepository,
-    SystemConfigRepository,
-)
+from app.repositories.admin import AdminRoleRepository, AdminUserRepository, AuditLogRepository
 from app.repositories.billing import (
     ConferencePlanPurchaseRepository,
     EntitlementRepository,
@@ -61,7 +60,13 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             vip_subscriptions=VipSubscriptionRepository(db_session),
             kyc_documents=KycDocumentRepository(db_session),
             kyc_face_verifications=KycFaceVerificationRepository(db_session),
-            system_config=SystemConfigRepository(db_session),
+            plans=PlanService(
+                plans=PlanRepository(db_session),
+                plan_prices=PlanPriceRepository(db_session),
+                entitlements=EntitlementRepository(db_session),
+                audit_log=AuditLogRepository(db_session),
+                users=UserRepository(db_session),
+            ),
             payment_provider=StubPaymentProvider(),
             kyc_provider=StubKycProvider(),
         )
@@ -117,6 +122,8 @@ def _bearer_for(user: User) -> dict[str, str]:
 
 
 async def _set_pricing(session: AsyncSession) -> None:
+    """Mirrors what an admin does for real via the /pricing page — the
+    vip plan row itself is seeded by migration a1f5b8e3c2d7."""
     role = await AdminRoleRepository(session).get_by_name("super_admin")
     assert role is not None
     admin = await AdminUserRepository(session).add(
@@ -126,10 +133,23 @@ async def _set_pricing(session: AsyncSession) -> None:
             role_id=role.id,
         )
     )
-    await SystemConfigRepository(session).upsert(
-        key=VIP_PRICING_CONFIG_KEY,
-        value={"amount_cents": 9900, "currency": "ZAR"},
-        updated_by_admin_id=admin.id,
+    plan_repo = PlanRepository(session)
+    plan = await plan_repo.get_by_code(VIP_PLAN_CODE)
+    assert plan is not None, "expected migration a1f5b8e3c2d7 to have seeded the 'vip' plan"
+    plans = PlanService(
+        plans=plan_repo,
+        plan_prices=PlanPriceRepository(session),
+        entitlements=EntitlementRepository(session),
+        audit_log=AuditLogRepository(session),
+        users=UserRepository(session),
+    )
+    await plans.set_price(
+        admin_id=admin.id,
+        plan_id=plan.id,
+        currency="ZAR",
+        amount_cents=9900,
+        billing_interval=VIP_PRICING_BILLING_INTERVAL,
+        reason="test setup",
     )
 
 

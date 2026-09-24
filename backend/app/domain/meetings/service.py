@@ -1094,7 +1094,19 @@ class MeetingService:
     async def translate_message(
         self, *, meeting_id: uuid.UUID, message_id: uuid.UUID, viewer_participant_id: uuid.UUID
     ) -> TranslationRequest:
+        """VIP-only (explicit product decision — was previously free on
+        every tier; reversed on direct instruction). A guest has no
+        DITSALA account at all, so can never be VIP — rejected outright,
+        same "no tier enumeration" reasoning phone-only recovery already
+        uses elsewhere in this codebase, just a plain rejection rather
+        than a account-existence-hiding one since there's nothing to hide
+        here."""
         viewer = await self._get_participant_in_meeting(meeting_id, viewer_participant_id)
+        if viewer.user_id is None:
+            raise MeetingError("Message translation is a VIP feature.")
+        viewer_user = await self._users.get(viewer.user_id)
+        if viewer_user is None or viewer_user.account_tier != "vip":
+            raise MeetingError("Message translation is a VIP feature.")
         message = await self._messages.get(message_id)
         if message is None or message.meeting_id != meeting_id:
             raise MeetingError("No such message.")
@@ -1103,13 +1115,8 @@ class MeetingService:
             raise MeetingError(
                 "Set your conference language before requesting a translation."
             )
-        if viewer.user_id is not None:
-            requested_by_user_id = viewer.user_id
-        else:
-            meeting = await self.get_meeting(meeting_id)
-            requested_by_user_id = meeting.host_user_id
         return await self._translation.translate_and_record(
-            requested_by_user_id=requested_by_user_id,
+            requested_by_user_id=viewer.user_id,
             context_type="conference_caption",
             context_id=message.id,
             source_text=message.body,

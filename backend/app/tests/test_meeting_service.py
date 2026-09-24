@@ -842,7 +842,7 @@ async def test_set_and_get_participant_language(harness: Harness) -> None:
 
 async def test_translate_message_uses_viewers_stored_language(harness: Harness) -> None:
     host = await _make_user(harness)
-    other = await _make_user(harness)
+    other = await _make_user(harness, account_tier="vip")
     meeting = await harness.service.create_meeting(host=host, title="Global Standup")
     host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
     other_result = await harness.service.join(meeting_id=meeting.id, user=other)
@@ -867,7 +867,7 @@ async def test_translate_message_uses_viewers_stored_language(harness: Harness) 
 
 async def test_translate_message_requires_viewer_language_set(harness: Harness) -> None:
     host = await _make_user(harness)
-    other = await _make_user(harness)
+    other = await _make_user(harness, account_tier="vip")
     meeting = await harness.service.create_meeting(host=host, title="Global Standup")
     host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
     other_result = await harness.service.join(meeting_id=meeting.id, user=other)
@@ -884,7 +884,7 @@ async def test_translate_message_requires_viewer_language_set(harness: Harness) 
 
 async def test_translate_message_rejects_message_from_another_meeting(harness: Harness) -> None:
     host = await _make_user(harness)
-    other = await _make_user(harness)
+    other = await _make_user(harness, account_tier="vip")
     meeting_a = await harness.service.create_meeting(host=host, title="Meeting A")
     meeting_b = await harness.service.create_meeting(host=host, title="Meeting B")
     host_a = await harness.participants.get_by_meeting_and_user(meeting_a.id, host.id)
@@ -900,6 +900,53 @@ async def test_translate_message_rejects_message_from_another_meeting(harness: H
             meeting_id=meeting_b.id,
             message_id=message.id,
             viewer_participant_id=other_result_b.participant.id,
+        )
+
+
+async def test_translate_message_is_vip_only(harness: Harness) -> None:
+    """Real product decision, direct instruction: message translation
+    used to be free on every tier — now VIP-only. Setting a language
+    preference itself stays free (harmless, not the paid action);
+    only the translate call is gated."""
+    host = await _make_user(harness)
+    normal = await _make_user(harness, account_tier="normal")
+    meeting = await harness.service.create_meeting(host=host, title="Global Standup")
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    normal_result = await harness.service.join(meeting_id=meeting.id, user=normal)
+    assert host_p is not None
+
+    message = await harness.service.send_message(meeting_id=meeting.id, sender=host_p, body="Hi")
+    await harness.service.set_participant_language(
+        meeting_id=meeting.id, participant_id=normal_result.participant.id, language="zh"
+    )
+
+    with pytest.raises(MeetingError, match="VIP feature"):
+        await harness.service.translate_message(
+            meeting_id=meeting.id,
+            message_id=message.id,
+            viewer_participant_id=normal_result.participant.id,
+        )
+
+
+async def test_translate_message_rejects_guests_outright(harness: Harness) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Global Standup")
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    assert host_p is not None
+    message = await harness.service.send_message(meeting_id=meeting.id, sender=host_p, body="Hi")
+
+    guest_result = await harness.service.guest_join(
+        meeting_id=meeting.id, guest_display_name="Guest"
+    )
+    await harness.service.set_participant_language(
+        meeting_id=meeting.id, participant_id=guest_result.participant.id, language="zh"
+    )
+
+    with pytest.raises(MeetingError, match="VIP feature"):
+        await harness.service.translate_message(
+            meeting_id=meeting.id,
+            message_id=message.id,
+            viewer_participant_id=guest_result.participant.id,
         )
 
 

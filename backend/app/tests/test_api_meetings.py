@@ -146,7 +146,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides.clear()
 
 
-async def _make_active_user(session: AsyncSession) -> User:
+async def _make_active_user(session: AsyncSession, *, account_tier: str = "normal") -> User:
     user = User(
         email=f"{uuid.uuid4()}@example.com",
         phone=f"+27{uuid.uuid4().int % 10**9}",
@@ -154,6 +154,7 @@ async def _make_active_user(session: AsyncSession) -> User:
         date_of_birth=datetime(1990, 1, 1),
         national_id_hash=uuid.uuid4().hex,
         account_state="active",
+        account_tier=account_tier,
     )
     session.add(user)
     await session.flush()
@@ -1116,13 +1117,14 @@ async def test_meeting_documents_upload_list_download_for_guest(
     assert r.json()["download_url"]
 
 
-async def test_guest_can_set_conference_language_and_translate_chat(
+async def test_guest_can_set_conference_language_but_not_translate(
     client: AsyncClient, session: AsyncSession
 ) -> None:
-    """The whole point of gating these public-given-a-participant-id
-    (not CurrentUserDep) — apps/meet's web client only ever has a guest
-    or a host-link session, never a real DITSALA access token, so a
-    guest must be able to use multilingual chat without one."""
+    """Setting a language preference stays free and needs no DITSALA
+    account (public-given-a-participant-id, same reasoning as every
+    other guest-usable meeting endpoint) — but the actual translate
+    action is now VIP-only (explicit product decision), and a guest has
+    no account at all, so can never be VIP."""
     host = await _make_active_user(session)
     headers = _bearer_for(host)
     r = await client.post("/api/v1/meetings", json={"title": "Global Standup"}, headers=headers)
@@ -1159,6 +1161,41 @@ async def test_guest_can_set_conference_language_and_translate_chat(
     r = await client.post(
         f"/api/v1/meetings/{meeting_id}/messages/{message_id}/translate",
         params={"participant_id": guest_participant_id},
+    )
+    assert r.status_code == 400, r.text
+    assert "VIP" in r.json()["detail"]
+
+
+async def test_vip_participant_can_translate_chat(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    host = await _make_active_user(session)
+    vip = await _make_active_user(session, account_tier="vip")
+    headers = _bearer_for(host)
+    r = await client.post("/api/v1/meetings", json={"title": "Global Standup"}, headers=headers)
+    meeting_id = r.json()["id"]
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/join", json={}, headers=headers)
+    host_participant_id = r.json()["participant_id"]
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/join", json={}, headers=_bearer_for(vip)
+    )
+    vip_participant_id = r.json()["participant_id"]
+
+    r = await client.put(
+        f"/api/v1/meetings/{meeting_id}/participants/{vip_participant_id}/language",
+        json={"language": "zh"},
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages",
+        json={"participant_id": host_participant_id, "body": "Hello, nice to meet you."},
+    )
+    message_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/messages/{message_id}/translate",
+        params={"participant_id": vip_participant_id},
     )
     assert r.status_code == 200, r.text
     assert r.json()["translated_text"] == "你好，很高兴认识你。"

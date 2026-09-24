@@ -503,13 +503,15 @@ MeetingIntelligenceServiceDep = Annotated[
 ]
 
 
-async def get_vip_upgrade_service(session: SessionDep, settings: SettingsDep) -> VipUpgradeService:
+async def get_vip_upgrade_service(
+    session: SessionDep, settings: SettingsDep, plans: PlanServiceDep
+) -> VipUpgradeService:
     return VipUpgradeService(
         users=UserRepository(session),
         vip_subscriptions=VipSubscriptionRepository(session),
         kyc_documents=KycDocumentRepository(session),
         kyc_face_verifications=KycFaceVerificationRepository(session),
-        system_config=SystemConfigRepository(session),
+        plans=plans,
         payment_provider=get_payment_provider(settings),
         kyc_provider=get_kyc_provider(settings),
     )

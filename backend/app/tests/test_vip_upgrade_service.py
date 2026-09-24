@@ -16,12 +16,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import get_settings
 from app.core.security import hash_secret
 from app.domain.billing.interfaces import PaymentInitiation, PaymentProvider, PaymentWebhookResult
-from app.domain.billing.service import VIP_PRICING_CONFIG_KEY, VipUpgradeError, VipUpgradeService
+from app.domain.billing.plans import PlanService
+from app.domain.billing.service import (
+    VIP_PLAN_CODE,
+    VIP_PRICING_BILLING_INTERVAL,
+    VipUpgradeError,
+    VipUpgradeService,
+)
 from app.domain.onboarding.interfaces import KycJobType, KycOutcome, KycWebhookResult
 from app.models.accounts import User
 from app.models.admin import AdminUser
-from app.repositories.admin import AdminRoleRepository, AdminUserRepository, SystemConfigRepository
-from app.repositories.billing import VipSubscriptionRepository
+from app.repositories.admin import AdminRoleRepository, AdminUserRepository, AuditLogRepository
+from app.repositories.billing import (
+    EntitlementRepository,
+    PlanPriceRepository,
+    PlanRepository,
+    VipSubscriptionRepository,
+)
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import UserRepository
 from app.tests.test_onboarding_service import StubKycProvider
@@ -53,7 +64,8 @@ class Harness:
     service: VipUpgradeService
     users: UserRepository
     vip_subscriptions: VipSubscriptionRepository
-    system_config: SystemConfigRepository
+    plans: PlanService
+    plan_repo: PlanRepository
     payment_provider: StubPaymentProvider
 
 
@@ -71,14 +83,21 @@ async def session() -> AsyncIterator[AsyncSession]:
 def harness(session: AsyncSession) -> Harness:
     users = UserRepository(session)
     vip_subscriptions = VipSubscriptionRepository(session)
-    system_config = SystemConfigRepository(session)
+    plan_repo = PlanRepository(session)
+    plans = PlanService(
+        plans=plan_repo,
+        plan_prices=PlanPriceRepository(session),
+        entitlements=EntitlementRepository(session),
+        audit_log=AuditLogRepository(session),
+        users=users,
+    )
     payment_provider = StubPaymentProvider()
     service = VipUpgradeService(
         users=users,
         vip_subscriptions=vip_subscriptions,
         kyc_documents=KycDocumentRepository(session),
         kyc_face_verifications=KycFaceVerificationRepository(session),
-        system_config=system_config,
+        plans=plans,
         payment_provider=payment_provider,
         kyc_provider=StubKycProvider(),
     )
@@ -86,7 +105,8 @@ def harness(session: AsyncSession) -> Harness:
         service=service,
         users=users,
         vip_subscriptions=vip_subscriptions,
-        system_config=system_config,
+        plans=plans,
+        plan_repo=plan_repo,
         payment_provider=payment_provider,
     )
 
@@ -127,10 +147,18 @@ async def _set_pricing(
     amount_cents: int = 9900,
     currency: str = "ZAR",
 ) -> None:
-    await harness.system_config.upsert(
-        key=VIP_PRICING_CONFIG_KEY,
-        value={"amount_cents": amount_cents, "currency": currency},
-        updated_by_admin_id=admin_id,
+    """Mirrors what an admin does for real via the /pricing page now —
+    the vip plan row itself is seeded by migration a1f5b8e3c2d7 (real
+    Postgres, so it's already there); only the price is test-specific."""
+    plan = await harness.plan_repo.get_by_code(VIP_PLAN_CODE)
+    assert plan is not None, "expected migration a1f5b8e3c2d7 to have seeded the 'vip' plan"
+    await harness.plans.set_price(
+        admin_id=admin_id,
+        plan_id=plan.id,
+        currency=currency,
+        amount_cents=amount_cents,
+        billing_interval=VIP_PRICING_BILLING_INTERVAL,
+        reason="test setup",
     )
 
 

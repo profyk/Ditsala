@@ -9,15 +9,21 @@ and never touches `account_state` during this — a different lifecycle
 entirely from onboarding's pending_* state machine.
 
 Pricing is admin-configured, not a hardcoded constant — see
-`_get_pricing`. An admin must set it via the generic `system_config`
-key/value editor (`PUT /admin/system-config/vip_pricing`) before any
-upgrade can be initiated.
+`_get_pricing`. Previously a raw `system_config` key/value blob with no
+purpose-built admin UI and no price history — unified onto the same
+real `plans`/`plan_prices` pipeline Conference plans already use
+correctly (a real inconsistency, found and fixed on explicit
+instruction). An admin sets it from the same `/pricing` page, same
+"no default price by design" safety principle as before, just through
+the correct mechanism now — see migration `a1f5b8e3c2d7`, which seeds
+only the `plans` row (code="vip"), never a price.
 """
 
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.billing.interfaces import PaymentInitiation, PaymentProvider, PaymentWebhookResult
+from app.domain.billing.plans import PlanService
 from app.domain.onboarding.interfaces import (
     KycJobType,
     KycOutcome,
@@ -27,12 +33,16 @@ from app.domain.onboarding.interfaces import (
 )
 from app.models.accounts import KycDocument, KycFaceVerification, User
 from app.models.billing import VipSubscription
-from app.repositories.admin import SystemConfigRepository
 from app.repositories.billing import VipSubscriptionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import UserRepository
 
-VIP_PRICING_CONFIG_KEY = "vip_pricing"
+VIP_PLAN_CODE = "vip"
+VIP_PRICING_CURRENCY = "ZAR"
+# VIP is a once-a-year renewal (VIP_PERIOD_DAYS below), unlike
+# Conference's monthly plans — "year" is the real billing cadence being
+# priced, not an arbitrary choice.
+VIP_PRICING_BILLING_INTERVAL = "year"
 # §34.2-style retention isn't relevant here — this is just how long a
 # paid VIP period lasts before requiring renewal. A year, not tied to any
 # spec section since VIP itself is a business decision, not a compliance one.
@@ -51,7 +61,7 @@ class VipUpgradeService:
         vip_subscriptions: VipSubscriptionRepository,
         kyc_documents: KycDocumentRepository,
         kyc_face_verifications: KycFaceVerificationRepository,
-        system_config: SystemConfigRepository,
+        plans: PlanService,
         payment_provider: PaymentProvider,
         kyc_provider: KycProvider,
     ) -> None:
@@ -59,7 +69,7 @@ class VipUpgradeService:
         self._vip_subscriptions = vip_subscriptions
         self._kyc_documents = kyc_documents
         self._kyc_face_verifications = kyc_face_verifications
-        self._system_config = system_config
+        self._plans = plans
         self._payment_provider = payment_provider
         self._kyc_provider = kyc_provider
 
@@ -116,20 +126,17 @@ class VipUpgradeService:
         return initiation
 
     async def _get_pricing(self) -> tuple[int, str]:
-        config = await self._system_config.get_by_key(VIP_PRICING_CONFIG_KEY)
-        if config is None:
+        price = await self._plans.get_active_price(
+            plan_code=VIP_PLAN_CODE,
+            currency=VIP_PRICING_CURRENCY,
+            billing_interval=VIP_PRICING_BILLING_INTERVAL,
+        )
+        if price is None:
             raise VipUpgradeError(
-                "VIP pricing has not been configured yet — an admin must set the "
-                f"{VIP_PRICING_CONFIG_KEY!r} system_config key before upgrades can start."
+                "VIP pricing has not been configured yet — an admin must set a price for "
+                f"the {VIP_PLAN_CODE!r} plan from the Pricing page first."
             )
-        amount_cents = config.value.get("amount_cents")
-        currency = config.value.get("currency")
-        if not isinstance(amount_cents, int) or not isinstance(currency, str):
-            raise VipUpgradeError(
-                f"{VIP_PRICING_CONFIG_KEY!r} is misconfigured — expected "
-                '{"amount_cents": <int>, "currency": <str>}.'
-            )
-        return amount_cents, currency
+        return price.amount_cents, price.currency
 
     async def handle_payment_webhook(self, result: PaymentWebhookResult) -> VipSubscription:
         subscription = await self._vip_subscriptions.get_by_external_reference(
