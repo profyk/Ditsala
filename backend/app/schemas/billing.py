@@ -132,3 +132,28 @@ class UserConferencePlanResponse(BaseModel):
 
 class MyConferencePlanResponse(BaseModel):
     plan_code: str
+
+
+# --- self-serve Conference Room plan upgrade (Stitch) ------------------
+
+
+class ConferencePlanUpgradeStartRequest(BaseModel):
+    plan_code: str = Field(min_length=2, max_length=64)
+
+
+class ConferencePlanUpgradeInitiationResponse(BaseModel):
+    # Null exactly when the target plan was free and got applied
+    # immediately — nothing to redirect the client to pay for.
+    payment_url: str | None
+    external_reference: str | None
+    plan_code: str
+
+
+class ConferencePlanPurchaseStatusResponse(BaseModel):
+    plan_code: str
+    status: str
+    amount_cents: int
+    currency: str
+    paid_at: datetime | None
+
+    model_config = {"from_attributes": True}

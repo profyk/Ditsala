@@ -175,6 +175,18 @@ class RecordingResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MyRecordingResponse(RecordingResponse):
+    """`RecordingResponse` plus which meeting it came from — "My
+    Recordings" lists across every meeting a host has, so each row needs
+    its own context rather than relying on an already-known meeting_id."""
+
+    meeting_title: str
+
+
+class RecordingDownloadResponse(BaseModel):
+    download_url: str
+
+
 class SendMessageRequest(BaseModel):
     # Public given a valid participant_id — same reasoning as ReactionRequest.
     participant_id: uuid.UUID
@@ -412,3 +424,10 @@ class MeetingDocumentResponse(BaseModel):
 
 class MeetingDocumentDownloadResponse(BaseModel):
     download_url: str
+
+
+class MyMeetingDocumentResponse(MeetingDocumentResponse):
+    """Same reasoning as `MyRecordingResponse` — the documents half of
+    "My Recordings"."""
+
+    meeting_title: str

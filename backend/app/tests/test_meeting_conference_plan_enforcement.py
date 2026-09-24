@@ -72,6 +72,9 @@ class StubStorageProvider(StorageProvider):
     async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
         pass
 
+    async def delete_object(self, *, key: str) -> None:
+        pass
+
 
 class StubRoomProvider(LiveKitRoomProvider):
     """Same reasoning as `test_meeting_service.py`'s own stub — real

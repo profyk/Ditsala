@@ -24,3 +24,11 @@ class StorageProvider(Protocol):
         bundle), so the backend uploads the bytes itself rather than issuing
         a presigned URL for someone else to PUT to."""
         ...
+
+    async def delete_object(self, *, key: str) -> None:
+        """Removes the underlying object. Closes the disclosed gap where
+        deleting a meeting document/recording only ever removed the DB
+        row — a real "Delete" button needs the file actually gone, not
+        just hidden from the list. A missing key is not an error (S3's
+        own `delete_object` is already idempotent this way)."""
+        ...

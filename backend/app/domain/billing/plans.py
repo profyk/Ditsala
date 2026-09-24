@@ -281,3 +281,34 @@ class PlanService:
             metadata_json={"before": before, "after": plan_code, "reason": reason},
         )
         return user
+
+    async def apply_paid_conference_plan(self, *, user_id: uuid.UUID, plan_code: str) -> User:
+        """System-actor counterpart to `set_user_conference_plan` above —
+        called by `ConferencePlanUpgradeService.handle_payment_webhook`
+        once Stitch confirms payment, not by an admin, so this logs with
+        `actor_type="system"` rather than `_log`'s hardcoded "admin" and
+        needs no `reason`/`admin_id`. Same validation as the admin path:
+        refuses a `plan_code` that isn't a real, active `product=
+        "conference"` plan."""
+        if self._users is None:
+            raise PlanError("PlanService was constructed without a UserRepository.")
+        user = await self._users.get(user_id)
+        if user is None:
+            raise PlanError("No such user.")
+        plan = await self._plans.get_by_code(plan_code)
+        if plan is None or plan.product != "conference" or plan.status != "active":
+            raise PlanError(f"{plan_code!r} is not an active conference plan.")
+        before = user.conference_plan_code
+        user.conference_plan_code = plan_code
+        await self._audit_log.add(
+            AuditLog(
+                created_at=datetime.now(UTC),
+                actor_type="system",
+                actor_id=user_id,
+                action="user.conference_plan_upgraded",
+                target_type="plan",
+                target_id=user_id,
+                metadata_json={"before": before, "after": plan_code},
+            )
+        )
+        return user

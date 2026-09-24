@@ -25,7 +25,11 @@ export type IconName =
   | "lock"
   | "mic"
   | "sun"
-  | "moon";
+  | "moon"
+  | "file"
+  | "play"
+  | "download"
+  | "trash";
 
 interface IconProps {
   name: IconName;
@@ -536,6 +540,112 @@ export function Icon({ name, size = 24, color = "#FFFFFF", strokeWidth = 2 }: Ic
               borderLeftColor: "transparent",
               borderBottomColor: "transparent",
               transform: [{ rotate: "45deg" }],
+            }}
+          />
+        </View>
+      );
+
+    case "file":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: s * 0.54,
+              height: s * 0.68,
+              borderWidth: sw,
+              borderColor: color,
+              borderRadius: 2,
+            }}
+          />
+          <View
+            style={{
+              position: "absolute",
+              top: s * 0.16,
+              left: s * 0.36,
+              width: s * 0.18,
+              height: s * 0.18,
+              backgroundColor: "transparent",
+              borderTopWidth: sw,
+              borderRightWidth: sw,
+              borderColor: color,
+              transform: [{ rotate: "135deg" }],
+            }}
+          />
+        </View>
+      );
+
+    case "play":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: 0,
+              height: 0,
+              marginLeft: s * 0.06,
+              borderTopWidth: s * 0.28,
+              borderBottomWidth: s * 0.28,
+              borderLeftWidth: s * 0.46,
+              borderTopColor: "transparent",
+              borderBottomColor: "transparent",
+              borderLeftColor: color,
+            }}
+          />
+        </View>
+      );
+
+    case "download":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: sw,
+              height: s * 0.42,
+              backgroundColor: color,
+              marginBottom: -sw / 2,
+            }}
+          />
+          <View
+            style={{
+              width: s * 0.4,
+              height: s * 0.4,
+              borderBottomWidth: sw,
+              borderRightWidth: sw,
+              borderColor: color,
+              transform: [{ rotate: "45deg" }],
+              marginBottom: s * 0.06,
+            }}
+          />
+          <View
+            style={{
+              width: s * 0.68,
+              height: sw,
+              backgroundColor: color,
+              marginTop: s * 0.1,
+            }}
+          />
+        </View>
+      );
+
+    case "trash":
+      return (
+        <View style={{ width: s, height: s, alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: s * 0.36,
+              height: sw,
+              backgroundColor: color,
+              marginBottom: s * 0.04,
+            }}
+          />
+          <View
+            style={{
+              width: s * 0.52,
+              height: s * 0.5,
+              borderWidth: sw,
+              borderTopWidth: 0,
+              borderColor: color,
+              borderBottomLeftRadius: 2,
+              borderBottomRightRadius: 2,
             }}
           />
         </View>

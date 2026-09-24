@@ -3,10 +3,19 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, HTTPException, Request, status
 
-from app.api.v1.deps import CurrentUserDep, SettingsDep, VipUpgradeServiceDep
+from app.api.v1.deps import (
+    ConferencePlanUpgradeServiceDep,
+    CurrentUserDep,
+    SettingsDep,
+    VipUpgradeServiceDep,
+)
 from app.core.security import hash_national_id
+from app.domain.billing.conference_upgrade import ConferencePlanUpgradeError
 from app.domain.billing.service import VipUpgradeError
 from app.schemas.billing import (
+    ConferencePlanPurchaseStatusResponse,
+    ConferencePlanUpgradeInitiationResponse,
+    ConferencePlanUpgradeStartRequest,
     VipKycDocumentStartRequest,
     VipKycSdkTokenResponse,
     VipStatusResponse,
@@ -16,10 +25,15 @@ from app.schemas.billing import (
 from app.services.factory import get_payment_provider
 
 router = APIRouter(prefix="/account/vip", tags=["billing"])
+conference_router = APIRouter(prefix="/account/conference-plan", tags=["billing"])
 webhook_router = APIRouter(tags=["webhooks"])
 
 
 def _as_http_error(exc: VipUpgradeError) -> HTTPException:
+    return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+def _conference_http_error(exc: ConferencePlanUpgradeError) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
@@ -83,9 +97,39 @@ async def start_vip_kyc_liveness(
     return VipKycSdkTokenResponse(token=token.token, job_id=token.job_id)
 
 
+@conference_router.post("/upgrade/start", response_model=ConferencePlanUpgradeInitiationResponse)
+async def start_conference_plan_upgrade(
+    user: CurrentUserDep,
+    service: ConferencePlanUpgradeServiceDep,
+    body: ConferencePlanUpgradeStartRequest,
+) -> ConferencePlanUpgradeInitiationResponse:
+    try:
+        initiation = await service.start_upgrade(user, plan_code=body.plan_code)
+    except ConferencePlanUpgradeError as exc:
+        raise _conference_http_error(exc) from exc
+    return ConferencePlanUpgradeInitiationResponse(
+        payment_url=initiation.payment_url if initiation else None,
+        external_reference=initiation.external_reference if initiation else None,
+        plan_code=body.plan_code,
+    )
+
+
+@conference_router.get(
+    "/upgrade/status", response_model=ConferencePlanPurchaseStatusResponse | None
+)
+async def get_conference_plan_upgrade_status(
+    user: CurrentUserDep, service: ConferencePlanUpgradeServiceDep
+) -> ConferencePlanPurchaseStatusResponse | None:
+    purchase = await service.get_latest_purchase(user.id)
+    return ConferencePlanPurchaseStatusResponse.model_validate(purchase) if purchase else None
+
+
 @webhook_router.post("/webhooks/stitch", include_in_schema=False)
 async def stitch_webhook(
-    request: Request, service: VipUpgradeServiceDep, settings: SettingsDep
+    request: Request,
+    vip_service: VipUpgradeServiceDep,
+    conference_service: ConferencePlanUpgradeServiceDep,
+    settings: SettingsDep,
 ) -> dict[str, str]:
     payload = await request.body()
     signature = request.headers.get("X-Stitch-Signature", "")
@@ -94,8 +138,17 @@ async def stitch_webhook(
     )
     if result is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid webhook signature.")
+    # Both VIP upgrades and Conference Room plan upgrades pay through
+    # this same shared Stitch webhook — try each service's own reference
+    # lookup in turn rather than encoding "which product" into the
+    # reference format itself.
     try:
-        await service.handle_payment_webhook(result)
-    except VipUpgradeError as exc:
+        await vip_service.handle_payment_webhook(result)
+        return {"status": "ok"}
+    except VipUpgradeError:
+        pass
+    try:
+        await conference_service.handle_payment_webhook(result)
+        return {"status": "ok"}
+    except ConferencePlanUpgradeError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    return {"status": "ok"}

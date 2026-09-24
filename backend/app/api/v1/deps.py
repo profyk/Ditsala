@@ -12,6 +12,7 @@ from app.core.security import decode_access_token, decode_meet_host_token, decod
 from app.domain.account.profile_service import ProfileService
 from app.domain.account.service import AccountLifecycleService
 from app.domain.auth.service import AuthService
+from app.domain.billing.conference_upgrade import ConferencePlanUpgradeService
 from app.domain.billing.plans import PlanService
 from app.domain.billing.service import VipUpgradeService
 from app.domain.calls.service import CallService
@@ -31,6 +32,7 @@ from app.models.accounts import User
 from app.models.devices import Device
 from app.repositories.admin import AuditLogRepository, SystemConfigRepository
 from app.repositories.billing import (
+    ConferencePlanPurchaseRepository,
     EntitlementRepository,
     PlanPriceRepository,
     PlanRepository,
@@ -514,6 +516,21 @@ async def get_vip_upgrade_service(session: SessionDep, settings: SettingsDep) ->
 
 
 VipUpgradeServiceDep = Annotated[VipUpgradeService, Depends(get_vip_upgrade_service)]
+
+
+async def get_conference_plan_upgrade_service(
+    session: SessionDep, settings: SettingsDep, plans: PlanServiceDep
+) -> ConferencePlanUpgradeService:
+    return ConferencePlanUpgradeService(
+        purchases=ConferencePlanPurchaseRepository(session),
+        plans=plans,
+        payment_provider=get_payment_provider(settings),
+    )
+
+
+ConferencePlanUpgradeServiceDep = Annotated[
+    ConferencePlanUpgradeService, Depends(get_conference_plan_upgrade_service)
+]
 
 
 async def get_translation_service(session: SessionDep, settings: SettingsDep) -> TranslationService:

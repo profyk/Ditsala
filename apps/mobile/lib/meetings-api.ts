@@ -36,6 +36,35 @@ export interface MeetingResponse {
   host_pin?: string | null;
 }
 
+export interface RecordingResponse {
+  id: string;
+  meeting_id: string;
+  egress_id: string;
+  storage_key: string | null;
+  duration_seconds: number | null;
+  status: "processing" | "ready" | "failed";
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+export interface MyRecordingResponse extends RecordingResponse {
+  meeting_title: string;
+}
+
+export interface MeetingDocumentResponse {
+  id: string;
+  meeting_id: string;
+  uploaded_by_participant_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface MyMeetingDocumentResponse extends MeetingDocumentResponse {
+  meeting_title: string;
+}
+
 export interface CreateMeetingPayload {
   title: string;
   meeting_type?: MeetingType;
@@ -69,6 +98,44 @@ export const meetingsApi = {
     request<{ id: string; role: string }>(`/meetings/${meetingId}/co-host`, {
       token: accessToken,
       body: { phone },
+    }),
+
+  // "My Recordings" — every recording/document across every meeting this
+  // user hosts, not scoped to one meeting.
+  myRecordings: (accessToken: string) =>
+    request<MyRecordingResponse[]>("/meetings/recordings/mine", {
+      method: "GET",
+      token: accessToken,
+    }),
+
+  myDocuments: (accessToken: string) =>
+    request<MyMeetingDocumentResponse[]>("/meetings/documents/mine", {
+      method: "GET",
+      token: accessToken,
+    }),
+
+  recordingDownloadUrl: (accessToken: string, meetingId: string, recordingId: string) =>
+    request<{ download_url: string }>(
+      `/meetings/${meetingId}/recordings/${recordingId}/download`,
+      { method: "GET", token: accessToken }
+    ),
+
+  deleteRecording: (accessToken: string, meetingId: string, recordingId: string) =>
+    request<void>(`/meetings/${meetingId}/recordings/${recordingId}`, {
+      method: "DELETE",
+      token: accessToken,
+    }),
+
+  documentDownloadUrl: (accessToken: string, meetingId: string, documentId: string) =>
+    request<{ download_url: string }>(
+      `/meetings/${meetingId}/documents/${documentId}/host-download`,
+      { method: "GET", token: accessToken }
+    ),
+
+  deleteDocument: (accessToken: string, meetingId: string, documentId: string) =>
+    request<void>(`/meetings/${meetingId}/documents/${documentId}`, {
+      method: "DELETE",
+      token: accessToken,
     }),
 };
 

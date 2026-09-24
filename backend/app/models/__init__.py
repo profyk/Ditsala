@@ -25,7 +25,13 @@ from app.models.admin import (  # noqa: F401
     SystemConfig,
 )
 from app.models.base import Base  # noqa: F401
-from app.models.billing import VipSubscription  # noqa: F401
+from app.models.billing import (  # noqa: F401
+    ConferencePlanPurchase,
+    Entitlement,
+    Plan,
+    PlanPrice,
+    VipSubscription,
+)
 from app.models.calls import Call, CallParticipant  # noqa: F401
 from app.models.circle import Block, Contact, ContactRequest, Invitation, Report  # noqa: F401
 from app.models.crypto import IdentityKey, OneTimePrekey, SenderKey, SignedPrekey  # noqa: F401
@@ -51,3 +57,12 @@ from app.models.messaging import (  # noqa: F401
     MessageReceipt,
 )
 from app.models.push import PushToken  # noqa: F401
+from app.models.translation import (  # noqa: F401
+    ConferenceLanguagePreference,
+    InterpreterSession,
+    TranslationRequest,
+    TranslationUsage,
+    UserLanguagePreference,
+    VipMessage,
+    VipMessageTranslation,
+)

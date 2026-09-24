@@ -133,6 +133,20 @@ class MeetingRecordingRepository(Repository[MeetingRecording]):
         )
         return list(result.scalars().all())
 
+    async def list_for_host(self, host_user_id: uuid.UUID) -> list[tuple[MeetingRecording, str]]:
+        """Every recording across every meeting this user hosts, each
+        paired with its meeting's title — backs the "My Recordings"
+        screen, which lists across meetings rather than requiring the
+        host to open each one individually. Selecting the title
+        alongside avoids an N+1 lookup per row."""
+        result = await self.session.execute(
+            select(MeetingRecording, Meeting.title)
+            .join(Meeting, Meeting.id == MeetingRecording.meeting_id)
+            .where(Meeting.host_user_id == host_user_id)
+            .order_by(MeetingRecording.created_at.desc())
+        )
+        return [(row[0], row[1]) for row in result.all()]
+
 
 class MeetingDocumentRepository(Repository[MeetingDocument]):
     model = MeetingDocument
@@ -144,6 +158,17 @@ class MeetingDocumentRepository(Repository[MeetingDocument]):
             .order_by(MeetingDocument.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def list_for_host(self, host_user_id: uuid.UUID) -> list[tuple[MeetingDocument, str]]:
+        """Same reasoning as `MeetingRecordingRepository.list_for_host` —
+        backs "My Recordings"'s documents section."""
+        result = await self.session.execute(
+            select(MeetingDocument, Meeting.title)
+            .join(Meeting, Meeting.id == MeetingDocument.meeting_id)
+            .where(Meeting.host_user_id == host_user_id)
+            .order_by(MeetingDocument.created_at.desc())
+        )
+        return [(row[0], row[1]) for row in result.all()]
 
 
 class MeetingMessageRepository(Repository[MeetingMessage]):

@@ -61,7 +61,9 @@
         {
           "contactsPermission": "DITSALA checks which of your contacts already have an account, so you can add them to your Circle — your contact list is never uploaded or stored, only phone numbers are checked against DITSALA's own accounts."
         }
-      ]
+      ],
+      "expo-video",
+      "expo-sharing"
     ],
     "owner": "profy",
     "extra": {

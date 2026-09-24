@@ -8,18 +8,34 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.v1.deps import SessionDep, get_vip_upgrade_service
+from app.api.v1.deps import SessionDep, get_conference_plan_upgrade_service, get_vip_upgrade_service
 from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.security import create_access_token, hash_secret
+from app.domain.billing.conference_upgrade import ConferencePlanUpgradeService
+from app.domain.billing.plans import PlanService
 from app.domain.billing.service import VIP_PRICING_CONFIG_KEY, VipUpgradeService
 from app.main import app
 from app.models.accounts import User
 from app.models.admin import AdminUser
-from app.repositories.admin import AdminRoleRepository, AdminUserRepository, SystemConfigRepository
-from app.repositories.billing import VipSubscriptionRepository
+from app.repositories.admin import (
+    AdminRoleRepository,
+    AdminUserRepository,
+    AuditLogRepository,
+    SystemConfigRepository,
+)
+from app.repositories.billing import (
+    ConferencePlanPurchaseRepository,
+    EntitlementRepository,
+    PlanPriceRepository,
+    PlanRepository,
+    VipSubscriptionRepository,
+)
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.users import UserRepository
+from app.tests.test_conference_plan_upgrade_service import (
+    StubPaymentProvider as ConferenceStubPayment,
+)
 from app.tests.test_onboarding_service import StubKycProvider
 from app.tests.test_vip_upgrade_service import StubPaymentProvider
 
@@ -50,8 +66,26 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             kyc_provider=StubKycProvider(),
         )
 
+    async def _override_conference_upgrade_service(
+        db_session: SessionDep,
+    ) -> ConferencePlanUpgradeService:
+        return ConferencePlanUpgradeService(
+            purchases=ConferencePlanPurchaseRepository(db_session),
+            plans=PlanService(
+                plans=PlanRepository(db_session),
+                plan_prices=PlanPriceRepository(db_session),
+                entitlements=EntitlementRepository(db_session),
+                audit_log=AuditLogRepository(db_session),
+                users=UserRepository(db_session),
+            ),
+            payment_provider=ConferenceStubPayment(),
+        )
+
     app.dependency_overrides[get_db_session] = _override_db_session
     app.dependency_overrides[get_vip_upgrade_service] = _override_vip_upgrade_service
+    app.dependency_overrides[get_conference_plan_upgrade_service] = (
+        _override_conference_upgrade_service
+    )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -137,4 +171,60 @@ async def test_kyc_document_start_requires_payment_first(
 
 async def test_vip_routes_require_authentication(client: AsyncClient) -> None:
     r = await client.post("/api/v1/account/vip/upgrade/start")
+    assert r.status_code == 401
+
+
+async def test_conference_plan_upgrade_start_returns_payment_url(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+
+    r = await client.post(
+        "/api/v1/account/conference-plan/upgrade/start",
+        json={"plan_code": "conference_pro"},
+        headers=_bearer_for(user),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["payment_url"]
+    assert r.json()["external_reference"]
+    assert r.json()["plan_code"] == "conference_pro"
+
+
+async def test_conference_plan_upgrade_status_reflects_a_pending_purchase(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+    r = await client.post(
+        "/api/v1/account/conference-plan/upgrade/start",
+        json={"plan_code": "conference_pro"},
+        headers=_bearer_for(user),
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get(
+        "/api/v1/account/conference-plan/upgrade/status", headers=_bearer_for(user)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["plan_code"] == "conference_pro"
+    assert r.json()["status"] == "pending_payment"
+
+
+async def test_conference_plan_upgrade_rejects_unknown_plan_code(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+
+    r = await client.post(
+        "/api/v1/account/conference-plan/upgrade/start",
+        json={"plan_code": "not-a-real-plan"},
+        headers=_bearer_for(user),
+    )
+    assert r.status_code == 400
+
+
+async def test_conference_plan_routes_require_authentication(client: AsyncClient) -> None:
+    r = await client.post(
+        "/api/v1/account/conference-plan/upgrade/start", json={"plan_code": "conference_pro"}
+    )
     assert r.status_code == 401

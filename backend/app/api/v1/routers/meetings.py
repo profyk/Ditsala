@@ -45,6 +45,8 @@ from app.schemas.meetings import (
     MeetingSearchResultResponse,
     MessageResponse,
     MuteParticipantRequest,
+    MyMeetingDocumentResponse,
+    MyRecordingResponse,
     ParticipantLanguageResponse,
     ParticipantResponse,
     PollResponse,
@@ -52,6 +54,7 @@ from app.schemas.meetings import (
     QuestionResponse,
     RaiseHandRequest,
     ReactionRequest,
+    RecordingDownloadResponse,
     RecordingResponse,
     RegisterForMeetingRequest,
     RegistrationResponse,
@@ -150,6 +153,35 @@ async def search_meetings(
     never parsed as a meeting id."""
     meetings = await service.search_meetings(user_id=user.id, query=q)
     return [MeetingSearchResultResponse.model_validate(m) for m in meetings]
+
+
+@router.get("/recordings/mine", response_model=list[MyRecordingResponse])
+async def list_my_recordings(
+    user: CurrentUserDep, service: MeetingServiceDep
+) -> list[MyRecordingResponse]:
+    """Must be registered before `/{meeting_id}` so "recordings" is never
+    parsed as a meeting id — same reasoning as `search_meetings` above.
+    Backs mobile's "My Recordings" screen: every recording across every
+    meeting this user hosts, not scoped to one meeting."""
+    rows = await service.list_my_recordings(user_id=user.id)
+    return [
+        MyRecordingResponse(**RecordingResponse.model_validate(r).model_dump(), meeting_title=title)
+        for r, title in rows
+    ]
+
+
+@router.get("/documents/mine", response_model=list[MyMeetingDocumentResponse])
+async def list_my_documents(
+    user: CurrentUserDep, service: MeetingServiceDep
+) -> list[MyMeetingDocumentResponse]:
+    """Same reasoning as `list_my_recordings` above."""
+    rows = await service.list_my_documents(user_id=user.id)
+    return [
+        MyMeetingDocumentResponse(
+            **MeetingDocumentResponse.model_validate(d).model_dump(), meeting_title=title
+        )
+        for d, title in rows
+    ]
 
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
@@ -615,6 +647,43 @@ async def list_recordings(
     return [RecordingResponse.model_validate(r) for r in recordings]
 
 
+@router.get(
+    "/{meeting_id}/recordings/{recording_id}/download",
+    response_model=RecordingDownloadResponse,
+)
+async def get_recording_download_url(
+    meeting_id: uuid.UUID,
+    recording_id: uuid.UUID,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> RecordingDownloadResponse:
+    """Mints a fresh short-lived presigned URL — same reasoning as
+    `document_download_url` below: the recording's real, playable
+    location is never stored client-side, only requested on demand."""
+    try:
+        url = await service.get_recording_download_url(
+            meeting_id=meeting_id, acting_user_id=acting_user_id, recording_id=recording_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return RecordingDownloadResponse(download_url=url)
+
+
+@router.delete("/{meeting_id}/recordings/{recording_id}", status_code=204)
+async def delete_recording(
+    meeting_id: uuid.UUID,
+    recording_id: uuid.UUID,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> None:
+    try:
+        await service.delete_recording(
+            meeting_id=meeting_id, acting_user_id=acting_user_id, recording_id=recording_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+
+
 # ---- Meeting documents — host/co-host share files, every participant
 # (including guests) can view them ----------------------------------------
 
@@ -667,6 +736,28 @@ async def get_document_download_url(
     try:
         url = await service.get_document_download_url(
             meeting_id=meeting_id, participant_id=participant_id, document_id=document_id
+        )
+    except MeetingError as exc:
+        raise _as_http_error(exc) from exc
+    return MeetingDocumentDownloadResponse(download_url=url)
+
+
+@router.get(
+    "/{meeting_id}/documents/{document_id}/host-download",
+    response_model=MeetingDocumentDownloadResponse,
+)
+async def get_document_download_url_as_host(
+    meeting_id: uuid.UUID,
+    document_id: uuid.UUID,
+    acting_user_id: MeetingActorDep,
+    service: MeetingServiceDep,
+) -> MeetingDocumentDownloadResponse:
+    """Host-authenticated counterpart to `get_document_download_url`
+    above — backs "My Recordings", where the host has a real access
+    token but no per-meeting participant_id handy."""
+    try:
+        url = await service.get_document_download_url_for_host(
+            meeting_id=meeting_id, acting_user_id=acting_user_id, document_id=document_id
         )
     except MeetingError as exc:
         raise _as_http_error(exc) from exc

@@ -62,6 +62,9 @@ class S3StorageProvider(StorageProvider):
             ContentType=content_type,
         )
 
+    async def delete_object(self, *, key: str) -> None:
+        await asyncio.to_thread(self._client.delete_object, Bucket=self._bucket, Key=key)
+
     @classmethod
     def from_settings(cls, settings: Settings) -> "S3StorageProvider":
         return cls(

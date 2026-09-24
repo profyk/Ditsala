@@ -54,6 +54,44 @@ class VipSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+CONFERENCE_PLAN_PURCHASE_STATUSES = ("pending_payment", "paid", "failed")
+
+
+class ConferencePlanPurchase(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Self-serve Conference Room plan upgrades via Stitch — same
+    payment-first shape as `VipSubscription`, deliberately its own table
+    rather than reusing that one: a conference-plan purchase needs no KYC
+    step and is a one-off "set the plan" rather than a renewing
+    subscription (`PlanService.set_user_conference_plan` is already a
+    direct assignment, not period-tracked), and which of the four plan
+    codes was actually purchased has to be recorded somewhere for the
+    webhook to know what to grant."""
+
+    __tablename__ = "conference_plan_purchases"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    plan_code: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(
+        Enum(
+            *CONFERENCE_PLAN_PURCHASE_STATUSES,
+            name="conference_plan_purchase_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        default="pending_payment",
+        server_default=text("'pending_payment'"),
+    )
+    payment_provider: Mapped[str] = mapped_column(
+        String(32), default="stitch", server_default=text("'stitch'")
+    )
+    external_payment_reference: Mapped[str] = mapped_column(String(128), unique=True)
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(8))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 PLAN_PRODUCTS = ("free", "vip", "business", "conference")
 PLAN_STATUSES = ("active", "archived")
 BILLING_INTERVALS = ("month", "year", "one_time")

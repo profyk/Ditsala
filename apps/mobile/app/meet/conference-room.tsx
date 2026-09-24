@@ -1,9 +1,11 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
+import { ApiError } from "../../lib/api";
+import { billingApi } from "../../lib/billing-api";
 import { meetingJoinLink } from "../../lib/meetings-api";
 import { formatEntitlement, formatPrice, plansApi, type Plan } from "../../lib/plans-api";
 import { getAccessToken } from "../../lib/session";
@@ -37,6 +39,8 @@ export default function ConferenceRoom() {
   const [error, setError] = useState<string | null>(null);
   const [meetingId, setMeetingId] = useState("");
   const [joining, setJoining] = useState(false);
+  const [upgradingCode, setUpgradingCode] = useState<string | null>(null);
+  const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const accessToken = await getAccessToken();
@@ -75,6 +79,38 @@ export default function ConferenceRoom() {
     }
   }
 
+  async function handleUpgrade(plan: Plan) {
+    setError(null);
+    setUpgradeMessage(null);
+    setUpgradingCode(plan.code);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        router.replace("/");
+        return;
+      }
+      const initiation = await billingApi.startConferencePlanUpgrade(accessToken, plan.code);
+      if (initiation.payment_url) {
+        // Same-tab navigation on web, external browser on native — same
+        // reasoning as "My meetings"' host-link handoff: a new-tab
+        // attempt after an async call reliably gets popup-blocked.
+        if (Platform.OS === "web") {
+          window.location.href = initiation.payment_url;
+        } else {
+          await Linking.openURL(initiation.payment_url);
+        }
+        return;
+      }
+      // Free plan — applied immediately, nothing to pay for.
+      setMyConferencePlanCode(plan.code);
+      setUpgradeMessage(`You're now on ${plan.name}.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start this upgrade.");
+    } finally {
+      setUpgradingCode(null);
+    }
+  }
+
   return (
     <Screen>
       <Text className="mb-2 mt-8 text-3xl font-semibold text-text-primary">Conference Room</Text>
@@ -100,6 +136,21 @@ export default function ConferenceRoom() {
           <Text className="text-sm font-medium text-text-primary">My meetings</Text>
         </Pressable>
       </View>
+
+      <Pressable
+        testID="conference-room-my-recordings-button"
+        onPress={() => router.push("/meet/recordings")}
+        className="mb-6 flex-row items-center gap-3 rounded-xl border border-border bg-surface p-4 active:bg-surface-raised"
+      >
+        <Icon name="play" size={20} color={colors.accent} />
+        <View className="flex-1">
+          <Text className="text-sm font-medium text-text-primary">My recordings</Text>
+          <Text className="text-xs text-text-tertiary">
+            Every recording &amp; document, across every meeting
+          </Text>
+        </View>
+        <Icon name="chevron-right" size={16} color={colors.textTertiary} />
+      </Pressable>
 
       <Text className="mb-2 text-xs font-medium uppercase tracking-widest text-text-tertiary">
         Join a meeting
@@ -133,6 +184,9 @@ export default function ConferenceRoom() {
         Plans &amp; tools
       </Text>
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
+      {upgradeMessage ? (
+        <Text className="mb-4 text-sm text-accent">{upgradeMessage}</Text>
+      ) : null}
       {plans === null ? (
         <ActivityIndicator color={colors.accent} />
       ) : plans.length === 0 ? (
@@ -174,6 +228,22 @@ export default function ConferenceRoom() {
                     </Text>
                   ))}
                 </View>
+              ) : null}
+              {plan.product === "conference" && !isMine ? (
+                <Pressable
+                  testID={`conference-room-upgrade-${plan.code}`}
+                  onPress={() => handleUpgrade(plan)}
+                  disabled={upgradingCode !== null}
+                  className="mt-3 items-center rounded-lg border border-accent py-2 disabled:opacity-50"
+                >
+                  {upgradingCode === plan.code ? (
+                    <ActivityIndicator color={colors.accent} />
+                  ) : (
+                    <Text className="text-sm font-medium text-accent">
+                      Upgrade to {plan.name}
+                    </Text>
+                  )}
+                </Pressable>
               ) : null}
             </View>
           );

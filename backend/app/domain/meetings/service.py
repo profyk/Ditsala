@@ -942,6 +942,20 @@ class MeetingService:
             raise MeetingError("No such document on this meeting.")
         return await self._storage.create_download_url(key=document.storage_key)
 
+    async def get_document_download_url_for_host(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, document_id: uuid.UUID
+    ) -> str:
+        """Host-authenticated counterpart to `get_document_download_url`
+        above — that one trusts a `participant_id` a guest can supply
+        with no JWT, which doesn't fit "My Recordings" browsing across
+        every meeting a host has, without first looking up a
+        participant_id per meeting."""
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        document = await self._documents.get(document_id)
+        if document is None or document.meeting_id != meeting_id:
+            raise MeetingError("No such document on this meeting.")
+        return await self._storage.create_download_url(key=document.storage_key)
+
     async def delete_document(
         self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, document_id: uuid.UUID
     ) -> None:
@@ -949,11 +963,45 @@ class MeetingService:
         document = await self._documents.get(document_id)
         if document is None or document.meeting_id != meeting_id:
             raise MeetingError("No such document on this meeting.")
-        # Removes the DB row only — StorageProvider has no delete method
-        # today (same gap as messaging's MediaObject), so the underlying
-        # object is orphaned in storage rather than actually deleted. A
-        # disclosed scope cut, not a silent one — see docs/SECURITY_GAPS.md.
+        # Closes the previously-disclosed gap (docs/SECURITY_GAPS.md) where
+        # this only removed the DB row and left the object orphaned in
+        # storage — StorageProvider now has a real delete_object.
+        await self._storage.delete_object(key=document.storage_key)
         await self._documents.delete(document)
+
+    async def list_my_recordings(
+        self, *, user_id: uuid.UUID
+    ) -> list[tuple[MeetingRecording, str]]:
+        """Every recording across every meeting this user hosts, newest
+        first — backs mobile's "My Recordings" screen."""
+        return await self._recordings.list_for_host(user_id)
+
+    async def list_my_documents(self, *, user_id: uuid.UUID) -> list[tuple[MeetingDocument, str]]:
+        """Same reasoning as `list_my_recordings` — the documents half of
+        "My Recordings"."""
+        return await self._documents.list_for_host(user_id)
+
+    async def get_recording_download_url(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, recording_id: uuid.UUID
+    ) -> str:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        recording = await self._recordings.get(recording_id)
+        if recording is None or recording.meeting_id != meeting_id or recording.storage_key is None:
+            raise MeetingError("No such recording on this meeting.")
+        return await self._storage.create_download_url(key=recording.storage_key)
+
+    async def delete_recording(
+        self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID, recording_id: uuid.UUID
+    ) -> None:
+        await self._require_host_or_cohost(meeting_id, acting_user_id)
+        recording = await self._recordings.get(recording_id)
+        if recording is None or recording.meeting_id != meeting_id:
+            raise MeetingError("No such recording on this meeting.")
+        if recording.status == "processing":
+            raise MeetingError("Cannot delete a recording that's still processing.")
+        if recording.storage_key is not None:
+            await self._storage.delete_object(key=recording.storage_key)
+        await self._recordings.delete(recording)
 
     # ---- Phase 2: chat -----------------------------------------------------
 

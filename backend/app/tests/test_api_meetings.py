@@ -410,6 +410,57 @@ async def test_recording_start_and_stop(client: AsyncClient, session: AsyncSessi
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "ready"
 
+    r = await client.get(
+        f"/api/v1/meetings/{meeting_id}/recordings/{recording_id}/download",
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["download_url"]
+
+
+async def test_my_recordings_and_documents_endpoints_are_scoped_and_registered_correctly(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """Also proves the real routing gotcha this shape has: `/recordings/mine`
+    and `/documents/mine` must be registered before `/{meeting_id}` or
+    "mine"/"recordings" get swallowed as a meeting_id path param instead."""
+    host = await _make_active_user(session)
+    other = await _make_active_user(session)
+
+    r = await client.post("/api/v1/meetings", json={"title": "Mine"}, headers=_bearer_for(host))
+    my_meeting_id = r.json()["id"]
+    r = await client.post(
+        "/api/v1/meetings", json={"title": "Not mine"}, headers=_bearer_for(other)
+    )
+    other_meeting_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/meetings/{my_meeting_id}/recordings/start", headers=_bearer_for(host)
+    )
+    assert r.status_code == 200, r.text
+    r = await client.post(
+        f"/api/v1/meetings/{other_meeting_id}/recordings/start", headers=_bearer_for(other)
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.post(
+        f"/api/v1/meetings/{my_meeting_id}/documents/upload",
+        json={"filename": "notes.pdf", "content_type": "application/pdf", "size_bytes": 1024},
+        headers=_bearer_for(host),
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/meetings/recordings/mine", headers=_bearer_for(host))
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+    assert r.json()[0]["meeting_title"] == "Mine"
+
+    r = await client.get("/api/v1/meetings/documents/mine", headers=_bearer_for(host))
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 1
+    assert r.json()[0]["filename"] == "notes.pdf"
+    assert r.json()[0]["meeting_title"] == "Mine"
+
 
 async def test_breakout_rooms_end_to_end(client: AsyncClient, session: AsyncSession) -> None:
     host = await _make_active_user(session)

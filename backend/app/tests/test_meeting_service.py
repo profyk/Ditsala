@@ -56,6 +56,9 @@ TEST_LIVEKIT_SECRET = "test-secret-0123456789-0123456789"
 
 
 class StubStorageProvider(StorageProvider):
+    def __init__(self) -> None:
+        self.deleted_keys: list[str] = []
+
     async def create_upload_url(self, *, key: str, content_type: str) -> str:
         return f"https://stub-upload.test/{key}"
 
@@ -64,6 +67,9 @@ class StubStorageProvider(StorageProvider):
 
     async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
         pass
+
+    async def delete_object(self, *, key: str) -> None:
+        self.deleted_keys.append(key)
 
 
 @dataclass
@@ -138,7 +144,14 @@ def room_provider() -> StubRoomProvider:
 
 
 @pytest.fixture
-def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
+def storage_provider() -> StubStorageProvider:
+    return StubStorageProvider()
+
+
+@pytest.fixture
+def harness(
+    session: AsyncSession, room_provider: StubRoomProvider, storage_provider: StubStorageProvider
+) -> Harness:
     participants = MeetingParticipantRepository(session)
     conference_language_preferences = ConferenceLanguagePreferenceRepository(session)
     translation_service = TranslationService(
@@ -162,7 +175,7 @@ def harness(session: AsyncSession, room_provider: StubRoomProvider) -> Harness:
         breakout_room_participants=BreakoutRoomParticipantRepository(session),
         registrations=MeetingRegistrationRepository(session),
         documents=MeetingDocumentRepository(session),
-        storage_provider=StubStorageProvider(),
+        storage_provider=storage_provider,
         conference_language_preferences=conference_language_preferences,
         translation_service=translation_service,
         users=UserRepository(session),
@@ -660,6 +673,113 @@ async def test_start_and_stop_recording(harness: Harness, room_provider: StubRoo
         meeting_id=meeting.id, acting_user_id=host.id
     )
     assert [r.id for r in recordings] == [recording.id]
+
+
+async def test_recording_download_url_and_delete(
+    harness: Harness, room_provider: StubRoomProvider, storage_provider: StubStorageProvider
+) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+    recording = await harness.service.start_recording(meeting_id=meeting.id, acting_user_id=host.id)
+
+    # Still processing — can't be deleted yet (the file may not exist in
+    # storage at all until the egress finishes).
+    with pytest.raises(MeetingError, match="still processing"):
+        await harness.service.delete_recording(
+            meeting_id=meeting.id, acting_user_id=host.id, recording_id=recording.id
+        )
+
+    room_provider.next_stop_status = "ready"
+    await harness.service.stop_recording(
+        meeting_id=meeting.id, acting_user_id=host.id, recording_id=recording.id
+    )
+
+    url = await harness.service.get_recording_download_url(
+        meeting_id=meeting.id, acting_user_id=host.id, recording_id=recording.id
+    )
+    assert recording.storage_key is not None
+    assert recording.storage_key in url
+
+    await harness.service.delete_recording(
+        meeting_id=meeting.id, acting_user_id=host.id, recording_id=recording.id
+    )
+    assert storage_provider.deleted_keys == [recording.storage_key]
+    recordings_after = await harness.service.list_recordings(
+        meeting_id=meeting.id, acting_user_id=host.id
+    )
+    assert recordings_after == []
+
+
+async def test_my_recordings_and_documents_aggregate_across_meetings(harness: Harness) -> None:
+    host = await _make_user(harness)
+    other_host = await _make_user(harness)
+    mine_1 = await harness.service.create_meeting(host=host, title="Standup")
+    mine_2 = await harness.service.create_meeting(host=host, title="Retro")
+    not_mine = await harness.service.create_meeting(host=other_host, title="Not mine")
+
+    rec_1 = await harness.service.start_recording(meeting_id=mine_1.id, acting_user_id=host.id)
+    rec_2 = await harness.service.start_recording(meeting_id=mine_2.id, acting_user_id=host.id)
+    await harness.service.start_recording(meeting_id=not_mine.id, acting_user_id=other_host.id)
+
+    doc_1, _ = await harness.service.request_document_upload(
+        meeting_id=mine_1.id,
+        acting_user_id=host.id,
+        filename="notes.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    )
+    await harness.service.request_document_upload(
+        meeting_id=not_mine.id,
+        acting_user_id=other_host.id,
+        filename="other.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    )
+
+    my_recordings = await harness.service.list_my_recordings(user_id=host.id)
+    assert {r.id for r, _title in my_recordings} == {rec_1.id, rec_2.id}
+    titles = {title for _r, title in my_recordings}
+    assert titles == {"Standup", "Retro"}
+
+    my_documents = await harness.service.list_my_documents(user_id=host.id)
+    assert [(d.id, title) for d, title in my_documents] == [(doc_1.id, "Standup")]
+
+
+async def test_delete_document_removes_storage_object(
+    harness: Harness, storage_provider: StubStorageProvider
+) -> None:
+    host = await _make_user(harness)
+    other = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+    document, _upload_url = await harness.service.request_document_upload(
+        meeting_id=meeting.id,
+        acting_user_id=host.id,
+        filename="notes.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    )
+
+    with pytest.raises(MeetingError, match="host or a co-host"):
+        await harness.service.delete_document(
+            meeting_id=meeting.id, acting_user_id=other.id, document_id=document.id
+        )
+
+    url = await harness.service.get_document_download_url_for_host(
+        meeting_id=meeting.id, acting_user_id=host.id, document_id=document.id
+    )
+    assert document.storage_key in url
+
+    await harness.service.delete_document(
+        meeting_id=meeting.id, acting_user_id=host.id, document_id=document.id
+    )
+    assert storage_provider.deleted_keys == [document.storage_key]
+
+    host_p = await harness.participants.get_by_meeting_and_user(meeting.id, host.id)
+    assert host_p is not None
+    remaining = await harness.service.list_documents(
+        meeting_id=meeting.id, participant_id=host_p.id
+    )
+    assert remaining == []
 
 
 # ---- Phase 2: chat -------------------------------------------------------------

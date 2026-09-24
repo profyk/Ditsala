@@ -43,6 +43,9 @@ class StubStorageProvider(StorageProvider):
     async def put_object(self, *, key: str, data: bytes, content_type: str) -> None:
         self.puts[key] = (data, content_type)
 
+    async def delete_object(self, *, key: str) -> None:
+        self.puts.pop(key, None)
+
 
 @dataclass
 class Harness:
