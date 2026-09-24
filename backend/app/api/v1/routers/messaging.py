@@ -136,7 +136,12 @@ async def list_devices(
 
 
 def _conversation_response(
-    conversation: Conversation, last_message_at: datetime | None = None
+    conversation: Conversation,
+    last_message_at: datetime | None = None,
+    *,
+    muted_until: datetime | None = None,
+    archived: bool = False,
+    pinned: bool = False,
 ) -> ConversationResponse:
     return ConversationResponse(
         id=conversation.id,
@@ -144,6 +149,9 @@ def _conversation_response(
         title=conversation.title,
         disappearing_timer_seconds=conversation.disappearing_timer_seconds,
         last_message_at=last_message_at,
+        muted_until=muted_until,
+        archived=archived,
+        pinned=pinned,
     )
 
 
@@ -176,7 +184,16 @@ async def list_conversations(
     user: CurrentUserDep, service: MessagingServiceDep
 ) -> list[ConversationResponse]:
     summaries = await service.list_conversations(user.id)
-    return [_conversation_response(s.conversation, s.last_message_at) for s in summaries]
+    return [
+        _conversation_response(
+            s.conversation,
+            s.last_message_at,
+            muted_until=s.muted_until,
+            archived=s.archived,
+            pinned=s.pinned,
+        )
+        for s in summaries
+    ]
 
 
 @router.patch("/conversations/{conversation_id}/title", response_model=ConversationResponse)

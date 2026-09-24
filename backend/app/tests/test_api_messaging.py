@@ -261,6 +261,29 @@ async def test_conversation_flags(client: AsyncClient, session: AsyncSession) ->
     assert r.status_code == 204, r.text
 
     r = await client.patch(
+        f"/api/v1/messaging/conversations/{conversation_id}/pinned",
+        json={"value": True},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.patch(
+        f"/api/v1/messaging/conversations/{conversation_id}/muted",
+        json={"muted_until": "2099-01-01T00:00:00Z"},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 204, r.text
+
+    # Real regression: setMuted/setArchived/setPinned were write-only —
+    # nothing ever read this state back until now.
+    r = await client.get("/api/v1/messaging/conversations", headers=_auth(alice_token))
+    assert r.status_code == 200, r.text
+    listed = next(c for c in r.json() if c["id"] == conversation_id)
+    assert listed["archived"] is True
+    assert listed["pinned"] is True
+    assert listed["muted_until"] is not None
+
+    r = await client.patch(
         f"/api/v1/messaging/conversations/{conversation_id}/disappearing-timer",
         json={"seconds": 3600},
         headers=_auth(alice_token),

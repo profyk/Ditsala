@@ -54,6 +54,9 @@ class MessagingError(Exception):
 class ConversationSummary:
     conversation: Conversation
     last_message_at: datetime | None
+    muted_until: datetime | None
+    archived: bool
+    pinned: bool
 
 
 @dataclass(frozen=True)
@@ -276,6 +279,9 @@ class MessagingService:
                 ConversationSummary(
                     conversation=conversation,
                     last_message_at=latest.created_at if latest else None,
+                    muted_until=membership.muted_until,
+                    archived=membership.archived_at is not None,
+                    pinned=membership.pinned_at is not None,
                 )
             )
         return summaries

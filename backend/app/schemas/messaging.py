@@ -78,6 +78,14 @@ class ConversationResponse(BaseModel):
     title: str | None
     disappearing_timer_seconds: int | None
     last_message_at: datetime | None = None
+    # The calling user's own membership state — muted_until/archived_at/
+    # pinned_at have always been real columns on conversation_members,
+    # just never read back anywhere (setMuted/setArchived/setPinned were
+    # write-only). Deliberately this user's own values, not a global
+    # conversation property — muting/archiving/pinning is personal.
+    muted_until: datetime | None = None
+    archived: bool = False
+    pinned: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -26,6 +26,12 @@ export interface Conversation {
   title: string | null;
   disappearing_timer_seconds: number | null;
   last_message_at: string | null;
+  // The calling user's own membership state — previously write-only
+  // (setMuted/setArchived/setPinned existed with no way to read the
+  // result back).
+  muted_until: string | null;
+  archived: boolean;
+  pinned: boolean;
 }
 
 export interface ConversationMember {
