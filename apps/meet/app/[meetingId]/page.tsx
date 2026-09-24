@@ -1,6 +1,7 @@
 "use client";
 
 import { LiveKitRoom, VideoConference } from "@livekit/components-react";
+import { AudioPresets, VideoPresets } from "livekit-client";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -25,6 +26,31 @@ import {
 
 const POLL_INTERVAL_MS = 4000;
 const RECHECK_INTERVAL_MS = 30000;
+
+// HD video + clearer audio (explicit user ask). h720 rather than h1080 as
+// the capture default — a meaningful, widely-recognized "HD" bar without
+// the upload-bandwidth cost 1080p asks of every participant on a
+// constrained connection; simulcast still lets LiveKit downgrade
+// per-subscriber rather than every viewer paying the top layer's cost.
+// musicHighQuality (96kbps mono) over the SDK's music/48kbps default for
+// clearer voice, without musicHighQualityStereo's needless doubling for
+// what's almost always a single mono mic source.
+const ROOM_OPTIONS = {
+  adaptiveStream: true,
+  dynacast: true,
+  videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
+  audioCaptureDefaults: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+  publishDefaults: {
+    videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360, VideoPresets.h720],
+    audioPreset: AudioPresets.musicHighQuality,
+    dtx: false,
+    red: true,
+  },
+};
 
 type Stage = "loading" | "not-yet" | "form" | "waiting" | "in-call" | "error";
 
@@ -87,7 +113,14 @@ export default function MeetingRoom() {
   // §9 host-link handoff (docs/DITSALA_MEET_SPEC.md) — set by the mobile
   // app's "My Meetings" list, see backend/app/core/security.py's
   // create_meet_host_token. Present only when a host opened this link.
-  const hostToken = searchParams.get("hj");
+  const urlHostToken = searchParams.get("hj");
+  // The Host PIN path (handleHostPinJoin below) has no `?hj=` URL token
+  // to fall back on — its own join response carries a freshly-minted one
+  // instead. Without this, MeetingToolsBar's `hostToken !== null` check
+  // would silently hide every host control (end meeting, lock, record,
+  // ...) for anyone who joined via PIN rather than the mobile handoff.
+  const [pinHostToken, setPinHostToken] = useState<string | null>(null);
+  const hostToken = urlHostToken ?? pinHostToken;
 
   const [stage, setStage] = useState<Stage>("loading");
   const [joinInfo, setJoinInfo] = useState<JoinInfoResponse | null>(null);
@@ -117,11 +150,13 @@ export default function MeetingRoom() {
   }
 
   useEffect(() => {
-    if (hostToken) {
+    if (urlHostToken) {
       // The host bypasses join-info entirely — they always can join their
       // own meeting (server-enforced in _check_joinable's is_host bypass).
+      // Keyed on urlHostToken specifically (not the merged hostToken) so
+      // a later PIN join setting pinHostToken doesn't re-trigger this.
       meetingsApi
-        .hostJoin(meetingId, hostToken)
+        .hostJoin(meetingId, urlHostToken)
         .then((result) => {
           setJoin(result);
           setStage(result.access ? "in-call" : "waiting");
@@ -133,7 +168,7 @@ export default function MeetingRoom() {
       return;
     }
     loadJoinInfo();
-  }, [meetingId, hostToken]);
+  }, [meetingId, urlHostToken]);
 
   // While "not-yet" (too early relative to the scheduled start), quietly
   // recheck every so often — the moment the host's early-join window
@@ -194,6 +229,7 @@ export default function MeetingRoom() {
     try {
       const result = await meetingsApi.hostPinJoin(meetingId, hostPin.trim());
       setJoin(result);
+      setPinHostToken(result.host_token);
       setStage(result.access ? "in-call" : "waiting");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "That PIN isn't correct.");
@@ -264,6 +300,7 @@ export default function MeetingRoom() {
         serverUrl={join.access.livekit_url}
         token={join.access.token}
         connect
+        options={ROOM_OPTIONS}
         data-lk-theme="default"
         style={{ height: "100vh" }}
         onDisconnected={() => {

@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { ParticipantsPanel } from "@/components/ParticipantsPanel";
 import { PollsPanel } from "@/components/PollsPanel";
 import { QuestionsPanel } from "@/components/QuestionsPanel";
-import { ReactionsBar } from "@/components/ReactionsBar";
 import {
   ApiError,
   type MeetingDocumentResponse,
@@ -48,6 +47,7 @@ export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: M
 
   return (
     <>
+      <MeetingDurationBadge meetingId={meetingId} />
       <div className="fixed right-3 top-3 z-50 flex flex-col items-end gap-2">
         {isHost ? (
           <div className="flex items-center gap-2">
@@ -114,7 +114,6 @@ export function MeetingToolsBar({ meetingId, participantId, role, hostToken }: M
           />
         ) : null}
       </div>
-      <ReactionsBar meetingId={meetingId} participantId={participantId} />
     </>
   );
 }
@@ -288,6 +287,61 @@ function EndMeetingControl({ meetingId, hostToken }: { meetingId: string; hostTo
     >
       End meeting
     </button>
+  );
+}
+
+/**
+ * Visible to every participant, host or not — a running "how long has
+ * this meeting been going" counter, not gated on `isHost` the way the
+ * host-only countdown-to-deadline is. Null until the meeting actually
+ * goes live (`GET /join-info`'s `actual_start_at`).
+ */
+function MeetingDurationBadge({ meetingId }: { meetingId: string }) {
+  const [startedAt, setStartedAt] = useState<Date | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshStart() {
+      try {
+        const info = await meetingsApi.joinInfo(meetingId);
+        if (!cancelled) {
+          setStartedAt(info.actual_start_at ? new Date(info.actual_start_at) : null);
+        }
+      } catch {
+        // A poll failing shouldn't make an existing counter disappear.
+      }
+    }
+    refreshStart();
+    const id = setInterval(refreshStart, COUNTDOWN_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [meetingId]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!startedAt) return null;
+  const totalSeconds = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const label =
+    hours > 0
+      ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+      : `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+  return (
+    <div
+      className="fixed left-3 top-3 z-50 rounded-full border border-border bg-surface px-3 py-1.5 text-sm tabular-nums text-text-primary shadow-lg"
+      title="Meeting duration"
+    >
+      ⏱ {label}
+    </div>
   );
 }
 

@@ -638,12 +638,41 @@ async def test_host_pin_join_is_a_same_tab_alternative_to_the_host_link_handoff(
     assert r.status_code == 200, r.text
     assert r.json()["role"] == "host"
     assert r.json()["access"]["token"]
+    assert r.json()["host_token"]
 
     # Re-fetching the meeting never echoes the PIN back — only the
     # create response does.
     r = await client.get(f"/api/v1/meetings/{meeting_id}", headers=_bearer_for(host))
     assert r.status_code == 200, r.text
     assert r.json().get("host_pin") is None
+
+
+async def test_host_pin_joined_host_can_drive_meeting_actor_gated_actions(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """Real regression: apps/meet's MeetingToolsBar only renders its
+    host-only controls (end meeting, lock, record, ...) when it has a
+    host token — but host-pin-join originally returned none, since it
+    only ever reused join()'s LiveKit access path. Without the
+    host_token this endpoint now mints, a host who joined via PIN
+    (rather than the mobile app's host-link handoff) could join the
+    video call but every toolbar button would silently not render."""
+    host = await _make_active_user(session)
+    r = await client.post("/api/v1/meetings", json={"title": "Standup"}, headers=_bearer_for(host))
+    meeting_id = r.json()["id"]
+    pin = r.json()["host_pin"]
+
+    r = await client.post(f"/api/v1/meetings/{meeting_id}/host-pin-join", json={"pin": pin})
+    assert r.status_code == 200, r.text
+    host_token = r.json()["host_token"]
+    assert host_token
+
+    r = await client.post(
+        f"/api/v1/meetings/{meeting_id}/end",
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ended"
 
 
 async def test_host_pin_join_rejects_wrong_pin_over_http(

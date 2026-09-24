@@ -57,6 +57,10 @@ class JoinInfoResponse(BaseModel):
     joinable_now: bool
     room_phase: str
     live_deadline_at: datetime | None
+    # So every participant (not just the host) can show a running
+    # "meeting duration" counter — null until the meeting actually goes
+    # live (see `_mark_live_if_needed`).
+    actual_start_at: datetime | None
     # So a UI can show the current "hold guests until admitted" vs "let
     # them straight in" setting *before* anyone has toggled it (see
     # `set_waiting_room_enabled` — this was previously not exposed
@@ -99,6 +103,12 @@ class JoinMeetingResponse(BaseModel):
     role: str
     admission_status: str
     access: RoomAccessTokenResponse | None
+    # Only ever set for host_pin_join's response — the web-only,
+    # same-tab host path has no `?hj=` URL token to fall back on the way
+    # the mobile-handoff host-link flow does, so it needs its own
+    # meet-host token to drive MeetingToolsBar's host-only REST actions
+    # (end meeting, lock, record, etc.).
+    host_token: str | None = None
 
 
 class ParticipantResponse(BaseModel):

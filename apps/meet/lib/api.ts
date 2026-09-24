@@ -63,6 +63,9 @@ export interface JoinMeetingResponse {
   // Null while `admission_status === "waiting"` — no LiveKit token is
   // minted until a host/co-host admits this participant (§9 Phase 2).
   access: RoomAccessTokenResponse | null;
+  // Only set by hostPinJoin's response — see the backend router's
+  // matching comment for why this path needs its own host token.
+  host_token: string | null;
 }
 
 export interface JoinInfoResponse {
@@ -75,6 +78,7 @@ export interface JoinInfoResponse {
   joinable_now: boolean;
   room_phase: "scheduled" | "prep" | "live" | "ended";
   live_deadline_at: string | null;
+  actual_start_at: string | null;
   waiting_room_enabled: boolean;
   locked: boolean;
 }

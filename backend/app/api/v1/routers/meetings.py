@@ -72,7 +72,7 @@ def _as_http_error(exc: MeetingError) -> HTTPException:
     return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-def _join_response(result: JoinResult) -> JoinMeetingResponse:
+def _join_response(result: JoinResult, *, host_token: str | None = None) -> JoinMeetingResponse:
     return JoinMeetingResponse(
         meeting=MeetingResponse.model_validate(result.meeting),
         participant_id=result.participant.id,
@@ -85,6 +85,7 @@ def _join_response(result: JoinResult) -> JoinMeetingResponse:
             if result.access_token is not None
             else None
         ),
+        host_token=host_token,
     )
 
 
@@ -182,6 +183,7 @@ async def get_join_info(meeting_id: uuid.UUID, service: MeetingServiceDep) -> Jo
         joinable_now=info.joinable_now,
         room_phase=info.room_phase,
         live_deadline_at=info.live_deadline_at,
+        actual_start_at=info.meeting.actual_start_at,
         waiting_room_enabled=info.meeting.waiting_room_enabled,
         locked=info.meeting.locked_at is not None,
     )
@@ -264,16 +266,29 @@ async def host_join_meeting(
 
 @router.post("/{meeting_id}/host-pin-join", response_model=JoinMeetingResponse)
 async def host_pin_join(
-    meeting_id: uuid.UUID, body: HostPinJoinRequest, service: MeetingServiceDep
+    meeting_id: uuid.UUID,
+    body: HostPinJoinRequest,
+    settings: SettingsDep,
+    service: MeetingServiceDep,
 ) -> JoinMeetingResponse:
     """Public — the PIN itself is the credential, same reasoning as
     `host_join_meeting` above. See `MeetingService.host_pin_join`'s
-    docstring, including its one disclosed limitation."""
+    docstring, including its one disclosed limitation.
+
+    Also mints a meet-host token (same mechanism `create_host_link`
+    uses) so `apps/meet`'s toolbar has a host-authenticated credential to
+    drive its own REST actions (end meeting, lock, record, ...) — unlike
+    the mobile-handoff host-link flow, this same-tab path has no `?hj=`
+    URL token to fall back on."""
     try:
         result = await service.host_pin_join(meeting_id=meeting_id, pin=body.pin)
     except MeetingError as exc:
         raise _as_http_error(exc) from exc
-    return _join_response(result)
+    assert result.participant.user_id is not None  # host participants always have one
+    host_token = create_meet_host_token(
+        meeting_id, result.participant.user_id, jwt_secret=settings.jwt_secret
+    )
+    return _join_response(result, host_token=host_token)
 
 
 @router.get(

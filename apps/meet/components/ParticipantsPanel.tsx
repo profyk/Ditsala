@@ -56,12 +56,36 @@ export function ParticipantsPanel({
   }
 
   const present = participants.filter((p) => p.admission_status === "admitted");
+  const muteableIds = present
+    .filter((p) => !HOST_ROLES.has(p.role) && p.id !== selfParticipantId)
+    .map((p) => p.id);
+
+  async function muteAll() {
+    if (muteableIds.length === 0) return;
+    await withBusy("all", async () => {
+      await Promise.all(
+        muteableIds.map((id) => meetingsApi.muteParticipant(meetingId, id, true, hostToken))
+      );
+    });
+  }
 
   return (
     <div className="w-80 rounded border border-border bg-surface p-3 text-sm">
-      <p className="mb-2 text-xs font-medium uppercase tracking-widest text-text-tertiary">
-        Participants ({present.length})
-      </p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-widest text-text-tertiary">
+          Participants ({present.length})
+        </p>
+        {muteableIds.length > 0 ? (
+          <button
+            type="button"
+            disabled={busyId === "all"}
+            onClick={muteAll}
+            className="shrink-0 rounded bg-surface-raised px-2 py-1 text-xs text-text-primary border border-border hover:bg-border disabled:opacity-50"
+          >
+            {busyId === "all" ? "Muting…" : "Mute all"}
+          </button>
+        ) : null}
+      </div>
       {present.length === 0 ? (
         <p className="text-text-tertiary">Nobody's here yet.</p>
       ) : (
