@@ -54,6 +54,23 @@ TEST_LIVEKIT_KEY = "test-key-0123456789"
 TEST_LIVEKIT_SECRET = "test-secret-0123456789-0123456789"
 
 
+class StubRoomProvider(LiveKitRoomProvider):
+    """Real token-minting (no network call) stays real; delete_room alone
+    is overridden since admin_end_meeting now calls it and there's no
+    LiveKit server in this environment to reach — same reasoning as the
+    other two RoomProvider stubs in test_meeting_service.py and
+    test_meeting_conference_plan_enforcement.py."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            api_key=TEST_LIVEKIT_KEY, api_secret=TEST_LIVEKIT_SECRET, livekit_url="wss://test"
+        )
+        self.deleted_rooms: list[str] = []
+
+    async def delete_room(self, *, room_name: str) -> None:
+        self.deleted_rooms.append(room_name)
+
+
 class StubStorageProvider(StorageProvider):
     async def create_upload_url(self, *, key: str, content_type: str) -> str:
         return f"https://stub-upload.test/{key}"
@@ -106,9 +123,7 @@ def harness(session: AsyncSession) -> Harness:
     meeting_service = MeetingService(
         meetings=meetings_repo,
         participants=participants_repo,
-        room_provider=LiveKitRoomProvider(
-            api_key=TEST_LIVEKIT_KEY, api_secret=TEST_LIVEKIT_SECRET, livekit_url="wss://test"
-        ),
+        room_provider=StubRoomProvider(),
         recordings=MeetingRecordingRepository(session),
         messages=MeetingMessageRepository(session),
         polls=MeetingPollRepository(session),

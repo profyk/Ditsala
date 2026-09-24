@@ -112,6 +112,10 @@ class LiveKitRoomProvider(RoomProvider):
                 livekit_api.RoomParticipantIdentity(room=room_name, identity=participant_identity)
             )
 
+    async def delete_room(self, *, room_name: str) -> None:
+        async with self._client() as client:
+            await client.room.delete_room(livekit_api.DeleteRoomRequest(room=room_name))
+
     async def set_participant_can_publish(
         self, *, room_name: str, participant_identity: str, can_publish: bool
     ) -> None:

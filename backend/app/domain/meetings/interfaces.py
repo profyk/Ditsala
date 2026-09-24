@@ -63,6 +63,19 @@ class RoomProvider(Protocol):
         LiveKit room itself, not just a client-side UI hide."""
         ...
 
+    async def delete_room(self, *, room_name: str) -> None:
+        """Ends the room at the SFU itself — every currently-connected
+        participant (host included) is disconnected immediately, not just
+        whoever's client happens to notice the meeting's DB status flipped
+        to "ended". `end_meeting`/`admin_end_meeting` call this so "End
+        meeting" actually forces everyone out, not just the caller.
+        LiveKit's own `DeleteRoom` is documented as safe to call on a
+        room with no active session (nobody ever connected, or everyone
+        already left) — not independently re-verified against a live
+        server in this environment, same disclosed boundary as every
+        other network-calling RoomProvider method here."""
+        ...
+
     async def set_participant_can_publish(
         self, *, room_name: str, participant_identity: str, can_publish: bool
     ) -> None:

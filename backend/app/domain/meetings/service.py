@@ -462,6 +462,13 @@ class MeetingService:
             return meeting
         meeting.status = "ended"
         meeting.actual_end_at = datetime.now(UTC)
+        # Real bug this closes: marking the DB row "ended" never touched
+        # anyone's actual LiveKit connection — every already-connected
+        # participant, including the host's own other devices, just sat
+        # in the room indefinitely. Deleting the room at the SFU forces
+        # everyone out immediately, not just whoever's client happens to
+        # notice the status flip.
+        await self._room_provider.delete_room(room_name=meeting.livekit_room_name)
         return meeting
 
     async def extend_duration(
@@ -518,6 +525,10 @@ class MeetingService:
             return meeting
         meeting.status = "ended"
         meeting.actual_end_at = datetime.now(UTC)
+        # Same reasoning as end_meeting — an admin force-ending an abusive
+        # live meeting needs everyone actually disconnected, not just the
+        # DB row updated underneath them.
+        await self._room_provider.delete_room(room_name=meeting.livekit_room_name)
         return meeting
 
     async def delete_meeting(self, *, meeting_id: uuid.UUID, acting_user_id: uuid.UUID) -> None:

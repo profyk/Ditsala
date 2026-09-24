@@ -90,6 +90,7 @@ class StubRoomProvider(LiveKitRoomProvider):
             api_key=TEST_LIVEKIT_KEY, api_secret=TEST_LIVEKIT_SECRET, livekit_url="wss://test"
         )
         self.removed: list[str] = []
+        self.deleted_rooms: list[str] = []
         self.publish_updates: list[tuple[str, bool]] = []
         self.broadcasts: list[tuple[str, bytes, str]] = []
         self.recordings_started: list[str] = []
@@ -98,6 +99,9 @@ class StubRoomProvider(LiveKitRoomProvider):
 
     async def remove_participant(self, *, room_name: str, participant_identity: str) -> None:
         self.removed.append(participant_identity)
+
+    async def delete_room(self, *, room_name: str) -> None:
+        self.deleted_rooms.append(room_name)
 
     async def set_participant_can_publish(
         self, *, room_name: str, participant_identity: str, can_publish: bool
@@ -334,6 +338,33 @@ async def test_end_meeting_requires_host(harness: Harness) -> None:
     ended = await harness.service.end_meeting(meeting_id=meeting.id, acting_user_id=host.id)
     assert ended.status == "ended"
     assert ended.actual_end_at is not None
+
+
+async def test_end_meeting_deletes_the_livekit_room_to_force_everyone_out(
+    harness: Harness, room_provider: StubRoomProvider
+) -> None:
+    """Real bug this closes: marking the DB row "ended" never touched
+    anyone's actual LiveKit connection — someone already in the call just
+    sat there. end_meeting must also tell the SFU to close the room so
+    every connected participant is actually disconnected, not just
+    whoever's client happens to poll and notice the status changed."""
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    await harness.service.end_meeting(meeting_id=meeting.id, acting_user_id=host.id)
+
+    assert room_provider.deleted_rooms == [meeting.livekit_room_name]
+
+
+async def test_admin_end_meeting_also_deletes_the_livekit_room(
+    harness: Harness, room_provider: StubRoomProvider
+) -> None:
+    host = await _make_user(harness)
+    meeting = await harness.service.create_meeting(host=host, title="Standup")
+
+    await harness.service.admin_end_meeting(meeting_id=meeting.id)
+
+    assert room_provider.deleted_rooms == [meeting.livekit_room_name]
 
 
 async def test_join_rejects_ended_meeting(harness: Harness) -> None:

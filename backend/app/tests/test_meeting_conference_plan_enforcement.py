@@ -88,6 +88,9 @@ class StubRoomProvider(LiveKitRoomProvider):
     async def start_recording(self, *, room_name: str, s3_key: str) -> RecordingHandle:
         return RecordingHandle(egress_id=f"EG_{uuid.uuid4().hex}", status="processing")
 
+    async def delete_room(self, *, room_name: str) -> None:
+        pass
+
 
 @dataclass
 class Harness:
