@@ -194,10 +194,45 @@ async def test_vip_routes_require_authentication(client: AsyncClient) -> None:
     assert r.status_code == 401
 
 
+async def _set_conference_price(
+    session: AsyncSession, plan_code: str, *, amount_cents: int
+) -> None:
+    """No price is seeded for any conference plan any more (migration
+    b7d4e9f1a3c8) — mirrors what an admin does for real via /pricing."""
+    role = await AdminRoleRepository(session).get_by_name("super_admin")
+    assert role is not None
+    admin = await AdminUserRepository(session).add(
+        AdminUser(
+            email=f"{uuid.uuid4()}@example.com",
+            password_hash=hash_secret("irrelevant"),
+            role_id=role.id,
+        )
+    )
+    plan_repo = PlanRepository(session)
+    plan = await plan_repo.get_by_code(plan_code)
+    assert plan is not None, f"expected migration b4f7c1a9e6d2 to have seeded {plan_code!r}"
+    plans = PlanService(
+        plans=plan_repo,
+        plan_prices=PlanPriceRepository(session),
+        entitlements=EntitlementRepository(session),
+        audit_log=AuditLogRepository(session),
+        users=UserRepository(session),
+    )
+    await plans.set_price(
+        admin_id=admin.id,
+        plan_id=plan.id,
+        currency="ZAR",
+        amount_cents=amount_cents,
+        billing_interval="month",
+        reason="test setup",
+    )
+
+
 async def test_conference_plan_upgrade_start_returns_payment_url(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     user = await _make_active_user(session)
+    await _set_conference_price(session, "conference_pro", amount_cents=14900)
 
     r = await client.post(
         "/api/v1/account/conference-plan/upgrade/start",
@@ -215,6 +250,7 @@ async def test_conference_plan_upgrade_status_reflects_a_pending_purchase(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     user = await _make_active_user(session)
+    await _set_conference_price(session, "conference_pro", amount_cents=14900)
     r = await client.post(
         "/api/v1/account/conference-plan/upgrade/start",
         json={"plan_code": "conference_pro"},
@@ -241,6 +277,20 @@ async def test_conference_plan_upgrade_rejects_unknown_plan_code(
         headers=_bearer_for(user),
     )
     assert r.status_code == 400
+
+
+async def test_conference_plan_upgrade_without_pricing_returns_400(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    user = await _make_active_user(session)
+
+    r = await client.post(
+        "/api/v1/account/conference-plan/upgrade/start",
+        json={"plan_code": "conference_premium"},
+        headers=_bearer_for(user),
+    )
+    assert r.status_code == 400
+    assert "no active price" in r.json()["detail"]
 
 
 async def test_conference_plan_routes_require_authentication(client: AsyncClient) -> None:

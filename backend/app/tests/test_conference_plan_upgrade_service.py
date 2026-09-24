@@ -1,8 +1,12 @@
 """
-Unit tests for ConferencePlanUpgradeService — real Postgres (including
-the real seeded conference_free/pro/premium/enterprise plans+prices from
-migration b4f7c1a9e6d2), stub payment provider (ordinary test double for
-our own business logic, same framing as test_vip_upgrade_service.py's).
+Unit tests for ConferencePlanUpgradeService — real Postgres. The real
+seeded conference_free/pro/premium/enterprise plans (migration
+b4f7c1a9e6d2) exist, but their *prices* were deliberately removed
+(migration b7d4e9f1a3c8, "do not hardcode plan pricings at all, admin
+will") — every test that needs a price sets one explicitly via
+PlanService.set_price, the same way a real admin would from /pricing.
+Stub payment provider (ordinary test double for our own business
+logic, same framing as test_vip_upgrade_service.py's).
 """
 
 import uuid
@@ -14,6 +18,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.core.security import hash_secret
 from app.domain.billing.conference_upgrade import (
     ConferencePlanUpgradeError,
     ConferencePlanUpgradeService,
@@ -21,7 +26,8 @@ from app.domain.billing.conference_upgrade import (
 from app.domain.billing.interfaces import PaymentInitiation, PaymentProvider, PaymentWebhookResult
 from app.domain.billing.plans import PlanService
 from app.models.accounts import User
-from app.repositories.admin import AuditLogRepository
+from app.models.admin import AdminUser
+from app.repositories.admin import AdminRoleRepository, AdminUserRepository, AuditLogRepository
 from app.repositories.billing import (
     ConferencePlanPurchaseRepository,
     EntitlementRepository,
@@ -56,6 +62,7 @@ class StubPaymentProvider(PaymentProvider):
 class Harness:
     service: ConferencePlanUpgradeService
     plans: PlanService
+    plan_repo: PlanRepository
     users: UserRepository
     payment_provider: StubPaymentProvider
 
@@ -73,8 +80,9 @@ async def session() -> AsyncIterator[AsyncSession]:
 @pytest.fixture
 def harness(session: AsyncSession) -> Harness:
     users = UserRepository(session)
+    plan_repo = PlanRepository(session)
     plans = PlanService(
-        plans=PlanRepository(session),
+        plans=plan_repo,
         plan_prices=PlanPriceRepository(session),
         entitlements=EntitlementRepository(session),
         audit_log=AuditLogRepository(session),
@@ -86,7 +94,48 @@ def harness(session: AsyncSession) -> Harness:
         plans=plans,
         payment_provider=payment_provider,
     )
-    return Harness(service=service, plans=plans, users=users, payment_provider=payment_provider)
+    return Harness(
+        service=service,
+        plans=plans,
+        plan_repo=plan_repo,
+        users=users,
+        payment_provider=payment_provider,
+    )
+
+
+@pytest.fixture
+async def admin_id(session: AsyncSession) -> uuid.UUID:
+    """A real `admin_users` row — `plan_prices`/audit_log writes have a
+    genuine FK constraint to it, so a synthetic UUID won't do."""
+    role = await AdminRoleRepository(session).get_by_name("super_admin")
+    assert role is not None, "expected seeded role 'super_admin' — did migrations run?"
+    admin = await AdminUserRepository(session).add(
+        AdminUser(
+            email=f"{uuid.uuid4()}@example.com",
+            password_hash=hash_secret("irrelevant-for-these-tests"),
+            role_id=role.id,
+        )
+    )
+    return admin.id
+
+
+async def _set_price(
+    harness: Harness, admin_id: uuid.UUID, plan_code: str, *, amount_cents: int
+) -> None:
+    """Mirrors what an admin does for real via the /pricing page — no
+    price is seeded for any conference plan any more (migration
+    b7d4e9f1a3c8), including the free one, so every test that starts a
+    real upgrade needs this first."""
+    plan = await harness.plan_repo.get_by_code(plan_code)
+    assert plan is not None, f"expected migration b4f7c1a9e6d2 to have seeded {plan_code!r}"
+    await harness.plans.set_price(
+        admin_id=admin_id,
+        plan_id=plan.id,
+        currency="ZAR",
+        amount_cents=amount_cents,
+        billing_interval="month",
+        reason="test setup",
+    )
 
 
 async def _make_user(harness: Harness) -> User:
@@ -102,8 +151,11 @@ async def _make_user(harness: Harness) -> User:
     )
 
 
-async def test_start_upgrade_to_a_paid_plan_initiates_a_real_payment(harness: Harness) -> None:
+async def test_start_upgrade_to_a_paid_plan_initiates_a_real_payment(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
     user = await _make_user(harness)
+    await _set_price(harness, admin_id, "conference_pro", amount_cents=14900)
 
     initiation = await harness.service.start_upgrade(user, plan_code="conference_pro")
 
@@ -116,12 +168,25 @@ async def test_start_upgrade_to_a_paid_plan_initiates_a_real_payment(harness: Ha
     assert user.conference_plan_code == "conference_free"
 
 
+async def test_start_upgrade_requires_pricing_configured(harness: Harness) -> None:
+    """No price is seeded for any conference plan any more (migration
+    b7d4e9f1a3c8) — an admin must set one from /pricing first, same
+    "no default price by design" principle as VIP."""
+    user = await _make_user(harness)
+    with pytest.raises(ConferencePlanUpgradeError, match="no active price configured"):
+        await harness.service.start_upgrade(user, plan_code="conference_pro")
+
+
 async def test_start_upgrade_to_the_free_plan_applies_immediately_no_payment(
-    harness: Harness,
+    harness: Harness, admin_id: uuid.UUID
 ) -> None:
     user = await _make_user(harness)
     await harness.plans.apply_paid_conference_plan(user_id=user.id, plan_code="conference_pro")
     assert user.conference_plan_code == "conference_pro"
+    # Even a free plan needs an explicit (zero) price set by an admin —
+    # "no price row" means "not configured yet" for every plan, not an
+    # implicit assumption that a missing price means free.
+    await _set_price(harness, admin_id, "conference_free", amount_cents=0)
 
     initiation = await harness.service.start_upgrade(user, plan_code="conference_free")
 
@@ -145,9 +210,11 @@ async def test_start_upgrade_rejects_already_on_this_plan(harness: Harness) -> N
 
 
 async def test_start_upgrade_rejects_a_second_upgrade_while_one_is_pending(
-    harness: Harness,
+    harness: Harness, admin_id: uuid.UUID
 ) -> None:
     user = await _make_user(harness)
+    await _set_price(harness, admin_id, "conference_pro", amount_cents=14900)
+    await _set_price(harness, admin_id, "conference_premium", amount_cents=39900)
     await harness.service.start_upgrade(user, plan_code="conference_pro")
 
     with pytest.raises(ConferencePlanUpgradeError, match="already in progress"):
@@ -155,9 +222,10 @@ async def test_start_upgrade_rejects_a_second_upgrade_while_one_is_pending(
 
 
 async def test_payment_webhook_applies_the_plan_on_paid_and_marks_failed_otherwise(
-    harness: Harness,
+    harness: Harness, admin_id: uuid.UUID
 ) -> None:
     user = await _make_user(harness)
+    await _set_price(harness, admin_id, "conference_pro", amount_cents=14900)
     initiation = await harness.service.start_upgrade(user, plan_code="conference_pro")
     assert initiation is not None
 
@@ -178,8 +246,11 @@ async def test_payment_webhook_rejects_unknown_reference(harness: Harness) -> No
         )
 
 
-async def test_failed_payment_does_not_change_the_plan(harness: Harness) -> None:
+async def test_failed_payment_does_not_change_the_plan(
+    harness: Harness, admin_id: uuid.UUID
+) -> None:
     user = await _make_user(harness)
+    await _set_price(harness, admin_id, "conference_pro", amount_cents=14900)
     initiation = await harness.service.start_upgrade(user, plan_code="conference_pro")
     assert initiation is not None
 
