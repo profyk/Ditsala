@@ -30,6 +30,8 @@ module.exports = {
         warning: "var(--color-warning)",
         danger: "var(--color-danger)",
         info: "var(--color-info)",
+        "brand-navy": "var(--color-brand-navy)",
+        gold: "var(--color-gold)",
       },
       borderRadius: {
         xs: "4px",

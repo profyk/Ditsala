@@ -212,43 +212,9 @@ export default function MessagesList() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
       <View className="flex-1 px-6">
-        <View className="mb-2 mt-4 flex-row items-center justify-between">
+        <View className="mb-2 mt-4">
           <Text className="text-2xl font-bold text-text-primary">Messages</Text>
-          <Pressable
-            testID="messages-new-button"
-            onPress={() => setNewMenuOpen((v) => !v)}
-            className="h-10 w-10 items-center justify-center rounded-full bg-accent"
-          >
-            <Icon name="plus" size={18} color="#FFFFFF" />
-          </Pressable>
         </View>
-
-        {newMenuOpen ? (
-          <View className="mb-4 overflow-hidden rounded-xl border border-border bg-surface">
-            <Pressable
-              testID="messages-new-direct"
-              onPress={() => {
-                setNewMenuOpen(false);
-                router.push("/circle");
-              }}
-              className="border-b border-border px-4 py-3 active:bg-surface-raised"
-            >
-              <Text className="text-sm font-medium text-text-primary">New message</Text>
-              <Text className="text-xs text-text-tertiary">Message someone from your Circle</Text>
-            </Pressable>
-            <Pressable
-              testID="messages-new-group"
-              onPress={() => {
-                setNewMenuOpen(false);
-                router.push("/messages/new-group");
-              }}
-              className="px-4 py-3 active:bg-surface-raised"
-            >
-              <Text className="text-sm font-medium text-text-primary">New group</Text>
-              <Text className="text-xs text-text-tertiary">Start a conversation with several people</Text>
-            </Pressable>
-          </View>
-        ) : null}
 
         {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
 
@@ -378,6 +344,41 @@ export default function MessagesList() {
             ) : null
           }
         />
+
+        {newMenuOpen ? (
+          <View className="absolute bottom-24 right-6 w-64 overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
+            <Pressable
+              testID="messages-new-direct"
+              onPress={() => {
+                setNewMenuOpen(false);
+                router.push("/circle");
+              }}
+              className="border-b border-border px-4 py-3 active:bg-surface-raised"
+            >
+              <Text className="text-sm font-medium text-text-primary">New message</Text>
+              <Text className="text-xs text-text-tertiary">Message someone from your Circle</Text>
+            </Pressable>
+            <Pressable
+              testID="messages-new-group"
+              onPress={() => {
+                setNewMenuOpen(false);
+                router.push("/messages/new-group");
+              }}
+              className="px-4 py-3 active:bg-surface-raised"
+            >
+              <Text className="text-sm font-medium text-text-primary">New group</Text>
+              <Text className="text-xs text-text-tertiary">Start a conversation with several people</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <Pressable
+          testID="messages-new-button"
+          onPress={() => setNewMenuOpen((v) => !v)}
+          className="absolute bottom-6 right-6 h-14 w-14 items-center justify-center rounded-full bg-accent shadow-lg"
+        >
+          <Icon name="plus" size={24} color="#FFFFFF" />
+        </Pressable>
       </View>
       <TabBar />
     </SafeAreaView>

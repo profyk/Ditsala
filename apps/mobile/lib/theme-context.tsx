@@ -43,6 +43,8 @@ const THEME_VARS: Record<Theme, ReturnType<typeof vars>> = {
     "--color-warning": dark.warning,
     "--color-danger": dark.danger,
     "--color-info": dark.info,
+    "--color-brand-navy": dark.brandNavy,
+    "--color-gold": dark.gold,
   }),
   light: vars({
     "--color-background": light.background,
@@ -60,6 +62,8 @@ const THEME_VARS: Record<Theme, ReturnType<typeof vars>> = {
     "--color-warning": light.warning,
     "--color-danger": light.danger,
     "--color-info": light.info,
+    "--color-brand-navy": light.brandNavy,
+    "--color-gold": light.gold,
   }),
 };
 

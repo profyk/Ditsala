@@ -521,7 +521,7 @@ export default function ChatScreen() {
                 </View>
               ) : (
                 <View
-                  className={`rounded-2xl px-4 py-2.5 ${
+                  className={`rounded-2xl px-4 py-2.5 ${isOwn ? "rounded-br-xs" : "rounded-bl-xs"} ${
                     isDeleted
                       ? "border border-dashed border-border bg-transparent"
                       : isOwn
@@ -637,7 +637,7 @@ export default function ChatScreen() {
             placeholder="Message"
             placeholderTextColor={colors.textTertiary}
             multiline
-            className="flex-1 rounded-2xl border border-border bg-surface px-4 py-2.5 text-text-primary"
+            className="flex-1 rounded-full border border-border bg-surface px-4 py-2.5 text-text-primary"
           />
           <Pressable
             testID="chat-send-button"

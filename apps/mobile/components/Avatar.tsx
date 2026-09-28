@@ -1,3 +1,4 @@
+import { dark } from "@ditsala/ui-tokens";
 import { Image, Text, View } from "react-native";
 
 import { avatarColorFor, initialsFor } from "../lib/avatar-color";
@@ -39,7 +40,12 @@ export function Avatar({ name, id, imageUrl, size = 44, ring = false }: AvatarPr
           style={{ width: size, height: size, borderRadius: size / 2 }}
         />
       ) : (
-        <Text style={{ fontSize, fontWeight: "700", color: "#0B0B12" }}>{initialsFor(name)}</Text>
+        // Fixed dark text regardless of theme — avatarPalette entries are
+        // all bright/saturated, so initials need a consistently dark
+        // color for contrast rather than the current theme's text color.
+        <Text style={{ fontSize, fontWeight: "700", color: dark.background }}>
+          {initialsFor(name)}
+        </Text>
       )}
     </View>
   );
