@@ -216,6 +216,18 @@ export function decryptMedia(
   return nacl.secretbox.open(ciphertext, nonce, key);
 }
 
+/** A content hash for `requestMediaUpload`'s `contentHash` field — the
+ * backend never verifies it against the uploaded bytes (it's opaque,
+ * stored for future integrity/dedup use only), so this just needs to be
+ * a real hash, not a specific one. Reuses tweetnacl's already-imported
+ * SHA-512 (`nacl.hash`, the same primitive `deriveSharedKey` above uses)
+ * rather than adding a dedicated hashing dependency for one opaque field. */
+export function hashBytesHex(bytes: Uint8Array): string {
+  return Array.from(nacl.hash(bytes))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // --- Wire (base64) helpers — reuses the existing dependency-free
 // base64 codec rather than pulling in tweetnacl-util for the same job. ---
 

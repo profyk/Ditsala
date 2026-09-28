@@ -1,3 +1,5 @@
+import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } from "expo-audio";
+import { File } from "expo-file-system";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -14,8 +16,16 @@ import {
 import { Avatar } from "../../components/Avatar";
 import { Icon } from "../../components/Icon";
 import { Screen } from "../../components/Screen";
+import { VoiceNoteBubble } from "../../components/VoiceNoteBubble";
 import { authApi } from "../../lib/api";
-import { decryptIncomingMessage, encryptOutgoingMessage } from "../../lib/crypto/chat-crypto";
+import {
+  decryptIncomingMessage,
+  decryptIncomingVoiceNoteKey,
+  encryptOutgoingMessage,
+  encryptOutgoingVoiceNote,
+} from "../../lib/crypto/chat-crypto";
+import { hashBytesHex } from "../../lib/crypto/e2ee";
+import type { MediaKeyPayload } from "../../lib/crypto/wire";
 import { randomId } from "../../lib/id";
 import {
   type Conversation,
@@ -42,6 +52,9 @@ interface DecryptedMessage extends Message {
   // still in flight, or one whose send failed and can be retried.
   pending?: boolean;
   failed?: boolean;
+  // Only set for content_type "voice_note" — undefined until decrypted,
+  // null if decryption failed or this isn't a voice note.
+  voiceNote?: MediaKeyPayload | null;
 }
 
 type ReceiptStatus = "sent" | "delivered" | "read";
@@ -77,6 +90,12 @@ export default function ChatScreen() {
   const [typingUserIds, setTypingUserIds] = useState<Set<string>>(new Set());
   const [receipts, setReceipts] = useState<Record<string, ReceiptStatus>>({});
   const [focused, setFocused] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [sendingVoiceNote, setSendingVoiceNote] = useState(false);
+
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const tokenRef = useRef<string | null>(null);
   const conversationRef = useRef<Conversation | null>(null);
@@ -102,6 +121,15 @@ export default function ChatScreen() {
   const decryptOne = useCallback(
     async (token: string, conv: Conversation, raw: Message): Promise<DecryptedMessage> => {
       if (raw.deleted_at) return { ...raw, plaintext: null };
+      if (raw.content_type === "voice_note") {
+        const voiceNote = await decryptIncomingVoiceNoteKey(
+          token,
+          conv,
+          raw.sender_device_id,
+          raw.ciphertext
+        );
+        return { ...raw, plaintext: null, voiceNote };
+      }
       return {
         ...raw,
         plaintext: await decryptIncomingMessage(token, conv, raw.sender_device_id, raw.ciphertext),
@@ -283,6 +311,12 @@ export default function ChatScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    };
+  }, []);
+
   function handleDraftChange(text: string) {
     setDraft(text);
     const now = Date.now();
@@ -311,6 +345,7 @@ export default function ChatScreen() {
       content_type: "text",
       client_message_id: tempId,
       reply_to_message_id: replyToMessageId ?? null,
+      media_object_id: null,
       edited_at: null,
       deleted_at: null,
       expires_at: null,
@@ -339,6 +374,88 @@ export default function ChatScreen() {
       setError("Could not send that message.");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleStartRecording() {
+    const permission = await requestRecordingPermissionsAsync();
+    if (!permission.granted) {
+      setError("Microphone access is needed to record a voice note.");
+      return;
+    }
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    setIsRecording(true);
+    setRecordingSeconds(0);
+    recordingTimerRef.current = setInterval(() => {
+      setRecordingSeconds(Math.round(recorder.currentTime));
+    }, 250);
+  }
+
+  function stopRecordingTimer() {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  }
+
+  async function handleCancelRecording() {
+    stopRecordingTimer();
+    setIsRecording(false);
+    try {
+      await recorder.stop();
+    } catch {
+      // Nothing to send either way — a failed stop shouldn't block
+      // getting back to the ordinary composer.
+    }
+  }
+
+  async function handleSendVoiceNote() {
+    const token = tokenRef.current;
+    const conv = conversation;
+    stopRecordingTimer();
+    setIsRecording(false);
+    if (!token || !conv || !ownUserId) return;
+    setSendingVoiceNote(true);
+    try {
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (!uri) throw new Error("Recording produced no file.");
+      const durationMs = Math.max(1, Math.round(recorder.currentTime * 1000));
+      const audioBytes = await new File(uri).bytes();
+
+      const { messageCiphertext, mediaCiphertext } = await encryptOutgoingVoiceNote(
+        token,
+        conv,
+        members,
+        ownUserId,
+        audioBytes,
+        durationMs
+      );
+      const contentHash = hashBytesHex(mediaCiphertext);
+      const { media_object_id, upload_url } = await messagingApi.requestMediaUpload(token, {
+        contentHash,
+        encryptedSizeBytes: mediaCiphertext.length,
+        contentType: "audio/m4a",
+      });
+      await messagingApi.uploadEncryptedMedia(upload_url, "audio/m4a", mediaCiphertext);
+      const sent = await messagingApi.sendMessage(token, conv.id, {
+        ciphertext: messageCiphertext,
+        contentType: "voice_note",
+        clientMessageId: randomId(),
+        mediaObjectId: media_object_id,
+      });
+      // Recover the same key/nonce a recipient would, from the message
+      // that was just sent — `encryptOutgoingVoiceNote` doesn't hand the
+      // one-time media key back directly, and this way there's exactly
+      // one code path that turns "a voice note message" into playable
+      // key material, for the sender's own optimistic row too.
+      const voiceNote = await decryptIncomingVoiceNoteKey(token, conv, sent.sender_device_id, sent.ciphertext);
+      setMessages((current) => [{ ...sent, plaintext: null, voiceNote }, ...current]);
+    } catch {
+      setError("Could not send that voice note.");
+    } finally {
+      setSendingVoiceNote(false);
     }
   }
 
@@ -529,19 +646,30 @@ export default function ChatScreen() {
                         : "border border-border bg-surface"
                   } ${item.pending ? "opacity-60" : ""}`}
                 >
-                  <Text
-                    className={
-                      isDeleted
-                        ? "italic text-text-tertiary"
-                        : isOwn
-                          ? "text-white"
-                          : "text-text-primary"
-                    }
-                  >
-                    {isDeleted
-                      ? "This message was deleted"
-                      : (item.plaintext ?? "Couldn't decrypt this message")}
-                  </Text>
+                  {!isDeleted && item.content_type === "voice_note" ? (
+                    <VoiceNoteBubble
+                      messageId={item.id}
+                      mediaObjectId={item.media_object_id}
+                      keyPayload={item.voiceNote}
+                      isOwn={isOwn}
+                      iconColor={isOwn ? "#FFFFFF" : colors.textPrimary}
+                      textColor={isOwn ? "#FFFFFF" : colors.textSecondary}
+                    />
+                  ) : (
+                    <Text
+                      className={
+                        isDeleted
+                          ? "italic text-text-tertiary"
+                          : isOwn
+                            ? "text-white"
+                            : "text-text-primary"
+                      }
+                    >
+                      {isDeleted
+                        ? "This message was deleted"
+                        : (item.plaintext ?? "Couldn't decrypt this message")}
+                    </Text>
+                  )}
                 </View>
               )}
 
@@ -629,25 +757,51 @@ export default function ChatScreen() {
             </Pressable>
           </View>
         ) : null}
-        <View className="flex-row items-center gap-2 border-t border-border pb-4 pt-3">
-          <TextInput
-            testID="chat-input"
-            value={draft}
-            onChangeText={handleDraftChange}
-            placeholder="Message"
-            placeholderTextColor={colors.textTertiary}
-            multiline
-            className="flex-1 rounded-full border border-border bg-surface px-4 py-2.5 text-text-primary"
-          />
-          <Pressable
-            testID="chat-send-button"
-            onPress={handleSend}
-            disabled={sending || draft.trim().length === 0}
-            className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
-          >
-            <Icon name="send" size={18} color="#FFFFFF" />
-          </Pressable>
-        </View>
+        {isRecording ? (
+          <View className="flex-row items-center gap-3 border-t border-border pb-4 pt-3">
+            <Pressable
+              testID="chat-cancel-recording"
+              onPress={handleCancelRecording}
+              className="h-11 w-11 items-center justify-center rounded-full active:bg-surface-raised"
+            >
+              <Icon name="trash" size={18} color={colors.danger} />
+            </Pressable>
+            <View className="flex-1 flex-row items-center gap-2">
+              <View className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colors.danger }} />
+              <Text className="text-sm text-text-primary">
+                {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, "0")}
+              </Text>
+            </View>
+            <Pressable
+              testID="chat-send-voice-note"
+              onPress={handleSendVoiceNote}
+              disabled={sendingVoiceNote}
+              className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
+            >
+              <Icon name="send" size={18} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        ) : (
+          <View className="flex-row items-center gap-2 border-t border-border pb-4 pt-3">
+            <TextInput
+              testID="chat-input"
+              value={draft}
+              onChangeText={handleDraftChange}
+              placeholder="Message"
+              placeholderTextColor={colors.textTertiary}
+              multiline
+              className="flex-1 rounded-full border border-border bg-surface px-4 py-2.5 text-text-primary"
+            />
+            <Pressable
+              testID="chat-send-button"
+              onPress={draft.trim().length === 0 ? handleStartRecording : handleSend}
+              disabled={sending}
+              className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
+            >
+              <Icon name={draft.trim().length === 0 ? "mic" : "send"} size={18} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </Screen>
   );

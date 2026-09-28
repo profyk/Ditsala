@@ -23,15 +23,25 @@ import {
   bytesToUtf8,
   decryptDirectMessage,
   decryptGroupMessage,
+  decryptMedia,
   encryptDirectMessage,
   encryptGroupMessage,
+  encryptMedia,
   fromBase64,
   generateSenderKey,
   toBase64,
   utf8ToBytes,
 } from "./e2ee";
 import { ensureDeviceIdentity, fetchVerifiedPrekeysForAllDevices, findLocalPrekeySecret } from "./keystore";
-import { packDirectEnvelope, packGroupEnvelope, unpackDirectEnvelope, unpackGroupEnvelope } from "./wire";
+import {
+  type MediaKeyPayload,
+  packDirectEnvelope,
+  packGroupEnvelope,
+  packMediaKeyPayload,
+  unpackDirectEnvelope,
+  unpackGroupEnvelope,
+  unpackMediaKeyPayload,
+} from "./wire";
 
 const SENDER_KEY_PREFIX = "ditsala.e2ee.senderKey.";
 
@@ -155,4 +165,62 @@ export async function decryptIncomingMessage(
   } catch {
     return null;
   }
+}
+
+export interface EncryptedVoiceNote {
+  // Goes as the Message's own `ciphertext` — the media's decryption key,
+  // Sender-Key-encrypted like any other message.
+  messageCiphertext: Uint8Array;
+  // Goes to `messagingApi.requestMediaUpload`/the presigned upload URL —
+  // opaque bytes, the server never has the key to open them.
+  mediaCiphertext: Uint8Array;
+}
+
+/** Encrypts a voice note's raw audio bytes with a fresh one-time media
+ * key (`encryptMedia`), then wraps that key + nonce + duration as the
+ * message's own Sender-Key-encrypted payload — the same "media key
+ * travels as a message" design `e2ee.ts`'s own "Media" section
+ * describes, applied for the first time here. */
+export async function encryptOutgoingVoiceNote(
+  accessToken: string,
+  conversation: Conversation,
+  members: ConversationMember[],
+  ownUserId: string,
+  audioBytes: Uint8Array,
+  durationMs: number
+): Promise<EncryptedVoiceNote> {
+  const senderKey = await ensureOwnSenderKeyDistributed(accessToken, conversation, members, ownUserId);
+  const media = encryptMedia(audioBytes);
+  const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs });
+  return {
+    messageCiphertext: packGroupEnvelope(encryptGroupMessage(payload, senderKey)),
+    mediaCiphertext: media.ciphertext,
+  };
+}
+
+/** Recovers a voice note's media key/nonce/duration from the message's
+ * own ciphertext — call this first, then decrypt the downloaded media
+ * blob with `decryptVoiceNoteAudio`. Returns `null` (never throws), same
+ * contract as `decryptIncomingMessage`. */
+export async function decryptIncomingVoiceNoteKey(
+  accessToken: string,
+  conversation: Conversation,
+  senderDeviceId: string | null,
+  messageCiphertext: Uint8Array
+): Promise<MediaKeyPayload | null> {
+  try {
+    if (!senderDeviceId) return null;
+    const senderKey = await resolveSenderKeyFor(accessToken, conversation.id, senderDeviceId);
+    if (!senderKey) return null;
+    const payload = decryptGroupMessage(unpackGroupEnvelope(messageCiphertext), senderKey);
+    return payload ? unpackMediaKeyPayload(payload) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Decrypts the downloaded, still-encrypted audio blob once its key has
+ * been recovered via `decryptIncomingVoiceNoteKey`. */
+export function decryptVoiceNoteAudio(ciphertext: Uint8Array, keyPayload: MediaKeyPayload): Uint8Array | null {
+  return decryptMedia(ciphertext, keyPayload.nonce, keyPayload.key);
 }

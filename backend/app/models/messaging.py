@@ -79,6 +79,26 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL")
     )
+    # Denormalized alongside MediaObject.message_id (the direction the
+    # access-control check in get_media_download_url actually needs) —
+    # real gap this closes: MessageResponse had no way to tell a
+    # recipient which MediaObject a media/voice_note message points to,
+    # since the only link was MediaObject -> Message, never the reverse.
+    # Set once, at send_message time, alongside the other direction.
+    # `use_alter=True` because this creates a genuine circular FK with
+    # MediaObject.message_id below — without it, SQLAlchemy can't
+    # topologically sort the two tables' creation order (a real
+    # SAWarning, not cosmetic), so this one is deferred to its own
+    # ALTER TABLE rather than being inlined on CREATE TABLE.
+    media_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "media_objects.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_messages_media_object_id",
+        ),
+    )
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

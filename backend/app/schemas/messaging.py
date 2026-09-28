@@ -135,6 +135,7 @@ class MessageResponse(BaseModel):
     content_type: str
     client_message_id: str
     reply_to_message_id: uuid.UUID | None
+    media_object_id: uuid.UUID | None
     edited_at: datetime | None
     deleted_at: datetime | None
     expires_at: datetime | None
@@ -150,6 +151,7 @@ class MessageResponse(BaseModel):
             content_type=message.content_type,
             client_message_id=message.client_message_id,
             reply_to_message_id=message.reply_to_message_id,
+            media_object_id=message.media_object_id,
             edited_at=message.edited_at,
             deleted_at=message.deleted_at,
             expires_at=message.expires_at,

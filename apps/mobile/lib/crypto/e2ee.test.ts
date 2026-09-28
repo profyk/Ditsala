@@ -13,6 +13,7 @@ import {
   generateOneTimePrekeys,
   generateSenderKey,
   generateSignedPrekey,
+  hashBytesHex,
   packIdentityPublicKey,
   toBase64,
   unpackIdentityPublicKey,
@@ -255,5 +256,21 @@ describe("media encryption", () => {
     const wrongKey = generateSenderKey();
 
     expect(decryptMedia(ciphertext, nonce, wrongKey)).toBeNull();
+  });
+});
+
+describe("hashBytesHex", () => {
+  it("is deterministic for the same input", () => {
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    expect(hashBytesHex(bytes)).toBe(hashBytesHex(bytes));
+  });
+
+  it("differs for different input", () => {
+    expect(hashBytesHex(new Uint8Array([1]))).not.toBe(hashBytesHex(new Uint8Array([2])));
+  });
+
+  it("returns a 128-character lowercase hex string (SHA-512)", () => {
+    const hex = hashBytesHex(new Uint8Array([9, 9, 9]));
+    expect(hex).toMatch(/^[0-9a-f]{128}$/);
   });
 });

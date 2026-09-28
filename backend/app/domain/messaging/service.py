@@ -385,6 +385,7 @@ class MessagingService:
                 content_type=content_type,
                 client_message_id=client_message_id,
                 reply_to_message_id=reply_to_message_id,
+                media_object_id=media_object_id if media_object is not None else None,
                 expires_at=expires_at,
             )
         )

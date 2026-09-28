@@ -386,6 +386,15 @@ async def test_media_message_end_to_end_and_the_linking_gate(
         headers=_auth(alice_token),
     )
     assert r.status_code == 200, r.text
+    # Real gap this closes: the only link was MediaObject -> Message —
+    # bob (the recipient) needs the reverse to know which object to fetch.
+    assert r.json()["media_object_id"] == media_object_id
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages", headers=_auth(bob_token)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["media_object_id"] == media_object_id
 
     # Now linked to a real message in a conversation bob is a member of.
     r = await client.get(

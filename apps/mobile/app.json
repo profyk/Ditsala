@@ -63,7 +63,8 @@
         }
       ],
       "expo-video",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-audio"
     ],
     "owner": "profy",
     "extra": {

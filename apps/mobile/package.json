@@ -6,6 +6,7 @@
     "@config-plugins/react-native-webrtc": "^15.0.2",
     "@ditsala/ui-tokens": "workspace:*",
     "expo": "~57.0.22",
+    "expo-audio": "~57.0.5",
     "expo-camera": "~57.0.5",
     "expo-constants": "~57.0.18",
     "expo-contacts": "^57.0.5",

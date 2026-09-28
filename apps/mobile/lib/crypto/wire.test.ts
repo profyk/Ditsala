@@ -3,6 +3,7 @@ import "react-native-get-random-values";
 import {
   encryptDirectMessage,
   encryptGroupMessage,
+  encryptMedia,
   generateIdentity,
   generateSenderKey,
   generateSignedPrekey,
@@ -11,8 +12,10 @@ import {
 import {
   packDirectEnvelope,
   packGroupEnvelope,
+  packMediaKeyPayload,
   unpackDirectEnvelope,
   unpackGroupEnvelope,
+  unpackMediaKeyPayload,
 } from "./wire";
 
 describe("direct envelope wire encoding", () => {
@@ -79,5 +82,33 @@ describe("group envelope wire encoding", () => {
 
     expect(unpacked.nonce).toEqual(envelope.nonce);
     expect(unpacked.ciphertext).toEqual(envelope.ciphertext);
+  });
+});
+
+describe("media key payload wire encoding", () => {
+  it("round-trips key, nonce, and duration losslessly", () => {
+    const media = encryptMedia(utf8ToBytes("fake audio bytes"));
+    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 4321 });
+
+    const unpacked = unpackMediaKeyPayload(payload);
+
+    expect(unpacked.key).toEqual(media.key);
+    expect(unpacked.nonce).toEqual(media.nonce);
+    expect(unpacked.durationMs).toBe(4321);
+  });
+
+  it("handles a duration spanning all four bytes", () => {
+    const media = encryptMedia(utf8ToBytes("x"));
+    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 0xdeadbeef });
+
+    expect(unpackMediaKeyPayload(payload).durationMs).toBe(0xdeadbeef);
+  });
+
+  it("rejects a payload with an unknown version byte", () => {
+    const media = encryptMedia(utf8ToBytes("x"));
+    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 1 });
+    payload[0] = 99;
+
+    expect(() => unpackMediaKeyPayload(payload)).toThrow("Unsupported");
   });
 });

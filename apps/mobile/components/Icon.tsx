@@ -28,6 +28,7 @@ export type IconName =
   | "moon"
   | "file"
   | "play"
+  | "pause"
   | "download"
   | "trash";
 
@@ -590,6 +591,23 @@ export function Icon({ name, size = 24, color = "#FFFFFF", strokeWidth = 2 }: Ic
               borderLeftColor: color,
             }}
           />
+        </View>
+      );
+
+    case "pause":
+      return (
+        <View
+          style={{
+            width: s,
+            height: s,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: s * 0.14,
+          }}
+        >
+          <View style={{ width: s * 0.18, height: s * 0.6, backgroundColor: color }} />
+          <View style={{ width: s * 0.18, height: s * 0.6, backgroundColor: color }} />
         </View>
       );
 

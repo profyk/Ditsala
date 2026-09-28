@@ -11,10 +11,12 @@ import type { EncryptedEnvelope, GroupEnvelope } from "./e2ee";
 
 const DIRECT_ENVELOPE_VERSION = 1;
 const GROUP_ENVELOPE_VERSION = 1;
+const MEDIA_KEY_PAYLOAD_VERSION = 1;
 
 const PREKEY_ID_BYTES = 4;
 const PUBLIC_KEY_BYTES = 32;
 const NONCE_BYTES = 24;
+const MEDIA_KEY_BYTES = 32;
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((sum, c) => sum + c.length, 0);
@@ -79,4 +81,44 @@ export function unpackGroupEnvelope(bytes: Uint8Array): GroupEnvelope {
   const nonce = bytes.slice(1, 1 + NONCE_BYTES);
   const ciphertext = bytes.slice(1 + NONCE_BYTES);
   return { nonce, ciphertext };
+}
+
+/**
+ * A voice note (or any future media message) is sent as two parts: the
+ * encrypted audio bytes go through the ordinary media upload/download
+ * pipeline (opaque to the server either way), while the small symmetric
+ * key + nonce that decrypts it — plus playback metadata the recipient
+ * needs before ever downloading anything — travels as the *message's
+ * own* ciphertext, i.e. Sender-Key-encrypted exactly like a text message
+ * (see chat-crypto.ts's `encryptOutgoingVoiceNote`/`decryptIncomingVoiceNoteKey`).
+ * This payload is that plaintext, before it gets wrapped in a
+ * GroupEnvelope.
+ */
+export interface MediaKeyPayload {
+  key: Uint8Array;
+  nonce: Uint8Array;
+  durationMs: number;
+}
+
+export function packMediaKeyPayload(payload: MediaKeyPayload): Uint8Array {
+  return concatBytes([
+    new Uint8Array([MEDIA_KEY_PAYLOAD_VERSION]),
+    payload.key,
+    payload.nonce,
+    uint32ToBytes(payload.durationMs),
+  ]);
+}
+
+export function unpackMediaKeyPayload(bytes: Uint8Array): MediaKeyPayload {
+  const version = bytes[0];
+  if (version !== MEDIA_KEY_PAYLOAD_VERSION) {
+    throw new Error(`Unsupported media-key payload version: ${version}.`);
+  }
+  let offset = 1;
+  const key = bytes.slice(offset, offset + MEDIA_KEY_BYTES);
+  offset += MEDIA_KEY_BYTES;
+  const nonce = bytes.slice(offset, offset + NONCE_BYTES);
+  offset += NONCE_BYTES;
+  const durationMs = bytesToUint32(bytes, offset);
+  return { key, nonce, durationMs };
 }

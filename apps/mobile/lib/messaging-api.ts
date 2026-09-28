@@ -1,10 +1,10 @@
 /**
  * Backend API client for E2EE messaging (docs/DITSALA_MASTER_SPEC.md
- * §6, §18-21). This is the non-crypto plumbing only — key bytes, ciphertext,
- * and Sender Key distribution messages all pass through as opaque
- * Uint8Array here; a real libsignal binding produces/consumes them once
- * the native module exists (see docs/adr/0005-e2ee-native-module-gap.md).
- * No message composer or chat UI calls this yet, deliberately.
+ * §6, §18-21). This is the non-crypto plumbing only — key bytes,
+ * ciphertext, and Sender Key distribution messages all pass through as
+ * opaque Uint8Array here; `lib/crypto/chat-crypto.ts` is what actually
+ * produces/consumes them (TweetNaCl, per ADR 0013 — not libsignal).
+ * `app/messages/*` calls this for real.
  */
 
 import { base64ToBytes, bytesToBase64 } from "./base64";
@@ -50,6 +50,7 @@ export interface Message {
   content_type: "text" | "media" | "voice_note" | "reaction" | "system";
   client_message_id: string;
   reply_to_message_id: string | null;
+  media_object_id: string | null;
   edited_at: string | null;
   deleted_at: string | null;
   expires_at: string | null;
@@ -220,6 +221,7 @@ export const messagingApi = {
       contentType: Message["content_type"];
       clientMessageId: string;
       replyToMessageId?: string;
+      mediaObjectId?: string;
     }
   ): Promise<Message> => {
     const raw = await request<RawMessage>(`/messaging/conversations/${conversationId}/messages`, {
@@ -229,6 +231,7 @@ export const messagingApi = {
         content_type: payload.contentType,
         client_message_id: payload.clientMessageId,
         reply_to_message_id: payload.replyToMessageId ?? null,
+        media_object_id: payload.mediaObjectId ?? null,
       },
     });
     return fromRawMessage(raw);
@@ -322,4 +325,33 @@ export const messagingApi = {
       method: "GET",
       token: accessToken,
     }),
+
+  /** PUTs already-encrypted bytes to a presigned upload URL — a
+   * different transport than `request()` on purpose: the URL is an
+   * absolute S3/MinIO endpoint, not `${BASE_URL}/api/v1/...`, and the
+   * body is a raw binary blob, not JSON. Same pattern as the existing
+   * avatar-upload flow (`app/account/profile.tsx`), extracted here so
+   * every media/voice_note sender can share it. */
+  uploadEncryptedMedia: async (
+    uploadUrl: string,
+    contentType: string,
+    ciphertext: Uint8Array
+  ): Promise<void> => {
+    // A fresh Uint8Array (not a view that might share a SharedArrayBuffer)
+    // is what Blob's constructor type actually accepts.
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      body: new Blob([new Uint8Array(ciphertext)], { type: contentType }),
+      headers: { "Content-Type": contentType },
+    });
+    if (!response.ok) throw new Error("Upload failed.");
+  },
+
+  /** GETs already-encrypted bytes back from a presigned download URL —
+   * the caller decrypts them (e.g. `decryptVoiceNoteAudio`). */
+  downloadEncryptedMedia: async (downloadUrl: string): Promise<Uint8Array> => {
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw new Error("Download failed.");
+    return new Uint8Array(await response.arrayBuffer());
+  },
 };
