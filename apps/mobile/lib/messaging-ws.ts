@@ -22,6 +22,7 @@ export type MessagingWsEvent =
   | { type: "message.deleted"; conversation_id: string; message_id: string }
   | { type: "message.delivered"; conversation_id: string; message_id: string; user_id: string }
   | { type: "message.read"; conversation_id: string; message_id: string; user_id: string }
+  | { type: "message.pinned"; conversation_id: string; message_id: string; value: boolean }
   | { type: "typing"; conversation_id: string; user_id: string }
   | {
       type: "call.ringing";

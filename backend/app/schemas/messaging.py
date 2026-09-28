@@ -125,6 +125,12 @@ class SendMessageRequest(BaseModel):
     # message so its own membership-based access control actually
     # applies (see MessagingService.send_message).
     media_object_id: uuid.UUID | None = None
+    # Client-asserted: true when this message is a forward of one the
+    # sender decrypted elsewhere. Purely a display flag — the backend has
+    # no way to verify it and doesn't need to (see MessagingService's
+    # docstring on why forwarding is inherently a client-side operation
+    # for E2EE content).
+    is_forwarded: bool = False
 
 
 class MessageResponse(BaseModel):
@@ -136,6 +142,8 @@ class MessageResponse(BaseModel):
     client_message_id: str
     reply_to_message_id: uuid.UUID | None
     media_object_id: uuid.UUID | None
+    pinned_at: datetime | None
+    is_forwarded: bool
     edited_at: datetime | None
     deleted_at: datetime | None
     expires_at: datetime | None
@@ -152,6 +160,8 @@ class MessageResponse(BaseModel):
             client_message_id=message.client_message_id,
             reply_to_message_id=message.reply_to_message_id,
             media_object_id=message.media_object_id,
+            pinned_at=message.pinned_at,
+            is_forwarded=message.is_forwarded,
             edited_at=message.edited_at,
             deleted_at=message.deleted_at,
             expires_at=message.expires_at,

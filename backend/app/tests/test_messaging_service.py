@@ -807,3 +807,167 @@ async def test_list_conversations_includes_last_message_timestamp(harness: Harne
         if s.conversation.id == conversation.id
     ]
     assert summary.last_message_at is not None
+
+
+async def test_last_message_timestamp_ignores_reactions(harness: Harness) -> None:
+    """Real gap this closes: reacting to an old message shouldn't make a
+    conversation jump to the top of the list or show "Reaction" as its
+    preview — last_message_at must track the latest real message."""
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    real_message = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"hi",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    [summary_before] = [
+        s
+        for s in await harness.service.list_conversations(alice.id)
+        if s.conversation.id == conversation.id
+    ]
+
+    await harness.service.send_message(
+        sender_user_id=bob.id,
+        sender_device_id=bob_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"heart",
+        content_type="reaction",
+        client_message_id=str(uuid.uuid4()),
+        reply_to_message_id=real_message.id,
+    )
+
+    [summary_after] = [
+        s
+        for s in await harness.service.list_conversations(alice.id)
+        if s.conversation.id == conversation.id
+    ]
+    assert summary_after.last_message_at == summary_before.last_message_at
+
+
+# --- message pinning ---
+
+
+async def test_pin_and_unpin_a_message(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+    message = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"pin me",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    assert message.pinned_at is None
+
+    # Any member — not just the sender — can pin.
+    pinned = await harness.service.set_message_pinned(
+        user_id=bob.id, message_id=message.id, value=True
+    )
+    assert pinned.pinned_at is not None
+
+    fetched = await harness.service.get_pinned_message(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert fetched is not None
+    assert fetched.id == message.id
+
+    unpinned = await harness.service.set_message_pinned(
+        user_id=alice.id, message_id=message.id, value=False
+    )
+    assert unpinned.pinned_at is None
+    after_unpin = await harness.service.get_pinned_message(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert after_unpin is None
+
+
+async def test_get_pinned_message_returns_the_most_recently_pinned(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+    first = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"first",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    second = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"second",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    await harness.service.set_message_pinned(user_id=alice.id, message_id=first.id, value=True)
+    await harness.service.set_message_pinned(user_id=alice.id, message_id=second.id, value=True)
+
+    fetched = await harness.service.get_pinned_message(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert fetched is not None
+    assert fetched.id == second.id
+
+
+async def test_pin_requires_membership(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    mallory, _mallory_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+    message = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"hi",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+
+    with pytest.raises(MessagingError):
+        await harness.service.set_message_pinned(
+            user_id=mallory.id, message_id=message.id, value=True
+        )
+
+
+# --- forwarding ---
+
+
+async def test_send_message_records_is_forwarded_flag(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    ordinary = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"original",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    assert ordinary.is_forwarded is False
+
+    forwarded = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"forwarded copy, re-encrypted for this conversation",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+        is_forwarded=True,
+    )
+    assert forwarded.is_forwarded is True

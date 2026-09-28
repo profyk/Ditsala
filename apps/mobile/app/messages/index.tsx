@@ -96,9 +96,16 @@ export default function MessagesList() {
             let preview = "No messages yet";
             if (conversation.last_message_at) {
               try {
-                const [latest] = await messagingApi.listMessages(accessToken, conversation.id, {
-                  limit: 1,
+                // Real gap this avoids: `last_message_at` (which gates
+                // this fetch) already excludes reaction messages
+                // server-side, but a plain `limit: 1` fetch here would
+                // still grab one if it's literally the newest row — a
+                // small window (5) skipped past reactions to find the
+                // real latest message keeps the two consistent.
+                const recent = await messagingApi.listMessages(accessToken, conversation.id, {
+                  limit: 5,
                 });
+                const latest = recent.find((m) => m.content_type !== "reaction");
                 if (latest?.deleted_at) {
                   preview = "This message was deleted";
                 } else if (latest) {

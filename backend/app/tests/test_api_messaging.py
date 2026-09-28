@@ -409,6 +409,89 @@ async def test_media_message_end_to_end_and_the_linking_gate(
     assert r.status_code == 400, r.text
 
 
+async def test_pin_message_and_fetch_it_back(client: AsyncClient, session: AsyncSession) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
+
+    r = await client.post(
+        "/api/v1/messaging/conversations/direct",
+        json={"other_user_id": str(bob.id)},
+        headers=_auth(alice_token),
+    )
+    conversation_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages",
+        json={
+            "ciphertext": _b64(b"pin me"),
+            "content_type": "text",
+            "client_message_id": str(uuid.uuid4()),
+        },
+        headers=_auth(alice_token),
+    )
+    message_id = r.json()["id"]
+    assert r.json()["pinned_at"] is None
+
+    # bob (not the sender) can pin it.
+    r = await client.patch(
+        f"/api/v1/messaging/messages/{message_id}/pinned",
+        json={"value": True},
+        headers=_auth(bob_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["pinned_at"] is not None
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/pinned-message",
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == message_id
+
+    r = await client.patch(
+        f"/api/v1/messaging/messages/{message_id}/pinned",
+        json={"value": False},
+        headers=_auth(alice_token),
+    )
+    assert r.json()["pinned_at"] is None
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/pinned-message",
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() is None
+
+
+async def test_send_message_is_forwarded_flag_round_trips(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
+
+    r = await client.post(
+        "/api/v1/messaging/conversations/direct",
+        json={"other_user_id": str(bob.id)},
+        headers=_auth(alice_token),
+    )
+    conversation_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages",
+        json={
+            "ciphertext": _b64(b"forwarded"),
+            "content_type": "text",
+            "client_message_id": str(uuid.uuid4()),
+            "is_forwarded": True,
+        },
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["is_forwarded"] is True
+
+
 async def test_messaging_requires_authentication(client: AsyncClient) -> None:
     r = await client.get("/api/v1/messaging/conversations")
     assert r.status_code == 401

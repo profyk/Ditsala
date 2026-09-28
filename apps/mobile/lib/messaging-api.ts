@@ -51,6 +51,8 @@ export interface Message {
   client_message_id: string;
   reply_to_message_id: string | null;
   media_object_id: string | null;
+  pinned_at: string | null;
+  is_forwarded: boolean;
   edited_at: string | null;
   deleted_at: string | null;
   expires_at: string | null;
@@ -222,6 +224,7 @@ export const messagingApi = {
       clientMessageId: string;
       replyToMessageId?: string;
       mediaObjectId?: string;
+      isForwarded?: boolean;
     }
   ): Promise<Message> => {
     const raw = await request<RawMessage>(`/messaging/conversations/${conversationId}/messages`, {
@@ -232,9 +235,27 @@ export const messagingApi = {
         client_message_id: payload.clientMessageId,
         reply_to_message_id: payload.replyToMessageId ?? null,
         media_object_id: payload.mediaObjectId ?? null,
+        is_forwarded: payload.isForwarded ?? false,
       },
     });
     return fromRawMessage(raw);
+  },
+
+  setMessagePinned: async (accessToken: string, messageId: string, value: boolean): Promise<Message> => {
+    const raw = await request<RawMessage>(`/messaging/messages/${messageId}/pinned`, {
+      method: "PATCH",
+      token: accessToken,
+      body: { value },
+    });
+    return fromRawMessage(raw);
+  },
+
+  getPinnedMessage: async (accessToken: string, conversationId: string): Promise<Message | null> => {
+    const raw = await request<RawMessage | null>(
+      `/messaging/conversations/${conversationId}/pinned-message`,
+      { method: "GET", token: accessToken }
+    );
+    return raw ? fromRawMessage(raw) : null;
   },
 
   listMessages: async (

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, LargeBinary, String, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, LargeBinary, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -102,6 +102,17 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Per-message pin (distinct from ConversationMember.pinned_at, which
+    # pins a whole *conversation* in a member's own list) — a banner
+    # shows whichever pinned message has the latest pinned_at, see
+    # MessageRepository.get_pinned_for_conversation.
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set at send_message time when the sender is relaying a message they
+    # decrypted elsewhere — purely a display flag ("Forwarded"). Forwarding
+    # itself is a client-side operation (decrypt, then send fresh
+    # ciphertext per target conversation's own Sender Key) since ciphertext
+    # from one conversation is never valid in another.
+    is_forwarded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class MessageReceipt(Base, UUIDPrimaryKeyMixin, TimestampMixin):

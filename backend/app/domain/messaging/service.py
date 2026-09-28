@@ -347,6 +347,7 @@ class MessagingService:
         client_message_id: str,
         reply_to_message_id: uuid.UUID | None = None,
         media_object_id: uuid.UUID | None = None,
+        is_forwarded: bool = False,
     ) -> Message:
         await self._require_membership(conversation_id, sender_user_id)
 
@@ -386,6 +387,7 @@ class MessagingService:
                 client_message_id=client_message_id,
                 reply_to_message_id=reply_to_message_id,
                 media_object_id=media_object_id if media_object is not None else None,
+                is_forwarded=is_forwarded,
                 expires_at=expires_at,
             )
         )
@@ -431,6 +433,29 @@ class MessagingService:
         await self._notify_conversation(
             message.conversation_id, {"type": "message.deleted", "message_id": str(message.id)}
         )
+
+    async def set_message_pinned(
+        self, *, user_id: uuid.UUID, message_id: uuid.UUID, value: bool
+    ) -> Message:
+        """Any member can pin/unpin — not sender-only, matching how
+        reply/react/forward already work (only edit/delete are
+        sender-restricted, via `_require_own_message`)."""
+        message = await self._messages.get(message_id)
+        if message is None:
+            raise MessagingError("Unknown message.")
+        await self._require_membership(message.conversation_id, user_id)
+        message.pinned_at = datetime.now(UTC) if value else None
+        await self._notify_conversation(
+            message.conversation_id,
+            {"type": "message.pinned", "message_id": str(message.id), "value": value},
+        )
+        return message
+
+    async def get_pinned_message(
+        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> Message | None:
+        await self._require_membership(conversation_id, user_id)
+        return await self._messages.get_pinned_for_conversation(conversation_id)
 
     async def _require_own_message(self, message: Message, user_id: uuid.UUID) -> None:
         await self._require_membership(message.conversation_id, user_id)

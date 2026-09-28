@@ -30,10 +30,33 @@ class MessageRepository(Repository[Message]):
         return list(result.scalars().all())
 
     async def get_latest_for_conversation(self, conversation_id: uuid.UUID) -> Message | None:
+        """Drives `ConversationSummary.last_message_at` — the list
+        screen's sort order and "last message" preview. Real gap this
+        excludes: without filtering `content_type != "reaction"`,
+        reacting to an old message would make a conversation jump to the
+        top of the list showing "Reaction" as its preview, even though
+        nothing about the actual conversation content changed."""
         result = await self.session.execute(
             self._select()
-            .where(Message.conversation_id == conversation_id)
+            .where(Message.conversation_id == conversation_id, Message.content_type != "reaction")
             .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_pinned_for_conversation(self, conversation_id: uuid.UUID) -> Message | None:
+        """The single most-recently-pinned, still-visible message in a
+        conversation — a banner shows just this one, matching how the
+        reference design's "pinned message" UI works (last pinned wins,
+        not a list)."""
+        result = await self.session.execute(
+            self._select()
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.pinned_at.is_not(None),
+                Message.deleted_at.is_(None),
+            )
+            .order_by(Message.pinned_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

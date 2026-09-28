@@ -311,6 +311,7 @@ async def send_message(
             client_message_id=body.client_message_id,
             reply_to_message_id=body.reply_to_message_id,
             media_object_id=body.media_object_id,
+            is_forwarded=body.is_forwarded,
         )
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
@@ -332,6 +333,38 @@ async def list_messages(
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
     return [MessageResponse.from_model(m) for m in messages]
+
+
+@router.patch("/messages/{message_id}/pinned", response_model=MessageResponse)
+async def set_message_pinned(
+    message_id: uuid.UUID,
+    body: SetFlagRequest,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> MessageResponse:
+    try:
+        message = await service.set_message_pinned(
+            user_id=user.id, message_id=message_id, value=body.value
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    return MessageResponse.from_model(message)
+
+
+@router.get(
+    "/conversations/{conversation_id}/pinned-message",
+    response_model=MessageResponse | None,
+)
+async def get_pinned_message(
+    conversation_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> MessageResponse | None:
+    try:
+        message = await service.get_pinned_message(user_id=user.id, conversation_id=conversation_id)
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    return MessageResponse.from_model(message) if message is not None else None
 
 
 @router.patch("/messages/{message_id}", response_model=MessageResponse)

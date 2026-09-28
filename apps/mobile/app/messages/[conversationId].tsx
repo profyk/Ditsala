@@ -1,7 +1,7 @@
 import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } from "expo-audio";
 import { File } from "expo-file-system";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -62,6 +62,7 @@ type ReceiptStatus = "sent" | "delivered" | "read";
 const TYPING_SEND_THROTTLE_MS = 3000;
 const TYPING_EXPIRE_MS = 6000;
 const RECENT_WINDOW = 30;
+const REACTION_EMOJI = ["❤️", "😂", "👍", "😮", "😢", "🙏"];
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -93,6 +94,8 @@ export default function ChatScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [sendingVoiceNote, setSendingVoiceNote] = useState(false);
+  const [pinnedMessage, setPinnedMessage] = useState<DecryptedMessage | null>(null);
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -190,6 +193,9 @@ export default function ChatScreen() {
       setHasMoreOlder(raw.length === RECENT_WINDOW);
       setError(null);
       markIncomingAsRead(token, decrypted);
+
+      const pinned = await messagingApi.getPinnedMessage(token, conversationId);
+      setPinnedMessage(pinned ? await decryptOne(token, conv, pinned) : null);
     } catch {
       setError("Could not load this conversation.");
     }
@@ -258,6 +264,14 @@ export default function ChatScreen() {
     [conversationId, decryptOne, focused, markIncomingAsRead]
   );
 
+  const refreshPinnedMessage = useCallback(async () => {
+    const token = tokenRef.current;
+    const conv = conversationRef.current;
+    if (!token || !conv) return;
+    const pinned = await messagingApi.getPinnedMessage(token, conversationId);
+    setPinnedMessage(pinned ? await decryptOne(token, conv, pinned) : null);
+  }, [conversationId, decryptOne]);
+
   useEffect(() => {
     return messagingSocket.onEvent((event) => {
       if (!("conversation_id" in event) || event.conversation_id !== conversationId) return;
@@ -270,6 +284,9 @@ export default function ChatScreen() {
           setMessages((current) =>
             current.map((m) => (m.id === event.message_id ? { ...m, plaintext: null, deleted_at: new Date().toISOString() } : m))
           );
+          break;
+        case "message.pinned":
+          refreshPinnedMessage();
           break;
         case "message.delivered":
         case "message.read":
@@ -302,7 +319,7 @@ export default function ChatScreen() {
           break;
       }
     });
-  }, [conversationId, mergeRecent, ownUserId]);
+  }, [conversationId, mergeRecent, ownUserId, refreshPinnedMessage]);
 
   useEffect(() => {
     const timers = typingTimersRef.current;
@@ -346,6 +363,8 @@ export default function ChatScreen() {
       client_message_id: tempId,
       reply_to_message_id: replyToMessageId ?? null,
       media_object_id: null,
+      pinned_at: null,
+      is_forwarded: false,
       edited_at: null,
       deleted_at: null,
       expires_at: null,
@@ -524,6 +543,94 @@ export default function ChatScreen() {
     }
   }
 
+  async function handleSetPinned(message: DecryptedMessage, value: boolean) {
+    const token = tokenRef.current;
+    if (!token) return;
+    setOpenActionsFor(null);
+    try {
+      const updated = await messagingApi.setMessagePinned(token, message.id, value);
+      setMessages((current) => current.map((m) => (m.id === message.id ? { ...m, pinned_at: updated.pinned_at } : m)));
+      setPinnedMessage(value ? { ...message, pinned_at: updated.pinned_at } : null);
+      if (!value) await refreshPinnedMessage();
+    } catch {
+      setError("Could not update that pin.");
+    }
+  }
+
+  /** One active reaction message per (sender device, target message) —
+   * the client enforces this by deleting its own prior reaction before
+   * sending a new one, so counting non-deleted reaction messages by
+   * emoji is accurate without any server-side aggregation. */
+  const reactionsByTarget = useMemo(() => {
+    const latestBySenderTarget = new Map<string, DecryptedMessage>();
+    for (const m of messages) {
+      if (m.content_type !== "reaction" || m.deleted_at || !m.reply_to_message_id || !m.sender_device_id) {
+        continue;
+      }
+      const key = `${m.sender_device_id}:${m.reply_to_message_id}`;
+      const existing = latestBySenderTarget.get(key);
+      if (!existing || new Date(m.created_at) > new Date(existing.created_at)) {
+        latestBySenderTarget.set(key, m);
+      }
+    }
+    const map = new Map<string, { emoji: string; count: number; mine: boolean; myMessageId: string | null }[]>();
+    for (const m of latestBySenderTarget.values()) {
+      if (!m.plaintext || !m.reply_to_message_id) continue;
+      const target = m.reply_to_message_id;
+      const list = map.get(target) ?? [];
+      const mine = m.sender_device_id === ownDeviceId;
+      const existingEmoji = list.find((r) => r.emoji === m.plaintext);
+      if (existingEmoji) {
+        existingEmoji.count += 1;
+        if (mine) {
+          existingEmoji.mine = true;
+          existingEmoji.myMessageId = m.id;
+        }
+      } else {
+        list.push({ emoji: m.plaintext, count: 1, mine, myMessageId: mine ? m.id : null });
+      }
+      map.set(target, list);
+    }
+    return map;
+  }, [messages, ownDeviceId]);
+
+  async function handleReact(targetMessageId: string, emoji: string) {
+    const token = tokenRef.current;
+    const conv = conversation;
+    setReactionPickerFor(null);
+    setOpenActionsFor(null);
+    if (!token || !conv || !ownUserId) return;
+    const existingReactions = reactionsByTarget.get(targetMessageId) ?? [];
+    const mine = existingReactions.find((r) => r.mine);
+    try {
+      if (mine?.myMessageId) {
+        await messagingApi.deleteMessage(token, mine.myMessageId);
+        setMessages((current) =>
+          current.map((m) =>
+            m.id === mine.myMessageId ? { ...m, plaintext: null, deleted_at: new Date().toISOString() } : m
+          )
+        );
+        if (mine.emoji === emoji) return; // toggled off
+      }
+      const ciphertext = await encryptOutgoingMessage(token, conv, members, ownUserId, emoji);
+      const sent = await messagingApi.sendMessage(token, conv.id, {
+        ciphertext,
+        contentType: "reaction",
+        clientMessageId: randomId(),
+        replyToMessageId: targetMessageId,
+      });
+      setMessages((current) => [{ ...sent, plaintext: emoji }, ...current]);
+    } catch {
+      setError("Could not update that reaction.");
+    }
+  }
+
+  function handleForward(message: DecryptedMessage) {
+    setOpenActionsFor(null);
+    if (!message.plaintext) return;
+    router.push({ pathname: "/messages/forward", params: { text: message.plaintext } });
+  }
+
   const otherMember = members.find((m) => m.user_id !== ownUserId);
   const title =
     conversation?.type === "group"
@@ -576,13 +683,29 @@ export default function ChatScreen() {
 
       {error ? <Text className="mb-2 text-sm text-danger">{error}</Text> : null}
 
+      {pinnedMessage ? (
+        <Pressable
+          testID="chat-pinned-banner"
+          onPress={() => handleSetPinned(pinnedMessage, false)}
+          className="mb-2 flex-row items-center gap-2 rounded-lg bg-accent-muted px-3 py-2"
+        >
+          <Icon name="bell" size={14} color={colors.accent} />
+          <Text className="flex-1 text-xs text-text-primary" numberOfLines={1}>
+            {pinnedMessage.plaintext ?? "Pinned message"}
+          </Text>
+          <Text className="text-xs font-medium text-accent">Unpin</Text>
+        </Pressable>
+      ) : null}
+
       <FlatList
         className="flex-1"
         // `messagingApi.listMessages` returns newest-first (matches the
         // backend's own `ORDER BY created_at DESC`) — exactly what an
         // `inverted` FlatList wants at index 0 (rendered at the bottom,
-        // the initial scroll position), so this is used as-is.
-        data={messages}
+        // the initial scroll position), so this is used as-is. Reaction
+        // messages are real Message rows (content_type "reaction") but
+        // render as pills on their target bubble, never as their own row.
+        data={messages.filter((m) => m.content_type !== "reaction")}
         inverted
         keyExtractor={(item) => item.id}
         refreshControl={
@@ -673,7 +796,30 @@ export default function ChatScreen() {
                 </View>
               )}
 
+              {!isDeleted && (reactionsByTarget.get(item.id)?.length ?? 0) > 0 ? (
+                <View className={`mt-1 flex-row flex-wrap gap-1 ${isOwn ? "self-end" : "self-start"}`}>
+                  {reactionsByTarget.get(item.id)!.map((r) => (
+                    <Pressable
+                      key={r.emoji}
+                      testID={`chat-reaction-pill-${item.id}-${r.emoji}`}
+                      onPress={() => handleReact(item.id, r.emoji)}
+                      className={`flex-row items-center gap-1 rounded-full border px-2 py-0.5 ${
+                        r.mine ? "border-accent bg-accent-muted" : "border-border bg-surface"
+                      }`}
+                    >
+                      <Text className="text-xs">{r.emoji}</Text>
+                      {r.count > 1 ? (
+                        <Text className="text-xs text-text-tertiary">{r.count}</Text>
+                      ) : null}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
               <View className={`mt-1 flex-row items-center gap-1 ${isOwn ? "self-end" : "self-start"}`}>
+                {item.is_forwarded && !isDeleted ? (
+                  <Text className="text-xs italic text-text-tertiary">Forwarded ·</Text>
+                ) : null}
                 {item.edited_at && !isDeleted ? (
                   <Text className="text-xs text-text-tertiary">edited ·</Text>
                 ) : null}
@@ -690,37 +836,71 @@ export default function ChatScreen() {
               </View>
 
               {actionsOpen && !isDeleted && !item.pending ? (
-                <View className="mt-1 flex-row gap-3 rounded-lg border border-border bg-surface px-3 py-2">
-                  <Pressable
-                    testID={`chat-reply-${item.id}`}
-                    onPress={() => {
-                      setReplyingTo(item);
-                      setOpenActionsFor(null);
-                    }}
-                  >
-                    <Text className="text-xs font-medium text-accent">Reply</Text>
-                  </Pressable>
-                  {isOwn ? (
+                <View className="mt-1 gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+                  <View className="flex-row flex-wrap gap-3">
                     <Pressable
-                      testID={`chat-edit-${item.id}`}
+                      testID={`chat-react-${item.id}`}
+                      onPress={() => setReactionPickerFor(reactionPickerFor === item.id ? null : item.id)}
+                    >
+                      <Text className="text-xs font-medium text-accent">React</Text>
+                    </Pressable>
+                    <Pressable
+                      testID={`chat-reply-${item.id}`}
                       onPress={() => {
-                        setEditingMessageId(item.id);
-                        setEditDraft(item.plaintext ?? "");
+                        setReplyingTo(item);
                         setOpenActionsFor(null);
                       }}
                     >
-                      <Text className="text-xs font-medium text-text-secondary">Edit</Text>
+                      <Text className="text-xs font-medium text-accent">Reply</Text>
                     </Pressable>
-                  ) : null}
-                  {isOwn ? (
-                    <Pressable testID={`chat-delete-${item.id}`} onPress={() => handleDelete(item.id)}>
-                      <Text className="text-xs font-medium text-danger">Delete</Text>
+                    {item.content_type === "text" ? (
+                      <Pressable testID={`chat-forward-${item.id}`} onPress={() => handleForward(item)}>
+                        <Text className="text-xs font-medium text-accent">Forward</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      testID={`chat-pin-${item.id}`}
+                      onPress={() => handleSetPinned(item, item.pinned_at === null)}
+                    >
+                      <Text className="text-xs font-medium text-text-secondary">
+                        {item.pinned_at ? "Unpin" : "Pin"}
+                      </Text>
                     </Pressable>
-                  ) : null}
-                  {item.failed ? (
-                    <Pressable onPress={() => handleRetry(item)}>
-                      <Text className="text-xs font-medium text-accent">Retry</Text>
-                    </Pressable>
+                    {isOwn ? (
+                      <Pressable
+                        testID={`chat-edit-${item.id}`}
+                        onPress={() => {
+                          setEditingMessageId(item.id);
+                          setEditDraft(item.plaintext ?? "");
+                          setOpenActionsFor(null);
+                        }}
+                      >
+                        <Text className="text-xs font-medium text-text-secondary">Edit</Text>
+                      </Pressable>
+                    ) : null}
+                    {isOwn ? (
+                      <Pressable testID={`chat-delete-${item.id}`} onPress={() => handleDelete(item.id)}>
+                        <Text className="text-xs font-medium text-danger">Delete</Text>
+                      </Pressable>
+                    ) : null}
+                    {item.failed ? (
+                      <Pressable onPress={() => handleRetry(item)}>
+                        <Text className="text-xs font-medium text-accent">Retry</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {reactionPickerFor === item.id ? (
+                    <View className="flex-row gap-3 border-t border-border pt-2">
+                      {REACTION_EMOJI.map((emoji) => (
+                        <Pressable
+                          key={emoji}
+                          testID={`chat-reaction-pick-${item.id}-${emoji}`}
+                          onPress={() => handleReact(item.id, emoji)}
+                        >
+                          <Text style={{ fontSize: 20 }}>{emoji}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
                   ) : null}
                 </View>
               ) : null}
