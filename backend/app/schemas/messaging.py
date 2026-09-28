@@ -72,6 +72,14 @@ class RenameGroupConversationRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class AddGroupMemberRequest(BaseModel):
+    user_id: uuid.UUID
+
+
+class SetMemberRoleRequest(BaseModel):
+    role: str = Field(pattern="^(member|admin)$")
+
+
 class ConversationResponse(BaseModel):
     id: uuid.UUID
     type: str

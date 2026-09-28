@@ -326,6 +326,125 @@ class MessagingService:
             )
         return enriched
 
+    async def add_group_member(
+        self, *, actor_user_id: uuid.UUID, conversation_id: uuid.UUID, new_member_user_id: uuid.UUID
+    ) -> ConversationMember:
+        conversation, membership = await self._require_group_admin(actor_user_id, conversation_id)
+        if await self._conversation_members.get_membership(conversation_id, new_member_user_id):
+            raise MessagingError("Already a member of this group.")
+        contact = await self._contacts.get_by_pair(actor_user_id, new_member_user_id)
+        if contact is None or contact.tier not in ("verified", "trusted"):
+            raise MessagingError("Every group member must be an accepted Circle contact first.")
+
+        new_member = await self._conversation_members.add(
+            ConversationMember(
+                conversation_id=conversation_id,
+                user_id=new_member_user_id,
+                joined_at=datetime.now(UTC),
+            )
+        )
+        actor = await self._users.get(actor_user_id)
+        added = await self._users.get(new_member_user_id)
+        await self._post_system_message(
+            conversation_id,
+            f"{self._display_name(actor)} added {self._display_name(added)}",
+        )
+        return new_member
+
+    async def remove_group_member(
+        self, *, actor_user_id: uuid.UUID, conversation_id: uuid.UUID, target_user_id: uuid.UUID
+    ) -> None:
+        """Two paths: a member removing themselves (leaving), or an admin
+        removing someone else — mirrors how `set_message_pinned` already
+        distinguishes "any member" from "sender-only" actions rather than
+        forcing one permission model onto both cases."""
+        conversation = await self._conversations.get(conversation_id)
+        if conversation is None or conversation.type != "group":
+            raise MessagingError("Only group conversations support member removal.")
+        actor_membership = await self._require_membership(conversation_id, actor_user_id)
+        target_membership = await self._conversation_members.get_membership(
+            conversation_id, target_user_id
+        )
+        if target_membership is None:
+            raise MessagingError("That user isn't a member of this group.")
+        if actor_user_id != target_user_id and actor_membership.role != "admin":
+            raise MessagingError("Only a group admin can remove another member.")
+
+        await self._conversation_members.delete(target_membership)
+        actor = await self._users.get(actor_user_id)
+        target = await self._users.get(target_user_id)
+        text = (
+            f"{self._display_name(actor)} left"
+            if actor_user_id == target_user_id
+            else f"{self._display_name(actor)} removed {self._display_name(target)}"
+        )
+        await self._post_system_message(conversation_id, text)
+
+    async def set_member_role(
+        self,
+        *,
+        actor_user_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        target_user_id: uuid.UUID,
+        role: str,
+    ) -> ConversationMember:
+        if role not in ("member", "admin"):
+            raise MessagingError("Invalid role.")
+        await self._require_group_admin(actor_user_id, conversation_id)
+        target_membership = await self._conversation_members.get_membership(
+            conversation_id, target_user_id
+        )
+        if target_membership is None:
+            raise MessagingError("That user isn't a member of this group.")
+        if target_membership.role == role:
+            return target_membership
+
+        target_membership.role = role
+        actor = await self._users.get(actor_user_id)
+        target = await self._users.get(target_user_id)
+        verb = "promoted" if role == "admin" else "demoted"
+        await self._post_system_message(
+            conversation_id,
+            f"{self._display_name(actor)} {verb} {self._display_name(target)}"
+            + (" to admin" if role == "admin" else ""),
+        )
+        return target_membership
+
+    async def _require_group_admin(
+        self, user_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> tuple[Conversation, ConversationMember]:
+        membership = await self._require_membership(conversation_id, user_id)
+        conversation = await self._conversations.get(conversation_id)
+        if conversation is None or conversation.type != "group":
+            raise MessagingError("Only group conversations support this action.")
+        if membership.role != "admin":
+            raise MessagingError("Only a group admin can do this.")
+        return conversation, membership
+
+    def _display_name(self, user: Any) -> str:
+        return user.display_name if user is not None else "Someone"
+
+    async def _post_system_message(self, conversation_id: uuid.UUID, text: str) -> Message:
+        """System messages are the one deliberate exception to "ciphertext
+        is always opaque" (§7.3): the server is the author, has no Sender
+        Key of its own, and the content (a membership change) is already
+        fully known server-side and to every member via
+        `list_conversation_members` — nothing new is exposed by leaving
+        this readable, unlike actual message content."""
+        message = await self._messages.add(
+            Message(
+                conversation_id=conversation_id,
+                sender_device_id=None,
+                ciphertext=text.encode("utf-8"),
+                content_type="system",
+                client_message_id=f"system-{uuid.uuid4().hex}",
+            )
+        )
+        await self._notify_conversation(
+            conversation_id, {"type": "message.new", "message_id": str(message.id)}
+        )
+        return message
+
     async def _require_membership(
         self, conversation_id: uuid.UUID, user_id: uuid.UUID
     ) -> ConversationMember:

@@ -16,6 +16,7 @@ from app.api.v1.deps import (
 from app.domain.messaging.service import MessagingError
 from app.models.messaging import Conversation
 from app.schemas.messaging import (
+    AddGroupMemberRequest,
     ConversationMemberResponse,
     ConversationResponse,
     CreateGroupConversationRequest,
@@ -35,6 +36,7 @@ from app.schemas.messaging import (
     SendMessageRequest,
     SetDisappearingTimerRequest,
     SetFlagRequest,
+    SetMemberRoleRequest,
     SetMutedRequest,
     SignedPrekeyRequest,
     StartDirectConversationRequest,
@@ -225,6 +227,72 @@ async def list_conversation_members(
     except MessagingError as exc:
         raise _as_http_error(exc) from exc
     return [ConversationMemberResponse.model_validate(m) for m in members]
+
+
+@router.post(
+    "/conversations/{conversation_id}/members",
+    response_model=ConversationMemberResponse,
+    status_code=201,
+)
+async def add_group_member(
+    conversation_id: uuid.UUID,
+    body: AddGroupMemberRequest,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> ConversationMemberResponse:
+    try:
+        member = await service.add_group_member(
+            actor_user_id=user.id, conversation_id=conversation_id, new_member_user_id=body.user_id
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    enriched = await service.list_conversation_members(
+        user_id=user.id, conversation_id=conversation_id
+    )
+    [response] = [m for m in enriched if m.user_id == member.user_id]
+    return ConversationMemberResponse.model_validate(response)
+
+
+@router.delete("/conversations/{conversation_id}/members/{target_user_id}", status_code=204)
+async def remove_group_member(
+    conversation_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> None:
+    try:
+        await service.remove_group_member(
+            actor_user_id=user.id, conversation_id=conversation_id, target_user_id=target_user_id
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+
+
+@router.patch(
+    "/conversations/{conversation_id}/members/{target_user_id}/role",
+    response_model=ConversationMemberResponse,
+)
+async def set_member_role(
+    conversation_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    body: SetMemberRoleRequest,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> ConversationMemberResponse:
+    try:
+        await service.set_member_role(
+            actor_user_id=user.id,
+            conversation_id=conversation_id,
+            target_user_id=target_user_id,
+            role=body.role,
+        )
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+    enriched = await service.list_conversation_members(
+        user_id=user.id, conversation_id=conversation_id
+    )
+    [response] = [m for m in enriched if m.user_id == target_user_id]
+    return ConversationMemberResponse.model_validate(response)
 
 
 @router.patch(

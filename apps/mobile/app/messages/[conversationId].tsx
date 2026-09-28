@@ -24,7 +24,7 @@ import {
   encryptOutgoingMessage,
   encryptOutgoingVoiceNote,
 } from "../../lib/crypto/chat-crypto";
-import { hashBytesHex } from "../../lib/crypto/e2ee";
+import { bytesToUtf8, hashBytesHex } from "../../lib/crypto/e2ee";
 import type { MediaKeyPayload } from "../../lib/crypto/wire";
 import { randomId } from "../../lib/id";
 import {
@@ -124,6 +124,12 @@ export default function ChatScreen() {
   const decryptOne = useCallback(
     async (token: string, conv: Conversation, raw: Message): Promise<DecryptedMessage> => {
       if (raw.deleted_at) return { ...raw, plaintext: null };
+      if (raw.content_type === "system") {
+        // The one deliberate exception to "ciphertext is always Sender-
+        // Key-encrypted" — see MessagingService._post_system_message:
+        // the server authors these directly as plaintext UTF-8 bytes.
+        return { ...raw, plaintext: bytesToUtf8(raw.ciphertext) };
+      }
       if (raw.content_type === "voice_note") {
         const voiceNote = await decryptIncomingVoiceNoteKey(
           token,
@@ -663,22 +669,32 @@ export default function ChatScreen() {
         >
           <Icon name="chevron-left" size={20} color={colors.textPrimary} />
         </Pressable>
-        <Avatar
-          id={conversation?.id ?? "chat"}
-          name={title}
-          imageUrl={conversation?.type === "direct" ? otherMember?.avatar_url : null}
-          size={38}
-        />
-        <View className="flex-1">
-          <Text className="text-lg font-bold text-text-primary" numberOfLines={1}>
-            {title}
-          </Text>
-          {typingLabel ? (
-            <Text className="text-xs text-accent" numberOfLines={1}>
-              {typingLabel}
+        <Pressable
+          testID="chat-header-info"
+          onPress={() =>
+            conversation?.type === "group"
+              ? router.push({ pathname: "/messages/group-info", params: { conversationId } })
+              : undefined
+          }
+          className="flex-1 flex-row items-center gap-3"
+        >
+          <Avatar
+            id={conversation?.id ?? "chat"}
+            name={title}
+            imageUrl={conversation?.type === "direct" ? otherMember?.avatar_url : null}
+            size={38}
+          />
+          <View className="flex-1">
+            <Text className="text-lg font-bold text-text-primary" numberOfLines={1}>
+              {title}
             </Text>
-          ) : null}
-        </View>
+            {typingLabel ? (
+              <Text className="text-xs text-accent" numberOfLines={1}>
+                {typingLabel}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
       </View>
 
       {error ? <Text className="mb-2 text-sm text-danger">{error}</Text> : null}
@@ -720,6 +736,16 @@ export default function ChatScreen() {
           const isEditing = editingMessageId === item.id;
           const actionsOpen = openActionsFor === item.id;
           const receipt = receipts[item.id];
+
+          if (item.content_type === "system") {
+            return (
+              <View className="mb-2 items-center">
+                <View className="rounded-full bg-surface-raised px-3 py-1">
+                  <Text className="text-xs text-text-tertiary">{item.plaintext}</Text>
+                </View>
+              </View>
+            );
+          }
 
           return (
             <Pressable

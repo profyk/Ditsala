@@ -492,6 +492,73 @@ async def test_send_message_is_forwarded_flag_round_trips(
     assert r.json()["is_forwarded"] is True
 
 
+async def test_group_member_add_promote_remove(client: AsyncClient, session: AsyncSession) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, bob_token = await _make_user_with_device(session)
+    carol, _d3, carol_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
+    await _connect(session, alice.id, carol.id)
+
+    r = await client.post(
+        "/api/v1/messaging/conversations/group",
+        json={"member_ids": [str(bob.id)], "title": "Test group"},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    conversation_id = r.json()["id"]
+
+    # bob (not an admin) can't add carol.
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/members",
+        json={"user_id": str(carol.id)},
+        headers=_auth(bob_token),
+    )
+    assert r.status_code == 400, r.text
+
+    # alice (admin) can.
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/members",
+        json={"user_id": str(carol.id)},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["user_id"] == str(carol.id)
+    assert r.json()["role"] == "member"
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/members", headers=_auth(alice_token)
+    )
+    assert {m["user_id"] for m in r.json()} == {str(alice.id), str(bob.id), str(carol.id)}
+
+    # promote carol
+    r = await client.patch(
+        f"/api/v1/messaging/conversations/{conversation_id}/members/{carol.id}/role",
+        json={"role": "admin"},
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "admin"
+
+    # carol (now admin) removes bob
+    r = await client.delete(
+        f"/api/v1/messaging/conversations/{conversation_id}/members/{bob.id}",
+        headers=_auth(carol_token),
+    )
+    assert r.status_code == 204, r.text
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/members", headers=_auth(alice_token)
+    )
+    assert {m["user_id"] for m in r.json()} == {str(alice.id), str(carol.id)}
+
+    # a real, encrypted-nothing system message exists for each event.
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages", headers=_auth(alice_token)
+    )
+    system_messages = [m for m in r.json() if m["content_type"] == "system"]
+    assert len(system_messages) >= 2
+
+
 async def test_messaging_requires_authentication(client: AsyncClient) -> None:
     r = await client.get("/api/v1/messaging/conversations")
     assert r.status_code == 401

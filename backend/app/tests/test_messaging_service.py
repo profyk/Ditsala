@@ -971,3 +971,156 @@ async def test_send_message_records_is_forwarded_flag(harness: Harness) -> None:
         is_forwarded=True,
     )
     assert forwarded.is_forwarded is True
+
+
+# --- group role management ---
+
+
+async def test_admin_adds_a_member_and_a_system_message_is_posted(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    carol, _carol_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, alice.id, carol.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    member = await harness.service.add_group_member(
+        actor_user_id=alice.id, conversation_id=conversation.id, new_member_user_id=carol.id
+    )
+    assert member.user_id == carol.id
+    assert member.role == "member"
+
+    members = await harness.service.list_conversation_members(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert {m.user_id for m in members} == {alice.id, bob.id, carol.id}
+
+    all_messages = await harness.service.list_messages(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    [system_message] = [m for m in all_messages if m.content_type == "system"]
+    expected = "Messaging Test User added Messaging Test User"
+    assert system_message.ciphertext.decode("utf-8") == expected
+
+
+async def test_add_group_member_requires_admin(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    carol, _carol_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, bob.id, carol.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    with pytest.raises(MessagingError):
+        await harness.service.add_group_member(
+            actor_user_id=bob.id, conversation_id=conversation.id, new_member_user_id=carol.id
+        )
+
+
+async def test_add_group_member_requires_circle_contact(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    carol, _carol_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    with pytest.raises(MessagingError):
+        await harness.service.add_group_member(
+            actor_user_id=alice.id, conversation_id=conversation.id, new_member_user_id=carol.id
+        )
+
+
+async def test_member_can_leave_a_group(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    await harness.service.remove_group_member(
+        actor_user_id=bob.id, conversation_id=conversation.id, target_user_id=bob.id
+    )
+
+    members = await harness.service.list_conversation_members(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert {m.user_id for m in members} == {alice.id}
+
+
+async def test_non_admin_cannot_remove_another_member(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    carol, _carol_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, alice.id, carol.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id, carol.id])
+
+    with pytest.raises(MessagingError):
+        await harness.service.remove_group_member(
+            actor_user_id=bob.id, conversation_id=conversation.id, target_user_id=carol.id
+        )
+
+
+async def test_admin_removes_another_member(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    await harness.service.remove_group_member(
+        actor_user_id=alice.id, conversation_id=conversation.id, target_user_id=bob.id
+    )
+
+    members = await harness.service.list_conversation_members(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert {m.user_id for m in members} == {alice.id}
+
+
+async def test_admin_promotes_and_demotes_a_member(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    promoted = await harness.service.set_member_role(
+        actor_user_id=alice.id, conversation_id=conversation.id, target_user_id=bob.id, role="admin"
+    )
+    assert promoted.role == "admin"
+
+    # bob, now an admin, can promote/demote too.
+    demoted = await harness.service.set_member_role(
+        actor_user_id=bob.id,
+        conversation_id=conversation.id,
+        target_user_id=alice.id,
+        role="member",
+    )
+    assert demoted.role == "member"
+
+
+async def test_non_admin_cannot_change_roles(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.create_group_conversation(alice.id, [bob.id])
+
+    with pytest.raises(MessagingError):
+        await harness.service.set_member_role(
+            actor_user_id=bob.id,
+            conversation_id=conversation.id,
+            target_user_id=bob.id,
+            role="admin",
+        )
+
+
+async def test_group_management_rejects_direct_conversations(harness: Harness) -> None:
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    carol, _carol_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, alice.id, carol.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    with pytest.raises(MessagingError):
+        await harness.service.add_group_member(
+            actor_user_id=alice.id, conversation_id=conversation.id, new_member_user_id=carol.id
+        )

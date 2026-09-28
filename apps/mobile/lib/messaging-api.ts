@@ -185,6 +185,25 @@ export const messagingApi = {
       token: accessToken,
     }),
 
+  addGroupMember: (accessToken: string, conversationId: string, userId: string) =>
+    request<ConversationMember>(`/messaging/conversations/${conversationId}/members`, {
+      token: accessToken,
+      body: { user_id: userId },
+    }),
+
+  removeGroupMember: (accessToken: string, conversationId: string, userId: string) =>
+    request<void>(`/messaging/conversations/${conversationId}/members/${userId}`, {
+      method: "DELETE",
+      token: accessToken,
+    }),
+
+  setMemberRole: (accessToken: string, conversationId: string, userId: string, role: "member" | "admin") =>
+    request<ConversationMember>(`/messaging/conversations/${conversationId}/members/${userId}/role`, {
+      method: "PATCH",
+      token: accessToken,
+      body: { role },
+    }),
+
   setDisappearingTimer: (accessToken: string, conversationId: string, seconds: number | null) =>
     request<Conversation>(`/messaging/conversations/${conversationId}/disappearing-timer`, {
       method: "PATCH",
