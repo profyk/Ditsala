@@ -120,6 +120,11 @@ class SendMessageRequest(BaseModel):
     content_type: str = Field(pattern="^(text|media|voice_note|reaction|system)$")
     client_message_id: str = Field(min_length=1, max_length=128)
     reply_to_message_id: uuid.UUID | None = None
+    # Set only for content_type in (media, voice_note) — the id returned
+    # by POST /media/upload. Links that already-uploaded blob to this
+    # message so its own membership-based access control actually
+    # applies (see MessagingService.send_message).
+    media_object_id: uuid.UUID | None = None
 
 
 class MessageResponse(BaseModel):

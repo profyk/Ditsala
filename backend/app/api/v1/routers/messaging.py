@@ -310,6 +310,7 @@ async def send_message(
             content_type=body.content_type,
             client_message_id=body.client_message_id,
             reply_to_message_id=body.reply_to_message_id,
+            media_object_id=body.media_object_id,
         )
     except MessagingError as exc:
         raise _as_http_error(exc) from exc

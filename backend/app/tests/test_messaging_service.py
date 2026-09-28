@@ -531,8 +531,9 @@ async def test_media_upload_and_download_url(harness: Harness) -> None:
         ciphertext=b"envelope-with-media-key",
         content_type="media",
         client_message_id=uuid.uuid4().hex,
+        media_object_id=media_object.id,
     )
-    media_object.message_id = message.id
+    assert media_object.message_id == message.id
 
     download_url = await harness.service.get_media_download_url(
         user_id=bob.id, media_object_id=media_object.id
@@ -549,6 +550,93 @@ async def test_media_upload_rejects_oversized_files(harness: Harness) -> None:
             encrypted_size_bytes=200 * 1024 * 1024,
             content_type="video/mp4",
         )
+
+
+async def test_send_message_rejects_someone_elses_media_object(harness: Harness) -> None:
+    """Real gap this closes: get_media_download_url's own membership
+    check only ever runs once message_id is set — without verifying the
+    linking caller actually requested this exact upload, anyone who
+    learned another user's media_object_id could attach it to their own
+    message and read it via a conversation the real uploader never
+    shared it in."""
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    mallory, _mallory_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    await _connect(harness, alice.id, mallory.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, mallory.id)
+
+    media_object, _url = await harness.service.request_media_upload(
+        user_id=bob.id, content_hash="abc", encrypted_size_bytes=1024, content_type="image/jpeg"
+    )
+
+    with pytest.raises(MessagingError, match="Invalid or already-used media reference"):
+        await harness.service.send_message(
+            sender_user_id=alice.id,
+            sender_device_id=alice_device.id,
+            conversation_id=conversation.id,
+            ciphertext=b"envelope",
+            content_type="media",
+            client_message_id=uuid.uuid4().hex,
+            media_object_id=media_object.id,
+        )
+
+
+async def test_send_message_rejects_an_already_linked_media_object(harness: Harness) -> None:
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    media_object, _url = await harness.service.request_media_upload(
+        user_id=alice.id, content_hash="abc", encrypted_size_bytes=1024, content_type="image/jpeg"
+    )
+    await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"first",
+        content_type="media",
+        client_message_id=uuid.uuid4().hex,
+        media_object_id=media_object.id,
+    )
+
+    with pytest.raises(MessagingError, match="Invalid or already-used media reference"):
+        await harness.service.send_message(
+            sender_user_id=alice.id,
+            sender_device_id=alice_device.id,
+            conversation_id=conversation.id,
+            ciphertext=b"second",
+            content_type="media",
+            client_message_id=uuid.uuid4().hex,
+            media_object_id=media_object.id,
+        )
+
+
+async def test_unlinked_media_object_is_only_downloadable_by_its_uploader(
+    harness: Harness,
+) -> None:
+    """The other real half of the same gap: before a media object is
+    linked to any message, it previously had *no* access check at all —
+    anyone who learned its id could download it forever if it was never
+    sent."""
+    alice, _alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+
+    media_object, _url = await harness.service.request_media_upload(
+        user_id=alice.id, content_hash="abc", encrypted_size_bytes=1024, content_type="image/jpeg"
+    )
+
+    with pytest.raises(MessagingError, match="Unknown media object"):
+        await harness.service.get_media_download_url(
+            user_id=bob.id, media_object_id=media_object.id
+        )
+
+    # The uploader themselves can still fetch it back before it's sent.
+    url = await harness.service.get_media_download_url(
+        user_id=alice.id, media_object_id=media_object.id
+    )
+    assert url.startswith("https://stub-download.test/")
 
 
 # --- retention sweep ---

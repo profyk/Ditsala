@@ -105,6 +105,18 @@ class MediaObject(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
+    # Who requested this upload — real gap found and closed alongside
+    # wiring up the media-message UI: nothing ever linked a MediaObject
+    # to the message that sends it (message_id stayed null forever), and
+    # get_media_download_url's own membership check only runs when
+    # message_id is set — so every uploaded object was silently
+    # downloadable by any authenticated user who learned its id. This
+    # column lets send_message verify the linking caller actually
+    # requested this specific upload before attaching it to their
+    # message (see MessagingService.send_message).
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     # P2 — pointer to a client-encrypted blob; backend never has the key.
     s3_key: Mapped[str] = mapped_column(String(512))
     encrypted_size_bytes: Mapped[int] = mapped_column(Integer)

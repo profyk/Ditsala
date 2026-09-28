@@ -346,12 +346,28 @@ class MessagingService:
         content_type: str,
         client_message_id: str,
         reply_to_message_id: uuid.UUID | None = None,
+        media_object_id: uuid.UUID | None = None,
     ) -> Message:
         await self._require_membership(conversation_id, sender_user_id)
 
         existing = await self._messages.get_by_client_message_id(client_message_id)
         if existing is not None:
             return existing  # idempotent resend
+
+        media_object = None
+        if media_object_id is not None:
+            media_object = await self._media_objects.get(media_object_id)
+            # Real gap this closes: get_media_download_url's membership
+            # check only ever runs once message_id is set — verifying
+            # the caller actually requested this exact upload (not
+            # someone else's) before linking is what makes that check
+            # meaningful rather than bypassable by guessing an id early.
+            if (
+                media_object is None
+                or media_object.uploaded_by_user_id != sender_user_id
+                or media_object.message_id is not None
+            ):
+                raise MessagingError("Invalid or already-used media reference.")
 
         conversation = await self._conversations.get(conversation_id)
         assert conversation is not None
@@ -372,6 +388,8 @@ class MessagingService:
                 expires_at=expires_at,
             )
         )
+        if media_object is not None:
+            media_object.message_id = message.id
         await self._notify_conversation(
             conversation_id,
             {"type": "message.new", "message_id": str(message.id)},
@@ -535,6 +553,7 @@ class MessagingService:
                 s3_key=key,
                 encrypted_size_bytes=encrypted_size_bytes,
                 content_hash=content_hash,
+                uploaded_by_user_id=user_id,
             )
         )
         upload_url = await self._storage.create_upload_url(key=key, content_type=content_type)
@@ -550,6 +569,12 @@ class MessagingService:
             message = await self._messages.get(media_object.message_id)
             if message is not None:
                 await self._require_membership(message.conversation_id, user_id)
+        elif media_object.uploaded_by_user_id != user_id:
+            # Not yet attached to any message — real gap this closes:
+            # this branch previously granted access to anyone who knew
+            # the id, for as long as (or if) the upload was ever sent.
+            # Only the uploader can fetch it back before it's linked.
+            raise MessagingError("Unknown media object.")
         return await self._storage.create_download_url(key=media_object.s3_key)
 
     # Block mutation (block_user/unblock_user) lives in CircleService — §24

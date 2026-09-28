@@ -344,6 +344,62 @@ async def test_media_upload_flow(client: AsyncClient, session: AsyncSession) -> 
     assert r.json()["download_url"].startswith("https://stub-download.test/")
 
 
+async def test_media_message_end_to_end_and_the_linking_gate(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    """Real regression: media_object_id must be threaded through send,
+    and until it is, nobody but the uploader can read the object back —
+    previously an unlinked media object had no access check at all."""
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, bob_token = await _make_user_with_device(session)
+    mallory, _d3, mallory_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
+
+    r = await client.post(
+        "/api/v1/messaging/media/upload",
+        json={"content_hash": "abc", "encrypted_size_bytes": 2048, "content_type": "image/jpeg"},
+        headers=_auth(alice_token),
+    )
+    media_object_id = r.json()["media_object_id"]
+
+    # Not yet linked — only the uploader can read it back.
+    r = await client.get(
+        f"/api/v1/messaging/media/{media_object_id}/download", headers=_auth(mallory_token)
+    )
+    assert r.status_code == 400, r.text
+
+    r = await client.post(
+        "/api/v1/messaging/conversations/direct",
+        json={"other_user_id": str(bob.id)},
+        headers=_auth(alice_token),
+    )
+    conversation_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages",
+        json={
+            "ciphertext": _b64(b"envelope-with-media-key"),
+            "content_type": "media",
+            "client_message_id": str(uuid.uuid4()),
+            "media_object_id": media_object_id,
+        },
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+
+    # Now linked to a real message in a conversation bob is a member of.
+    r = await client.get(
+        f"/api/v1/messaging/media/{media_object_id}/download", headers=_auth(bob_token)
+    )
+    assert r.status_code == 200, r.text
+
+    # mallory still isn't a member of that conversation.
+    r = await client.get(
+        f"/api/v1/messaging/media/{media_object_id}/download", headers=_auth(mallory_token)
+    )
+    assert r.status_code == 400, r.text
+
+
 async def test_messaging_requires_authentication(client: AsyncClient) -> None:
     r = await client.get("/api/v1/messaging/conversations")
     assert r.status_code == 401
