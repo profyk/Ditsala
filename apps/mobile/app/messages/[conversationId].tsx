@@ -100,6 +100,7 @@ export default function ChatScreen() {
   const [members, setMembers] = useState<ConversationMember[]>([]);
   const [ownUserId, setOwnUserId] = useState<string | null>(null);
   const [ownDeviceId, setOwnDeviceId] = useState<string | null>(null);
+  const [deviceIdToUserId, setDeviceIdToUserId] = useState<Map<string, string>>(new Map());
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -123,6 +124,9 @@ export default function ChatScreen() {
   const [sendingAttachment, setSendingAttachment] = useState(false);
   const [sharingContact, setSharingContact] = useState(false);
   const [contactCandidates, setContactCandidates] = useState<Contact[] | null>(null);
+  const [reportingMessageId, setReportingMessageId] = useState<string | null>(null);
+  const [reportReason, setReportReason] = useState("");
+  const [submittingReport, setSubmittingReport] = useState(false);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -217,6 +221,18 @@ export default function ChatScreen() {
       setMembers(memberList);
       const primaryDevice = await messagingApi.getPrimaryDevice(token, me.id);
       setOwnDeviceId(primaryDevice);
+
+      // Needed to resolve who to report from a message's sender_device_id
+      // — Message only ever carries the device, not the user, so this is
+      // the one place that maps back from a device to whoever owns it.
+      const deviceLists = await Promise.all(
+        memberList.map((m) => messagingApi.listDevicesForUser(token, m.user_id))
+      );
+      const deviceMap = new Map<string, string>();
+      memberList.forEach((m, i) => {
+        for (const deviceId of deviceLists[i]) deviceMap.set(deviceId, m.user_id);
+      });
+      setDeviceIdToUserId(deviceMap);
 
       const raw = await messagingApi.listMessages(token, conversationId, {
         limit: RECENT_WINDOW,
@@ -487,6 +503,36 @@ export default function ChatScreen() {
       setMessages((current) => [{ ...sent, plaintext: payload }, ...current]);
     } catch {
       setError("Could not share that contact.");
+    }
+  }
+
+  async function handleSubmitReport(message: DecryptedMessage) {
+    const token = tokenRef.current;
+    if (!token || reportReason.trim().length === 0) return;
+    const reportedUserId = message.sender_device_id
+      ? deviceIdToUserId.get(message.sender_device_id)
+      : undefined;
+    if (!reportedUserId) {
+      setError("Could not identify who sent this message.");
+      return;
+    }
+    setSubmittingReport(true);
+    try {
+      // context_ref is metadata only (a message id) — the server never
+      // sees decrypted content; a human moderator reviewing this report
+      // has no way to read the message either, consistent with §7.3's
+      // "no admin path can retrieve decrypted content" even for reports.
+      await circleApi.reportUser(token, {
+        reportedUserId,
+        reason: reportReason.trim(),
+        contextRef: message.id,
+      });
+      setReportingMessageId(null);
+      setReportReason("");
+    } catch {
+      setError("Could not submit that report.");
+    } finally {
+      setSubmittingReport(false);
     }
   }
 
@@ -1025,6 +1071,17 @@ export default function ChatScreen() {
                         <Text className="text-xs font-medium text-accent">Retry</Text>
                       </Pressable>
                     ) : null}
+                    {!isOwn ? (
+                      <Pressable
+                        testID={`chat-report-${item.id}`}
+                        onPress={() => {
+                          setReportingMessageId(reportingMessageId === item.id ? null : item.id);
+                          setReportReason("");
+                        }}
+                      >
+                        <Text className="text-xs font-medium text-danger">Report</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                   {reactionPickerFor === item.id ? (
                     <View className="flex-row gap-3 border-t border-border pt-2">
@@ -1037,6 +1094,31 @@ export default function ChatScreen() {
                           <Text style={{ fontSize: 20 }}>{emoji}</Text>
                         </Pressable>
                       ))}
+                    </View>
+                  ) : null}
+                  {reportingMessageId === item.id ? (
+                    <View className="gap-2 border-t border-border pt-2">
+                      <TextInput
+                        testID={`chat-report-reason-${item.id}`}
+                        value={reportReason}
+                        onChangeText={setReportReason}
+                        placeholder="Why are you reporting this message?"
+                        placeholderTextColor={colors.textTertiary}
+                        multiline
+                        className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary"
+                      />
+                      <View className="flex-row justify-end gap-3">
+                        <Pressable onPress={() => setReportingMessageId(null)}>
+                          <Text className="text-xs text-text-secondary">Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          testID={`chat-report-submit-${item.id}`}
+                          onPress={() => handleSubmitReport(item)}
+                          disabled={submittingReport || reportReason.trim().length === 0}
+                        >
+                          <Text className="text-xs font-semibold text-danger">Submit report</Text>
+                        </Pressable>
+                      </View>
                     </View>
                   ) : null}
                 </View>

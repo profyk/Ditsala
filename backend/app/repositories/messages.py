@@ -21,10 +21,20 @@ class MessageRepository(Repository[Message]):
         *,
         before: datetime | None = None,
         limit: int = 50,
+        cleared_at: datetime | None = None,
     ) -> list[Message]:
         stmt = self._select().where(Message.conversation_id == conversation_id)
         if before is not None:
             stmt = stmt.where(Message.created_at < before)
+        # "Clear chat for me" (§ chat rebuild Phase 6) — a per-user cursor
+        # on the calling member's own row, not a real delete: everything
+        # at or before it is hidden from them only, going forward.
+        # `created_at` is `timestamp without time zone` (TimestampMixin) —
+        # comparing it against a tz-aware value raises an asyncpg
+        # DataError (same class of bug Phase 7 already hit and fixed
+        # elsewhere), so this strips tzinfo the same way.
+        if cleared_at is not None:
+            stmt = stmt.where(Message.created_at > cleared_at.replace(tzinfo=None))
         stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

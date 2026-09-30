@@ -217,6 +217,20 @@ export default function MessagesList() {
     }
   }
 
+  async function handleClearChat(row: ConversationRow) {
+    if (!token) return;
+    setBusyId(row.conversation.id);
+    setOpenActionsFor(null);
+    try {
+      await messagingApi.clearChat(token, row.conversation.id);
+      await load(true);
+    } catch {
+      setError("Could not clear that chat.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const archivedRows = rows.filter((r) => r.conversation.archived);
   const visibleRows = showArchived ? rows : rows.filter((r) => !r.conversation.archived);
 
@@ -315,6 +329,14 @@ export default function MessagesList() {
                       <Text className="text-xs font-medium text-danger">
                         {item.conversation.archived ? "Unarchive" : "Archive"}
                       </Text>
+                    </Pressable>
+                    <Pressable
+                      testID={`conversation-clear-${item.conversation.id}`}
+                      disabled={isBusy}
+                      onPress={() => handleClearChat(item)}
+                      className="flex-1 items-center rounded-lg py-2 active:bg-surface-raised disabled:opacity-50"
+                    >
+                      <Text className="text-xs font-medium text-danger">Clear</Text>
                     </Pressable>
                   </View>
                 ) : null}

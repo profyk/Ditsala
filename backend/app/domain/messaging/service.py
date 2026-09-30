@@ -523,9 +523,9 @@ class MessagingService:
         self, *, user_id: uuid.UUID, conversation_id: uuid.UUID,
         before: datetime | None = None, limit: int = 50,
     ) -> list[Message]:
-        await self._require_membership(conversation_id, user_id)
+        membership = await self._require_membership(conversation_id, user_id)
         return await self._messages.list_for_conversation(
-            conversation_id, before=before, limit=limit
+            conversation_id, before=before, limit=limit, cleared_at=membership.cleared_at
         )
 
     async def edit_message(
@@ -640,6 +640,17 @@ class MessagingService:
     ) -> ConversationMember:
         membership = await self._require_membership(conversation_id, user_id)
         membership.pinned_at = datetime.now(UTC) if pinned else None
+        return membership
+
+    async def clear_chat(
+        self, *, user_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> ConversationMember:
+        """A per-user history cursor, not a real delete (§ chat rebuild
+        Phase 6) — nothing is removed for other members, or even for this
+        one server-side; list_messages just hides anything at or before
+        this moment for them from now on."""
+        membership = await self._require_membership(conversation_id, user_id)
+        membership.cleared_at = datetime.now(UTC)
         return membership
 
     async def set_disappearing_timer(

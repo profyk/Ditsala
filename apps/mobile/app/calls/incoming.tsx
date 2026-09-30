@@ -53,7 +53,7 @@ export default function IncomingCall() {
             <Button
               testID="decline-call-button"
               label="Decline"
-              variant="secondary"
+              variant="danger"
               onPress={declineIncomingCall}
             />
           </View>

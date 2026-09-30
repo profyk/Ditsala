@@ -140,7 +140,12 @@ export default function ActiveCall() {
           />
         </View>
         <View className="flex-1">
-          <Button testID="end-call-button" label="End call" onPress={endActiveCall} />
+          <Button
+            testID="end-call-button"
+            label="End call"
+            variant="danger"
+            onPress={endActiveCall}
+          />
         </View>
       </View>
     </View>

@@ -993,6 +993,54 @@ async def test_send_message_accepts_contact_content_type(harness: Harness) -> No
     assert message.content_type == "contact"
 
 
+async def test_clear_chat_hides_earlier_messages_for_that_user_only(harness: Harness) -> None:
+    """Timestamps are set explicitly rather than relied on from real
+    wall-clock timing: this whole test runs inside one uncommitted
+    transaction, and Postgres's `now()` (created_at's server_default) is
+    fixed for the transaction's entire duration — so messages created
+    moments apart here would otherwise get identical created_at values,
+    making the filter's ordering untestable via real timing alone."""
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    before = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"before clearing",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    membership = await harness.service.clear_chat(user_id=alice.id, conversation_id=conversation.id)
+    # `before.created_at` is naive ("timestamp without time zone");
+    # `cleared_at` is tz-aware ("timestamptz") — attach UTC explicitly
+    # rather than pass a naive value into an aware column.
+    cleared_at = (before.created_at + timedelta(seconds=1)).replace(tzinfo=UTC)
+    membership.cleared_at = cleared_at
+    after = await harness.service.send_message(
+        sender_user_id=bob.id,
+        sender_device_id=bob_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"after clearing",
+        content_type="text",
+        client_message_id=str(uuid.uuid4()),
+    )
+    # And the reverse here: created_at's column is naive, so strip the
+    # tzinfo this arithmetic picked up from `cleared_at`.
+    after.created_at = (cleared_at + timedelta(seconds=1)).replace(tzinfo=None)
+
+    alice_view = await harness.service.list_messages(
+        user_id=alice.id, conversation_id=conversation.id
+    )
+    assert [m.id for m in alice_view] == [after.id]
+
+    # bob never cleared anything — his view still has both messages.
+    bob_view = await harness.service.list_messages(user_id=bob.id, conversation_id=conversation.id)
+    assert len(bob_view) == 2
+
+
 # --- group role management ---
 
 

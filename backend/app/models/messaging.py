@@ -54,6 +54,11 @@ class ConversationMember(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # "Clear chat for me" (§ chat rebuild Phase 6) — a per-user history
+    # cursor, not a real delete: list_messages hides anything created at
+    # or before this timestamp for this member only, everyone else's view
+    # of the conversation (and the messages themselves) is untouched.
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):

@@ -232,6 +232,14 @@ export const messagingApi = {
       body: { value },
     }),
 
+  /** "Clear chat for me" — a per-user history cursor, not a real delete.
+   * Nothing changes for other members; this device's own future
+   * `listMessages` calls just stop returning anything at or before now. */
+  clearChat: (accessToken: string, conversationId: string) =>
+    request<void>(`/messaging/conversations/${conversationId}/clear`, {
+      token: accessToken,
+    }),
+
   // --- messages ---
 
   sendMessage: async (

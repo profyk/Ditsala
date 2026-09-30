@@ -358,6 +358,18 @@ async def set_pinned(
         raise _as_http_error(exc) from exc
 
 
+@router.post("/conversations/{conversation_id}/clear", status_code=204)
+async def clear_chat(
+    conversation_id: uuid.UUID,
+    user: CurrentUserDep,
+    service: MessagingServiceDep,
+) -> None:
+    try:
+        await service.clear_chat(user_id=user.id, conversation_id=conversation_id)
+    except MessagingError as exc:
+        raise _as_http_error(exc) from exc
+
+
 # --- messages ---
 
 
