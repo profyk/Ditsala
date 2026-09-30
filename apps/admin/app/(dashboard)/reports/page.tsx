@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/Badge";
@@ -91,9 +92,24 @@ export default function ReportsPage() {
               </span>
             </div>
             <p className="mb-1 text-sm text-text-primary">{report.reason}</p>
-            <p className="mb-3 text-xs text-text-tertiary">
+            <p className="mb-1 text-xs text-text-tertiary">
               Reported user: {report.reported_user_id}
             </p>
+            {report.context_ref ? (
+              <p className="mb-3 text-xs text-text-tertiary">
+                Reported message:{" "}
+                <Link
+                  href={`/messaging?message=${report.context_ref}`}
+                  className="text-accent hover:underline"
+                >
+                  view context
+                </Link>{" "}
+                — content is end-to-end encrypted and not visible here, only metadata (sender,
+                conversation, timestamp).
+              </p>
+            ) : (
+              <p className="mb-3 text-xs text-text-tertiary">Reporting the user generally, not a specific message.</p>
+            )}
 
             {canAction && report.status === "open" ? (
               activeReport === report.id ? (

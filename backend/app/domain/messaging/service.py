@@ -380,6 +380,30 @@ class MessagingService:
         )
         await self._post_system_message(conversation_id, text)
 
+    async def admin_remove_member(
+        self, *, conversation_id: uuid.UUID, target_user_id: uuid.UUID
+    ) -> None:
+        """Platform-admin override for Trust & Safety — deliberately no
+        actor-membership or role check at all (an admin overseeing the
+        whole platform need not be a member of every group they act on),
+        mirroring `MeetingService.admin_end_meeting`/`CallService.
+        admin_end_call`'s "an admin override is an override" shape.
+        `AdminMessagingGovernanceService` is what actually gates who may
+        call this, via RBAC — not this method."""
+        conversation = await self._conversations.get(conversation_id)
+        if conversation is None or conversation.type != "group":
+            raise MessagingError("Only group conversations support member removal.")
+        target_membership = await self._conversation_members.get_membership(
+            conversation_id, target_user_id
+        )
+        if target_membership is None:
+            raise MessagingError("That user isn't a member of this group.")
+        await self._conversation_members.delete(target_membership)
+        target = await self._users.get(target_user_id)
+        await self._post_system_message(
+            conversation_id, f"An admin removed {self._display_name(target)}"
+        )
+
     async def set_member_role(
         self,
         *,
@@ -552,6 +576,24 @@ class MessagingService:
         await self._notify_conversation(
             message.conversation_id, {"type": "message.deleted", "message_id": str(message.id)}
         )
+
+    async def admin_delete_message(self, *, message_id: uuid.UUID) -> Message:
+        """Platform-admin override — deliberately not `_require_own_message`
+        (an admin acting on a reported message is never its sender). This
+        is a real moderation action a decrypted-content ban can't
+        substitute for: blanking `ciphertext` the same way a normal
+        delete does is possible and effective without ever reading what
+        the message said (§7.3 — no admin path decrypts content, this
+        one doesn't need to either)."""
+        message = await self._messages.get(message_id)
+        if message is None:
+            raise MessagingError("Unknown message.")
+        message.deleted_at = datetime.now(UTC)
+        message.ciphertext = b""
+        await self._notify_conversation(
+            message.conversation_id, {"type": "message.deleted", "message_id": str(message.id)}
+        )
+        return message
 
     async def set_message_pinned(
         self, *, user_id: uuid.UUID, message_id: uuid.UUID, value: bool

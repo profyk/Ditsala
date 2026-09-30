@@ -471,3 +471,78 @@ export const revenueApi = {
   getOverview: (token: string) =>
     request<RevenueOverview>("/admin/revenue", { method: "GET", token }),
 };
+
+// --- messaging governance (conversations, platform-wide — metadata only,
+// never ciphertext) ---
+
+export interface AdminConversationSummary {
+  id: string;
+  type: string;
+  title: string | null;
+  member_count: number;
+  message_count: number;
+  created_at: string;
+}
+
+export interface AdminConversationList {
+  conversations: AdminConversationSummary[];
+  total: number;
+}
+
+export interface AdminConversationMember {
+  user_id: string;
+  display_name: string;
+  role: string;
+  joined_at: string;
+}
+
+export interface AdminConversationDetail {
+  id: string;
+  type: string;
+  title: string | null;
+  created_at: string;
+  message_count: number;
+  members: AdminConversationMember[];
+}
+
+export interface AdminMessageContext {
+  message_id: string;
+  conversation_id: string;
+  sender_user_id: string | null;
+  content_type: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export const messagingGovernanceApi = {
+  listConversations: (token: string, params?: { limit?: number; offset?: number }) =>
+    request<AdminConversationList>("/admin/messaging/conversations", {
+      method: "GET",
+      token,
+      params,
+    }),
+
+  getConversation: (token: string, conversationId: string) =>
+    request<AdminConversationDetail>(`/admin/messaging/conversations/${conversationId}`, {
+      method: "GET",
+      token,
+    }),
+
+  getMessageContext: (token: string, messageId: string) =>
+    request<AdminMessageContext>(`/admin/messaging/messages/${messageId}/context`, {
+      method: "GET",
+      token,
+    }),
+
+  removeMember: (token: string, conversationId: string, userId: string, reason: string) =>
+    request<void>(`/admin/messaging/conversations/${conversationId}/members/${userId}/remove`, {
+      token,
+      body: { reason },
+    }),
+
+  deleteMessage: (token: string, messageId: string, reason: string) =>
+    request<void>(`/admin/messaging/messages/${messageId}/delete`, {
+      token,
+      body: { reason },
+    }),
+};

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.messaging import Conversation, ConversationMember
 from app.repositories.base import Repository
@@ -8,6 +8,20 @@ from app.repositories.base import Repository
 
 class ConversationRepository(Repository[Conversation]):
     model = Conversation
+
+    async def list_recent(self, *, limit: int = 100, offset: int = 0) -> list[Conversation]:
+        """Platform-wide, newest first — the admin governance equivalent
+        of `list_for_user`'s per-user scoping (there is no per-user
+        filter here at all, deliberately: this is the first place in
+        this codebase that lists conversations without one)."""
+        result = await self.session.execute(
+            self._select().order_by(Conversation.created_at.desc()).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+
+    async def count_all(self) -> int:
+        result = await self.session.execute(select(func.count()).select_from(Conversation))
+        return result.scalar_one()
 
 
 class ConversationMemberRepository(Repository[ConversationMember]):

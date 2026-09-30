@@ -8,13 +8,20 @@ from typing import Annotated, Any
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 
-from app.api.v1.deps import CallServiceDep, MeetingServiceDep, SessionDep, SettingsDep
+from app.api.v1.deps import (
+    CallServiceDep,
+    MeetingServiceDep,
+    MessagingServiceDep,
+    SessionDep,
+    SettingsDep,
+)
 from app.api.v1.deps import PlanServiceDep as PlanServiceDep  # re-exported, see below
 from app.core.security import decode_admin_access_token
 from app.domain.admin.auth_service import AdminAuthService
 from app.domain.admin.calls_governance import AdminCallGovernanceService
 from app.domain.admin.kyc_review_service import KycReviewService
 from app.domain.admin.meetings_governance import AdminMeetingGovernanceService
+from app.domain.admin.messaging_governance import AdminMessagingGovernanceService
 from app.domain.admin.rbac import Permission
 from app.domain.admin.revenue import RevenueService
 from app.domain.admin.service import AdminService
@@ -27,9 +34,11 @@ from app.repositories.admin import (
 )
 from app.repositories.calls import CallRepository
 from app.repositories.circle import InvitationRepository, ReportRepository
+from app.repositories.conversations import ConversationMemberRepository, ConversationRepository
 from app.repositories.devices import DeviceRepository, LoginAttemptRepository, SessionRepository
 from app.repositories.kyc import KycDocumentRepository, KycFaceVerificationRepository
 from app.repositories.meetings import MeetingParticipantRepository, MeetingRepository
+from app.repositories.messages import MessageRepository
 from app.repositories.users import UserRepository
 
 
@@ -116,6 +125,29 @@ async def get_admin_call_governance_service(
 
 AdminCallGovernanceServiceDep = Annotated[
     AdminCallGovernanceService, Depends(get_admin_call_governance_service)
+]
+
+
+async def get_admin_messaging_governance_service(
+    session: SessionDep, messaging_service: MessagingServiceDep
+) -> AdminMessagingGovernanceService:
+    """Reuses the exact same `MessagingService` instance `deps.py`
+    already builds for the real `/messaging/*` routes, same "delegate
+    the actual mutation, add the admin concern" shape as the meeting/
+    call governance wiring above."""
+    return AdminMessagingGovernanceService(
+        conversations=ConversationRepository(session),
+        conversation_members=ConversationMemberRepository(session),
+        messages=MessageRepository(session),
+        users=UserRepository(session),
+        devices=DeviceRepository(session),
+        messaging_service=messaging_service,
+        audit_log=AuditLogRepository(session),
+    )
+
+
+AdminMessagingGovernanceServiceDep = Annotated[
+    AdminMessagingGovernanceService, Depends(get_admin_messaging_governance_service)
 ]
 
 

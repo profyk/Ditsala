@@ -28,6 +28,11 @@ const NAV_ITEMS: { href: string; label: string; permission: Permission }[] = [
     label: "Live Meetings",
     permission: "meetings_governance:view",
   },
+  {
+    href: "/messaging",
+    label: "Messaging",
+    permission: "messaging_governance:view",
+  },
   { href: "/revenue", label: "Revenue", permission: "revenue:view" },
   {
     href: "/data-requests",

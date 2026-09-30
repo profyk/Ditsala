@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 
+from sqlalchemy import func, select
+
 from app.models.messaging import MediaObject, Message, MessageReceipt
 from app.repositories.base import Repository
 
@@ -14,6 +16,16 @@ class MessageRepository(Repository[Message]):
             self._select().where(Message.client_message_id == client_message_id)
         )
         return result.scalar_one_or_none()
+
+    async def count_for_conversation(self, conversation_id: uuid.UUID) -> int:
+        """Metadata only, for admin governance's conversation list —
+        never touches `ciphertext`."""
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+        )
+        return result.scalar_one()
 
     async def list_for_conversation(
         self,

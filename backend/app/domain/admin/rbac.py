@@ -36,3 +36,5 @@ class Permission(StrEnum):
     REVENUE_VIEW = "revenue:view"
     CALLS_GOVERNANCE_VIEW = "calls_governance:view"
     CALLS_GOVERNANCE_ACTION = "calls_governance:action"
+    MESSAGING_GOVERNANCE_VIEW = "messaging_governance:view"
+    MESSAGING_GOVERNANCE_ACTION = "messaging_governance:action"
