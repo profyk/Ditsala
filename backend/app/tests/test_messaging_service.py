@@ -973,6 +973,26 @@ async def test_send_message_records_is_forwarded_flag(harness: Harness) -> None:
     assert forwarded.is_forwarded is True
 
 
+async def test_send_message_accepts_contact_content_type(harness: Harness) -> None:
+    """No schema/migration needed for this — message_content_type has no
+    DB-level CHECK constraint (native_enum=False, no create_constraint),
+    so widening the allowed values is a pure application-layer change."""
+    alice, alice_device = await _make_user_with_device(harness)
+    bob, _bob_device = await _make_user_with_device(harness)
+    await _connect(harness, alice.id, bob.id)
+    conversation = await harness.service.start_direct_conversation(alice.id, bob.id)
+
+    message = await harness.service.send_message(
+        sender_user_id=alice.id,
+        sender_device_id=alice_device.id,
+        conversation_id=conversation.id,
+        ciphertext=b"encrypted contact card",
+        content_type="contact",
+        client_message_id=str(uuid.uuid4()),
+    )
+    assert message.content_type == "contact"
+
+
 # --- group role management ---
 
 

@@ -41,9 +41,13 @@ function formatWhen(iso: string | null): string {
 }
 
 function previewFor(contentType: string, plaintext: string | null): string {
-  if (contentType === "media") return "Photo";
+  // "media" now covers photo and video (Phase 5) — the type isn't in
+  // this preview's reach without a full download+decrypt, so a generic
+  // label is honest rather than guessing "Photo" for what might be video.
+  if (contentType === "media") return "Attachment";
   if (contentType === "voice_note") return "Voice message";
   if (contentType === "reaction") return "Reaction";
+  if (contentType === "contact") return "Contact card";
   if (contentType === "system") return plaintext ?? "System message";
   return plaintext ?? "New message";
 }

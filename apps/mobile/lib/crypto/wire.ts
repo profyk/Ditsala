@@ -7,16 +7,22 @@
  * shape they're looking at.
  */
 
-import type { EncryptedEnvelope, GroupEnvelope } from "./e2ee";
+import { bytesToUtf8, type EncryptedEnvelope, type GroupEnvelope, utf8ToBytes } from "./e2ee";
 
 const DIRECT_ENVELOPE_VERSION = 1;
 const GROUP_ENVELOPE_VERSION = 1;
-const MEDIA_KEY_PAYLOAD_VERSION = 1;
+// v2 added `mimeType` (image/video messages need to know how to render
+// what they downloaded; voice notes now send "audio/m4a" too, for
+// consistency) — this is the first version bump this format has needed,
+// same session it shipped in, so no backend migration or compatibility
+// shim for v1 payloads.
+const MEDIA_KEY_PAYLOAD_VERSION = 2;
 
 const PREKEY_ID_BYTES = 4;
 const PUBLIC_KEY_BYTES = 32;
 const NONCE_BYTES = 24;
 const MEDIA_KEY_BYTES = 32;
+const DURATION_MS_BYTES = 4;
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((sum, c) => sum + c.length, 0);
@@ -98,14 +104,19 @@ export interface MediaKeyPayload {
   key: Uint8Array;
   nonce: Uint8Array;
   durationMs: number;
+  mimeType: string;
 }
 
 export function packMediaKeyPayload(payload: MediaKeyPayload): Uint8Array {
+  const mimeTypeBytes = utf8ToBytes(payload.mimeType);
+  if (mimeTypeBytes.length > 255) throw new Error("mimeType too long to pack.");
   return concatBytes([
     new Uint8Array([MEDIA_KEY_PAYLOAD_VERSION]),
     payload.key,
     payload.nonce,
     uint32ToBytes(payload.durationMs),
+    new Uint8Array([mimeTypeBytes.length]),
+    mimeTypeBytes,
   ]);
 }
 
@@ -120,5 +131,9 @@ export function unpackMediaKeyPayload(bytes: Uint8Array): MediaKeyPayload {
   const nonce = bytes.slice(offset, offset + NONCE_BYTES);
   offset += NONCE_BYTES;
   const durationMs = bytesToUint32(bytes, offset);
-  return { key, nonce, durationMs };
+  offset += DURATION_MS_BYTES;
+  const mimeTypeLength = bytes[offset];
+  offset += 1;
+  const mimeType = bytesToUtf8(bytes.slice(offset, offset + mimeTypeLength));
+  return { key, nonce, durationMs, mimeType };
 }

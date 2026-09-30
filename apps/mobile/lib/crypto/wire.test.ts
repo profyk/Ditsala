@@ -86,27 +86,50 @@ describe("group envelope wire encoding", () => {
 });
 
 describe("media key payload wire encoding", () => {
-  it("round-trips key, nonce, and duration losslessly", () => {
+  it("round-trips key, nonce, duration, and mime type losslessly", () => {
     const media = encryptMedia(utf8ToBytes("fake audio bytes"));
-    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 4321 });
+    const payload = packMediaKeyPayload({
+      key: media.key,
+      nonce: media.nonce,
+      durationMs: 4321,
+      mimeType: "audio/m4a",
+    });
 
     const unpacked = unpackMediaKeyPayload(payload);
 
     expect(unpacked.key).toEqual(media.key);
     expect(unpacked.nonce).toEqual(media.nonce);
     expect(unpacked.durationMs).toBe(4321);
+    expect(unpacked.mimeType).toBe("audio/m4a");
   });
 
   it("handles a duration spanning all four bytes", () => {
     const media = encryptMedia(utf8ToBytes("x"));
-    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 0xdeadbeef });
+    const payload = packMediaKeyPayload({
+      key: media.key,
+      nonce: media.nonce,
+      durationMs: 0xdeadbeef,
+      mimeType: "video/mp4",
+    });
 
     expect(unpackMediaKeyPayload(payload).durationMs).toBe(0xdeadbeef);
   });
 
+  it("handles an empty mime type", () => {
+    const media = encryptMedia(utf8ToBytes("x"));
+    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 0, mimeType: "" });
+
+    expect(unpackMediaKeyPayload(payload).mimeType).toBe("");
+  });
+
   it("rejects a payload with an unknown version byte", () => {
     const media = encryptMedia(utf8ToBytes("x"));
-    const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs: 1 });
+    const payload = packMediaKeyPayload({
+      key: media.key,
+      nonce: media.nonce,
+      durationMs: 1,
+      mimeType: "image/jpeg",
+    });
     payload[0] = 99;
 
     expect(() => unpackMediaKeyPayload(payload)).toThrow("Unsupported");

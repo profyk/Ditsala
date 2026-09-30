@@ -47,7 +47,7 @@ export interface Message {
   conversation_id: string;
   sender_device_id: string | null;
   ciphertext: Uint8Array;
-  content_type: "text" | "media" | "voice_note" | "reaction" | "system";
+  content_type: "text" | "media" | "voice_note" | "reaction" | "system" | "contact";
   client_message_id: string;
   reply_to_message_id: string | null;
   media_object_id: string | null;

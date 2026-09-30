@@ -167,7 +167,7 @@ export async function decryptIncomingMessage(
   }
 }
 
-export interface EncryptedVoiceNote {
+export interface EncryptedOutgoingMedia {
   // Goes as the Message's own `ciphertext` — the media's decryption key,
   // Sender-Key-encrypted like any other message.
   messageCiphertext: Uint8Array;
@@ -176,33 +176,39 @@ export interface EncryptedVoiceNote {
   mediaCiphertext: Uint8Array;
 }
 
-/** Encrypts a voice note's raw audio bytes with a fresh one-time media
- * key (`encryptMedia`), then wraps that key + nonce + duration as the
- * message's own Sender-Key-encrypted payload — the same "media key
- * travels as a message" design `e2ee.ts`'s own "Media" section
- * describes, applied for the first time here. */
-export async function encryptOutgoingVoiceNote(
+/** Encrypts any binary media (voice note, image, or video — the crypto
+ * doesn't care which) with a fresh one-time media key (`encryptMedia`),
+ * then wraps that key + nonce + duration + mime type as the message's
+ * own Sender-Key-encrypted payload — the same "media key travels as a
+ * message" design `e2ee.ts`'s own "Media" section describes. `durationMs`
+ * is meaningful for voice/video and `0` for a still image; `mimeType`
+ * (e.g. "image/jpeg", "video/mp4", "audio/m4a") is what the recipient
+ * actually uses to decide how to render, not the message's own
+ * `content_type` (which only distinguishes "media" from "voice_note" at
+ * the message-list level). */
+export async function encryptOutgoingMedia(
   accessToken: string,
   conversation: Conversation,
   members: ConversationMember[],
   ownUserId: string,
-  audioBytes: Uint8Array,
-  durationMs: number
-): Promise<EncryptedVoiceNote> {
+  mediaBytes: Uint8Array,
+  durationMs: number,
+  mimeType: string
+): Promise<EncryptedOutgoingMedia> {
   const senderKey = await ensureOwnSenderKeyDistributed(accessToken, conversation, members, ownUserId);
-  const media = encryptMedia(audioBytes);
-  const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs });
+  const media = encryptMedia(mediaBytes);
+  const payload = packMediaKeyPayload({ key: media.key, nonce: media.nonce, durationMs, mimeType });
   return {
     messageCiphertext: packGroupEnvelope(encryptGroupMessage(payload, senderKey)),
     mediaCiphertext: media.ciphertext,
   };
 }
 
-/** Recovers a voice note's media key/nonce/duration from the message's
- * own ciphertext — call this first, then decrypt the downloaded media
- * blob with `decryptVoiceNoteAudio`. Returns `null` (never throws), same
- * contract as `decryptIncomingMessage`. */
-export async function decryptIncomingVoiceNoteKey(
+/** Recovers a media message's key/nonce/duration from the message's own
+ * ciphertext — call this first, then decrypt the downloaded blob with
+ * `decryptMediaBytes`. Returns `null` (never throws), same contract as
+ * `decryptIncomingMessage`. */
+export async function decryptIncomingMediaKey(
   accessToken: string,
   conversation: Conversation,
   senderDeviceId: string | null,
@@ -219,8 +225,8 @@ export async function decryptIncomingVoiceNoteKey(
   }
 }
 
-/** Decrypts the downloaded, still-encrypted audio blob once its key has
- * been recovered via `decryptIncomingVoiceNoteKey`. */
-export function decryptVoiceNoteAudio(ciphertext: Uint8Array, keyPayload: MediaKeyPayload): Uint8Array | null {
+/** Decrypts the downloaded, still-encrypted media blob once its key has
+ * been recovered via `decryptIncomingMediaKey`. */
+export function decryptMediaBytes(ciphertext: Uint8Array, keyPayload: MediaKeyPayload): Uint8Array | null {
   return decryptMedia(ciphertext, keyPayload.nonce, keyPayload.key);
 }

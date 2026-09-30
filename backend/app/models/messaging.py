@@ -69,7 +69,7 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
     content_type: Mapped[str] = mapped_column(
         Enum(
-            "text", "media", "voice_note", "reaction", "system",
+            "text", "media", "voice_note", "reaction", "system", "contact",
             name="message_content_type", native_enum=False,
         )
     )

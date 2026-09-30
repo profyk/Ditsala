@@ -125,7 +125,7 @@ class SetFlagRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     ciphertext: str  # base64
-    content_type: str = Field(pattern="^(text|media|voice_note|reaction|system)$")
+    content_type: str = Field(pattern="^(text|media|voice_note|reaction|system|contact)$")
     client_message_id: str = Field(min_length=1, max_length=128)
     reply_to_message_id: uuid.UUID | None = None
     # Set only for content_type in (media, voice_note) — the id returned

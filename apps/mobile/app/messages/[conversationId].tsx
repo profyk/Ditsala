@@ -1,5 +1,6 @@
 import { RecordingPresets, requestRecordingPermissionsAsync, useAudioRecorder } from "expo-audio";
 import { File } from "expo-file-system";
+import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -15,14 +16,16 @@ import {
 
 import { Avatar } from "../../components/Avatar";
 import { Icon } from "../../components/Icon";
+import { MediaBubble } from "../../components/MediaBubble";
 import { Screen } from "../../components/Screen";
 import { VoiceNoteBubble } from "../../components/VoiceNoteBubble";
 import { authApi } from "../../lib/api";
+import { circleApi, type Contact } from "../../lib/circle-api";
 import {
   decryptIncomingMessage,
-  decryptIncomingVoiceNoteKey,
+  decryptIncomingMediaKey,
   encryptOutgoingMessage,
-  encryptOutgoingVoiceNote,
+  encryptOutgoingMedia,
 } from "../../lib/crypto/chat-crypto";
 import { bytesToUtf8, hashBytesHex } from "../../lib/crypto/e2ee";
 import type { MediaKeyPayload } from "../../lib/crypto/wire";
@@ -52,9 +55,9 @@ interface DecryptedMessage extends Message {
   // still in flight, or one whose send failed and can be retried.
   pending?: boolean;
   failed?: boolean;
-  // Only set for content_type "voice_note" — undefined until decrypted,
-  // null if decryption failed or this isn't a voice note.
-  voiceNote?: MediaKeyPayload | null;
+  // Only set for content_type "voice_note"/"media" — undefined until
+  // decrypted, null if decryption failed or this message has no media.
+  mediaKey?: MediaKeyPayload | null;
 }
 
 type ReceiptStatus = "sent" | "delivered" | "read";
@@ -66,6 +69,26 @@ const REACTION_EMOJI = ["❤️", "😂", "👍", "😮", "😢", "🙏"];
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** Renders a "contact" message — its plaintext is a small encrypted
+ * JSON payload ({contactUserId, displayName}), the same E2EE path text
+ * messages already use (no media pipeline needed for something this
+ * small). Falls back to a plain label if the JSON can't be parsed
+ * (e.g. still decrypting). */
+function ContactCard({ plaintext, isOwn }: { plaintext: string | null; isOwn: boolean }) {
+  let displayName = "Contact";
+  try {
+    if (plaintext) displayName = (JSON.parse(plaintext) as { displayName: string }).displayName;
+  } catch {
+    // fall through to the default label
+  }
+  return (
+    <View className="flex-row items-center gap-2 py-1">
+      <Avatar id={displayName} name={displayName} size={32} />
+      <Text className={isOwn ? "text-white" : "text-text-primary"}>{displayName}</Text>
+    </View>
+  );
 }
 
 export default function ChatScreen() {
@@ -96,6 +119,10 @@ export default function ChatScreen() {
   const [sendingVoiceNote, setSendingVoiceNote] = useState(false);
   const [pinnedMessage, setPinnedMessage] = useState<DecryptedMessage | null>(null);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [sendingAttachment, setSendingAttachment] = useState(false);
+  const [sharingContact, setSharingContact] = useState(false);
+  const [contactCandidates, setContactCandidates] = useState<Contact[] | null>(null);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -130,14 +157,14 @@ export default function ChatScreen() {
         // the server authors these directly as plaintext UTF-8 bytes.
         return { ...raw, plaintext: bytesToUtf8(raw.ciphertext) };
       }
-      if (raw.content_type === "voice_note") {
-        const voiceNote = await decryptIncomingVoiceNoteKey(
+      if (raw.content_type === "voice_note" || raw.content_type === "media") {
+        const mediaKey = await decryptIncomingMediaKey(
           token,
           conv,
           raw.sender_device_id,
           raw.ciphertext
         );
-        return { ...raw, plaintext: null, voiceNote };
+        return { ...raw, plaintext: null, mediaKey };
       }
       return {
         ...raw,
@@ -402,6 +429,67 @@ export default function ChatScreen() {
     }
   }
 
+  async function handlePickMedia(mediaType: "images" | "videos") {
+    setAttachMenuOpen(false);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setError("Photo library access is needed to attach a file.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: [mediaType],
+      quality: 0.8,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+    const asset = result.assets[0];
+    setSendingAttachment(true);
+    try {
+      const bytes = await new File(asset.uri).bytes();
+      const mimeType = asset.mimeType ?? (mediaType === "videos" ? "video/mp4" : "image/jpeg");
+      await sendMediaMessage(bytes, asset.duration ?? 0, mimeType, "media");
+    } catch {
+      setError("Could not send that attachment.");
+    } finally {
+      setSendingAttachment(false);
+    }
+  }
+
+  async function handleOpenContactShare() {
+    setAttachMenuOpen(false);
+    setSharingContact(true);
+    const token = tokenRef.current;
+    if (!token) return;
+    try {
+      const all = await circleApi.listContacts(token);
+      setContactCandidates(all.filter((c) => c.tier === "verified" || c.tier === "trusted"));
+    } catch {
+      setError("Could not load your Circle.");
+    }
+  }
+
+  async function handleShareContact(contact: Contact) {
+    const token = tokenRef.current;
+    const conv = conversation;
+    setSharingContact(false);
+    setContactCandidates(null);
+    if (!token || !conv || !ownUserId) return;
+    try {
+      const payload = JSON.stringify({
+        contactUserId: contact.contact_user_id,
+        displayName: contact.contact_display_name,
+      });
+      const ciphertext = await encryptOutgoingMessage(token, conv, members, ownUserId, payload);
+      const sent = await messagingApi.sendMessage(token, conv.id, {
+        ciphertext,
+        contentType: "contact",
+        clientMessageId: randomId(),
+      });
+      setMessages((current) => [{ ...sent, plaintext: payload }, ...current]);
+    } catch {
+      setError("Could not share that contact.");
+    }
+  }
+
   async function handleStartRecording() {
     const permission = await requestRecordingPermissionsAsync();
     if (!permission.granted) {
@@ -435,12 +523,54 @@ export default function ChatScreen() {
     }
   }
 
-  async function handleSendVoiceNote() {
+  /** Shared by voice notes, photos, and video: encrypt, upload the
+   * ciphertext blob, send the message, then recover the same key a
+   * recipient would (see the comment below) so the sender's own
+   * optimistic row is playable/viewable immediately too. */
+  async function sendMediaMessage(
+    mediaBytes: Uint8Array,
+    durationMs: number,
+    mimeType: string,
+    contentType: "voice_note" | "media"
+  ) {
     const token = tokenRef.current;
     const conv = conversation;
+    if (!token || !conv || !ownUserId) return;
+    const { messageCiphertext, mediaCiphertext } = await encryptOutgoingMedia(
+      token,
+      conv,
+      members,
+      ownUserId,
+      mediaBytes,
+      durationMs,
+      mimeType
+    );
+    const contentHash = hashBytesHex(mediaCiphertext);
+    const { media_object_id, upload_url } = await messagingApi.requestMediaUpload(token, {
+      contentHash,
+      encryptedSizeBytes: mediaCiphertext.length,
+      contentType: mimeType,
+    });
+    await messagingApi.uploadEncryptedMedia(upload_url, mimeType, mediaCiphertext);
+    const sent = await messagingApi.sendMessage(token, conv.id, {
+      ciphertext: messageCiphertext,
+      contentType,
+      clientMessageId: randomId(),
+      mediaObjectId: media_object_id,
+    });
+    // Recover the same key/nonce/mimeType a recipient would, from the
+    // message that was just sent — `encryptOutgoingMedia` doesn't hand
+    // the one-time media key back directly, and this way there's exactly
+    // one code path that turns "a media message" into playable/viewable
+    // key material, for the sender's own optimistic row too.
+    const mediaKey = await decryptIncomingMediaKey(token, conv, sent.sender_device_id, sent.ciphertext);
+    setMessages((current) => [{ ...sent, plaintext: null, mediaKey }, ...current]);
+  }
+
+  async function handleSendVoiceNote() {
     stopRecordingTimer();
     setIsRecording(false);
-    if (!token || !conv || !ownUserId) return;
+    if (!tokenRef.current || !conversation || !ownUserId) return;
     setSendingVoiceNote(true);
     try {
       await recorder.stop();
@@ -448,35 +578,7 @@ export default function ChatScreen() {
       if (!uri) throw new Error("Recording produced no file.");
       const durationMs = Math.max(1, Math.round(recorder.currentTime * 1000));
       const audioBytes = await new File(uri).bytes();
-
-      const { messageCiphertext, mediaCiphertext } = await encryptOutgoingVoiceNote(
-        token,
-        conv,
-        members,
-        ownUserId,
-        audioBytes,
-        durationMs
-      );
-      const contentHash = hashBytesHex(mediaCiphertext);
-      const { media_object_id, upload_url } = await messagingApi.requestMediaUpload(token, {
-        contentHash,
-        encryptedSizeBytes: mediaCiphertext.length,
-        contentType: "audio/m4a",
-      });
-      await messagingApi.uploadEncryptedMedia(upload_url, "audio/m4a", mediaCiphertext);
-      const sent = await messagingApi.sendMessage(token, conv.id, {
-        ciphertext: messageCiphertext,
-        contentType: "voice_note",
-        clientMessageId: randomId(),
-        mediaObjectId: media_object_id,
-      });
-      // Recover the same key/nonce a recipient would, from the message
-      // that was just sent — `encryptOutgoingVoiceNote` doesn't hand the
-      // one-time media key back directly, and this way there's exactly
-      // one code path that turns "a voice note message" into playable
-      // key material, for the sender's own optimistic row too.
-      const voiceNote = await decryptIncomingVoiceNoteKey(token, conv, sent.sender_device_id, sent.ciphertext);
-      setMessages((current) => [{ ...sent, plaintext: null, voiceNote }, ...current]);
+      await sendMediaMessage(audioBytes, durationMs, "audio/m4a", "voice_note");
     } catch {
       setError("Could not send that voice note.");
     } finally {
@@ -785,6 +887,13 @@ export default function ChatScreen() {
                     </Pressable>
                   </View>
                 </View>
+              ) : !isDeleted && item.content_type === "media" ? (
+                <MediaBubble
+                  messageId={item.id}
+                  mediaObjectId={item.media_object_id}
+                  keyPayload={item.mediaKey}
+                  iconColor={isOwn ? "#FFFFFF" : colors.textPrimary}
+                />
               ) : (
                 <View
                   className={`rounded-2xl px-4 py-2.5 ${isOwn ? "rounded-br-xs" : "rounded-bl-xs"} ${
@@ -799,11 +908,13 @@ export default function ChatScreen() {
                     <VoiceNoteBubble
                       messageId={item.id}
                       mediaObjectId={item.media_object_id}
-                      keyPayload={item.voiceNote}
+                      keyPayload={item.mediaKey}
                       isOwn={isOwn}
                       iconColor={isOwn ? "#FFFFFF" : colors.textPrimary}
                       textColor={isOwn ? "#FFFFFF" : colors.textSecondary}
                     />
+                  ) : !isDeleted && item.content_type === "contact" ? (
+                    <ContactCard plaintext={item.plaintext} isOwn={isOwn} />
                   ) : (
                     <Text
                       className={
@@ -988,24 +1099,91 @@ export default function ChatScreen() {
             </Pressable>
           </View>
         ) : (
-          <View className="flex-row items-center gap-2 border-t border-border pb-4 pt-3">
-            <TextInput
-              testID="chat-input"
-              value={draft}
-              onChangeText={handleDraftChange}
-              placeholder="Message"
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              className="flex-1 rounded-full border border-border bg-surface px-4 py-2.5 text-text-primary"
-            />
-            <Pressable
-              testID="chat-send-button"
-              onPress={draft.trim().length === 0 ? handleStartRecording : handleSend}
-              disabled={sending}
-              className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
-            >
-              <Icon name={draft.trim().length === 0 ? "mic" : "send"} size={18} color="#FFFFFF" />
-            </Pressable>
+          <View>
+            {attachMenuOpen ? (
+              <View className="mb-2 flex-row gap-2 rounded-xl border border-border bg-surface p-2">
+                <Pressable
+                  testID="chat-attach-photo"
+                  onPress={() => handlePickMedia("images")}
+                  className="flex-1 items-center gap-1 rounded-lg p-2 active:bg-surface-raised"
+                >
+                  <Icon name="camera" size={20} color={colors.accent} />
+                  <Text className="text-xs text-text-secondary">Photo</Text>
+                </Pressable>
+                <Pressable
+                  testID="chat-attach-video"
+                  onPress={() => handlePickMedia("videos")}
+                  className="flex-1 items-center gap-1 rounded-lg p-2 active:bg-surface-raised"
+                >
+                  <Icon name="video" size={20} color={colors.accent} />
+                  <Text className="text-xs text-text-secondary">Video</Text>
+                </Pressable>
+                <Pressable
+                  testID="chat-attach-contact"
+                  onPress={handleOpenContactShare}
+                  className="flex-1 items-center gap-1 rounded-lg p-2 active:bg-surface-raised"
+                >
+                  <Icon name="circle" size={20} color={colors.accent} />
+                  <Text className="text-xs text-text-secondary">Contact</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {sharingContact ? (
+              <View className="mb-2 max-h-48 rounded-xl border border-border bg-surface">
+                {contactCandidates === null ? (
+                  <View className="items-center py-4">
+                    <Icon name="circle" size={20} color={colors.textTertiary} />
+                  </View>
+                ) : contactCandidates.length === 0 ? (
+                  <Text className="p-3 text-sm text-text-tertiary">No Circle contacts to share.</Text>
+                ) : (
+                  contactCandidates.map((c) => (
+                    <Pressable
+                      key={c.contact_user_id}
+                      testID={`chat-share-contact-${c.contact_user_id}`}
+                      onPress={() => handleShareContact(c)}
+                      className="flex-row items-center gap-3 border-b border-border p-3 active:bg-surface-raised"
+                    >
+                      <Avatar id={c.contact_user_id} name={c.contact_display_name} size={32} />
+                      <Text className="flex-1 text-sm text-text-primary">{c.contact_display_name}</Text>
+                    </Pressable>
+                  ))
+                )}
+              </View>
+            ) : null}
+
+            <View className="flex-row items-center gap-2 border-t border-border pb-4 pt-3">
+              <Pressable
+                testID="chat-attach-button"
+                onPress={() => setAttachMenuOpen((v) => !v)}
+                disabled={sendingAttachment}
+                className="h-11 w-11 items-center justify-center rounded-full active:bg-surface-raised disabled:opacity-50"
+              >
+                {sendingAttachment ? (
+                  <Icon name="download" size={18} color={colors.accent} />
+                ) : (
+                  <Icon name="plus" size={20} color={colors.accent} />
+                )}
+              </Pressable>
+              <TextInput
+                testID="chat-input"
+                value={draft}
+                onChangeText={handleDraftChange}
+                placeholder="Message"
+                placeholderTextColor={colors.textTertiary}
+                multiline
+                className="flex-1 rounded-full border border-border bg-surface px-4 py-2.5 text-text-primary"
+              />
+              <Pressable
+                testID="chat-send-button"
+                onPress={draft.trim().length === 0 ? handleStartRecording : handleSend}
+                disabled={sending}
+                className="h-11 w-11 items-center justify-center rounded-full bg-accent disabled:opacity-50"
+              >
+                <Icon name={draft.trim().length === 0 ? "mic" : "send"} size={18} color="#FFFFFF" />
+              </Pressable>
+            </View>
           </View>
         )}
       </KeyboardAvoidingView>

@@ -3,7 +3,7 @@ import { File, Paths } from "expo-file-system";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
-import { decryptVoiceNoteAudio } from "../lib/crypto/chat-crypto";
+import { decryptMediaBytes } from "../lib/crypto/chat-crypto";
 import type { MediaKeyPayload } from "../lib/crypto/wire";
 import { messagingApi } from "../lib/messaging-api";
 import { getAccessToken } from "../lib/session";
@@ -76,7 +76,7 @@ export function VoiceNoteBubble({
       if (!token) throw new Error("Not signed in.");
       const { download_url } = await messagingApi.getMediaDownloadUrl(token, mediaObjectId);
       const encrypted = await messagingApi.downloadEncryptedMedia(download_url);
-      const audioBytes = decryptVoiceNoteAudio(encrypted, keyPayload);
+      const audioBytes = decryptMediaBytes(encrypted, keyPayload);
       if (!audioBytes) throw new Error("Could not decrypt this voice note.");
       const file = new File(Paths.cache, `voice-${messageId}.m4a`);
       if (!file.exists) file.create();

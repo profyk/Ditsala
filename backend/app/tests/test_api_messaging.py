@@ -492,6 +492,38 @@ async def test_send_message_is_forwarded_flag_round_trips(
     assert r.json()["is_forwarded"] is True
 
 
+async def test_send_message_accepts_contact_content_type(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    alice, _d1, alice_token = await _make_user_with_device(session)
+    bob, _d2, bob_token = await _make_user_with_device(session)
+    await _connect(session, alice.id, bob.id)
+
+    r = await client.post(
+        "/api/v1/messaging/conversations/direct",
+        json={"other_user_id": str(bob.id)},
+        headers=_auth(alice_token),
+    )
+    conversation_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages",
+        json={
+            "ciphertext": _b64(b"encrypted contact card json"),
+            "content_type": "contact",
+            "client_message_id": str(uuid.uuid4()),
+        },
+        headers=_auth(alice_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["content_type"] == "contact"
+
+    r = await client.get(
+        f"/api/v1/messaging/conversations/{conversation_id}/messages", headers=_auth(bob_token)
+    )
+    assert r.json()[0]["content_type"] == "contact"
+
+
 async def test_group_member_add_promote_remove(client: AsyncClient, session: AsyncSession) -> None:
     alice, _d1, alice_token = await _make_user_with_device(session)
     bob, _d2, bob_token = await _make_user_with_device(session)
