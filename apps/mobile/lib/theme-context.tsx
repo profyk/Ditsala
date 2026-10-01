@@ -10,8 +10,9 @@ import { vars } from "nativewind";
  * like @react-native-async-storage, matching this app's existing
  * "avoid a new native dependency where an installed one already does the
  * job" convention), falling back to the OS scheme when nothing's been
- * chosen yet. Dark stays the default look (brand's "dark-first" decision)
- * whenever the OS itself reports no preference either.
+ * chosen yet. Light stays the default look (brand's light-first main-app
+ * shell, superseding the earlier dark-first decision) whenever the OS
+ * itself doesn't explicitly report dark.
  *
  * Every existing `className="bg-surface ..."` Tailwind utility across the
  * app becomes theme-reactive for free, via NativeWind's `vars()` CSS
@@ -80,7 +81,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useSystemColorScheme();
-  const [theme, setThemeState] = useState<Theme>("dark");
+  const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
     let cancelled = false;
@@ -89,8 +90,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (stored === "light" || stored === "dark") {
           setThemeState(stored);
-        } else if (systemScheme === "light") {
-          setThemeState("light");
+        } else if (systemScheme === "dark") {
+          setThemeState("dark");
         }
       })
       .catch(() => undefined);

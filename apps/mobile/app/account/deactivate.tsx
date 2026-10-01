@@ -53,7 +53,7 @@ export default function DeactivateAccount() {
         return;
       }
       await accountApi.cancelDeactivation(accessToken);
-      router.replace("/home");
+      router.replace("/messages");
     } catch (err) {
       setError(
         err instanceof ApiError

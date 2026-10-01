@@ -78,7 +78,7 @@ export default function Welcome() {
       }
       const { access_token } = await authApi.refresh(refreshToken);
       await saveAccessToken(access_token);
-      router.replace("/home");
+      router.replace("/messages");
     } catch {
       // Refresh token was rejected (expired/revoked) — fall back to a full login.
       await clearSession();
@@ -103,7 +103,7 @@ export default function Welcome() {
         }
         const { access_token } = await authApi.refresh(refreshToken);
         await saveAccessToken(access_token);
-        router.replace("/home");
+        router.replace("/messages");
         return;
       }
       const result = await authApi.loginStart(identity.identifier, pin, {
@@ -114,7 +114,7 @@ export default function Welcome() {
       if (result.access_token && result.refresh_token) {
         await saveSession(result.access_token, result.refresh_token);
         await saveIdentity(identity.identifier, identity.accountTier);
-        router.replace("/home");
+        router.replace("/messages");
       } else if (result.requires_liveness) {
         // A vip-tier account shouldn't reach this screen's PIN path at
         // all (vip signs in with email + PIN via the full login screen,
@@ -150,28 +150,32 @@ export default function Welcome() {
       >
         <View className="items-center">
           <View
-            className="h-16 w-16 items-center justify-center rounded-3xl bg-accent"
+            className="h-24 w-24 items-center justify-center overflow-hidden rounded-3xl bg-white"
             style={{
-              shadowColor: colors.accent,
-              shadowOpacity: 0.5,
+              shadowColor: "#000",
+              shadowOpacity: 0.35,
               shadowRadius: 20,
               shadowOffset: { width: 0, height: 10 },
               elevation: 8,
             }}
           >
-            <Text className="text-3xl font-extrabold text-white">D</Text>
+            <Image
+              source={require("../assets/icon.png")}
+              style={{ height: 96, width: 96 }}
+              resizeMode="cover"
+            />
           </View>
         </View>
 
         <View>
-          <Text className="text-5xl font-extrabold tracking-tight text-white">DITSALA</Text>
+          <Text className="text-5xl font-extrabold tracking-tight text-white">Ditsala</Text>
           <Text className="mt-2 text-lg font-bold italic" style={{ color: colors.gold }}>
-            Your trusted circle.
+            Your Trusted Circle
           </Text>
           {!hasSession ? (
             <Text className="mt-3 text-base leading-6" style={{ color: "rgba(255,255,255,0.85)" }}>
-              Private messaging, group calls, and real end-to-end encrypted conversations —
-              speak with confidence.
+              Private messaging, group chats, calls and real multilingual conversations —
+              bringing people together.
             </Text>
           ) : null}
 

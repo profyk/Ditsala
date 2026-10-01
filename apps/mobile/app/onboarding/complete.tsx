@@ -35,7 +35,7 @@ export default function Complete() {
       const me = await authApi.getMe(session.access_token);
       await saveIdentity(me.identifier, me.account_tier);
       setAccountState("active");
-      router.replace("/home");
+      router.replace("/messages");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not finish setting up this device.");
     } finally {

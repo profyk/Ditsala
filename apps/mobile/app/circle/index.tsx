@@ -7,7 +7,7 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { Icon } from "../../components/Icon";
 import { TabScreen } from "../../components/TabScreen";
-import { ApiError } from "../../lib/api";
+import { ApiError, authApi, type CurrentUser } from "../../lib/api";
 import { useCall } from "../../lib/call-context";
 import { circleApi, type Contact } from "../../lib/circle-api";
 import { messagingApi } from "../../lib/messaging-api";
@@ -43,10 +43,12 @@ export default function Circle() {
   const { startCall } = useCall();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [incomingCount, setIncomingCount] = useState(0);
+  const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [callingId, setCallingId] = useState<string | null>(null);
   const [messagingId, setMessagingId] = useState<string | null>(null);
+  const isVip = me?.account_tier === "vip";
 
   const load = useCallback(async () => {
     const token = await getAccessToken();
@@ -55,12 +57,14 @@ export default function Circle() {
       return;
     }
     try {
-      const [contactList, incoming] = await Promise.all([
+      const [contactList, incoming, currentUser] = await Promise.all([
         circleApi.listContacts(token),
         circleApi.listIncomingRequests(token),
+        authApi.getMe(token),
       ]);
       setContacts(contactList);
       setIncomingCount(incoming.length);
+      setMe(currentUser);
       setError(null);
     } catch {
       setError("Could not load your Circle.");
@@ -135,6 +139,30 @@ export default function Circle() {
       </Text>
 
       {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
+
+      {isVip ? (
+        <Pressable
+          testID="sos-nav-button"
+          onPress={() => router.push("/sos")}
+          className="mb-5 flex-row items-center gap-4 rounded-2xl bg-danger p-5 active:opacity-90"
+          style={{
+            shadowColor: colors.danger,
+            shadowOpacity: 0.4,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 8 },
+            elevation: 6,
+          }}
+        >
+          <View className="h-12 w-12 items-center justify-center rounded-full bg-white/20">
+            <Icon name="shield" size={24} color="#FFFFFF" />
+          </View>
+          <View className="flex-1">
+            <Text className="text-lg font-bold text-white">Emergency SOS</Text>
+            <Text className="text-sm text-white/85">Alert your trusted Circle instantly</Text>
+          </View>
+          <Icon name="chevron-right" size={20} color="#FFFFFF" />
+        </Pressable>
+      ) : null}
 
       <View className="mb-5 flex-row gap-3">
         <Pressable

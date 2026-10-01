@@ -61,7 +61,7 @@ export default function Login() {
         await saveSession(result.access_token, result.refresh_token);
         const me = await authApi.getMe(result.access_token);
         await saveIdentity(me.identifier, me.account_tier);
-        router.replace("/home");
+        router.replace("/messages");
       } else {
         setError("Something unexpected happened. Please try again.");
       }
@@ -81,7 +81,7 @@ export default function Login() {
       await saveSession(session.access_token, session.refresh_token);
       const me = await authApi.getMe(session.access_token);
       await saveIdentity(me.identifier, me.account_tier);
-      router.replace("/home");
+      router.replace("/messages");
     } catch (err) {
       setError(
         err instanceof ApiError

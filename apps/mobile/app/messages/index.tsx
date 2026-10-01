@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
-import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Avatar } from "../../components/Avatar";
@@ -8,7 +8,9 @@ import { Icon } from "../../components/Icon";
 import { TabBar } from "../../components/TabBar";
 import { authApi } from "../../lib/api";
 import { decryptIncomingMessage } from "../../lib/crypto/chat-crypto";
+import { registerWithBackend } from "../../lib/crypto/keystore";
 import { type Conversation, type ConversationMember, messagingApi } from "../../lib/messaging-api";
+import { messagingSocket } from "../../lib/messaging-ws";
 import { getAccessToken } from "../../lib/session";
 import { useTheme } from "../../lib/theme-context";
 
@@ -64,6 +66,7 @@ export default function MessagesList() {
   const [openActionsFor, setOpenActionsFor] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(
     async (isRefresh: boolean) => {
@@ -164,6 +167,29 @@ export default function MessagesList() {
     }, [load])
   );
 
+  /**
+   * Chats is the app's landing tab (Home was retired) — this is now the
+   * single place the realtime socket connects. A plain mount/unmount
+   * effect, not `useFocusEffect`: `connect()` always opens a fresh
+   * WebSocket (not idempotent), and the other three tabs are reached via
+   * `router.replace`, which unmounts this screen — same connect-on-
+   * mount/disconnect-on-unmount lifecycle Home previously owned, just
+   * relocated. Calls rides this same socket for incoming-call signaling.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const accessToken = await getAccessToken();
+      if (!accessToken || cancelled) return;
+      messagingSocket.connect(accessToken);
+      registerWithBackend(accessToken).catch(() => undefined);
+    })();
+    return () => {
+      cancelled = true;
+      messagingSocket.disconnect();
+    };
+  }, []);
+
   async function handleRefresh() {
     setRefreshing(true);
     await load(true);
@@ -232,13 +258,35 @@ export default function MessagesList() {
   }
 
   const archivedRows = rows.filter((r) => r.conversation.archived);
-  const visibleRows = showArchived ? rows : rows.filter((r) => !r.conversation.archived);
+  const notArchived = showArchived ? rows : rows.filter((r) => !r.conversation.archived);
+  const visibleRows = query.trim()
+    ? notArchived.filter((r) => r.title.toLowerCase().includes(query.trim().toLowerCase()))
+    : notArchived;
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
       <View className="flex-1 px-6">
-        <View className="mb-2 mt-4">
-          <Text className="text-2xl font-bold text-text-primary">Messages</Text>
+        <View className="mb-4 mt-4 flex-row items-center justify-between">
+          <Text className="text-2xl font-extrabold tracking-tight text-text-primary">Ditsala</Text>
+          <Pressable
+            testID="messages-edit-button"
+            onPress={() => setNewMenuOpen((v) => !v)}
+            className="h-10 w-10 items-center justify-center rounded-full active:bg-surface-raised"
+          >
+            <Icon name="edit" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        <View className="mb-4 flex-row items-center gap-2 rounded-full bg-surface px-4 py-2.5">
+          <Icon name="search" size={16} color={colors.textTertiary} />
+          <TextInput
+            testID="messages-search-input"
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search chats"
+            placeholderTextColor={colors.textTertiary}
+            className="flex-1 text-base text-text-primary"
+          />
         </View>
 
         {error ? <Text className="mb-4 text-sm text-danger">{error}</Text> : null}
@@ -254,12 +302,12 @@ export default function MessagesList() {
             const actionsOpen = openActionsFor === item.conversation.id;
             const isBusy = busyId === item.conversation.id;
             return (
-              <View className="mb-2 overflow-hidden rounded-xl border border-border bg-surface">
+              <View className="border-b border-border">
                 <Pressable
                   testID={`conversation-row-${item.conversation.id}`}
                   onPress={() => router.push(`/messages/${item.conversation.id}`)}
                   onLongPress={() => setOpenActionsFor(actionsOpen ? null : item.conversation.id)}
-                  className="flex-row items-center gap-3 p-3 active:bg-surface-raised"
+                  className="flex-row items-center gap-3 py-3 active:bg-surface-raised"
                 >
                   <Avatar
                     id={item.conversation.id}
@@ -299,7 +347,7 @@ export default function MessagesList() {
                 </Pressable>
 
                 {actionsOpen ? (
-                  <View className="flex-row gap-2 border-t border-border px-3 py-2">
+                  <View className="flex-row gap-2 rounded-xl bg-surface-raised px-3 py-2 mb-2">
                     <Pressable
                       testID={`conversation-pin-${item.conversation.id}`}
                       disabled={isBusy}

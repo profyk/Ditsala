@@ -6,8 +6,8 @@ import { Icon, type IconName } from "./Icon";
 import { useTheme } from "../lib/theme-context";
 
 const TABS: { path: string; label: string; icon: IconName; testID: string }[] = [
-  { path: "/home", label: "Home", icon: "home", testID: "tab-home" },
-  { path: "/messages", label: "Messages", icon: "messages", testID: "tab-messages" },
+  { path: "/messages", label: "Chats", icon: "messages", testID: "tab-chats" },
+  { path: "/calls", label: "Calls", icon: "phone", testID: "tab-calls" },
   { path: "/circle", label: "Circle", icon: "circle", testID: "tab-circle" },
   { path: "/settings", label: "Settings", icon: "settings", testID: "tab-settings" },
 ];
@@ -22,6 +22,11 @@ const TABS: { path: string; label: string; icon: IconName; testID: string }[] = 
  * existing route path. Switching tabs uses `replace`, not `push` — the
  * four tabs are peers, not a drill-down stack, so tapping between them
  * shouldn't grow the back stack.
+ *
+ * Chats (messages) is the primary/landing tab — Home was retired as its
+ * own screen/tab; its unique content moved to Chats (the realtime socket
+ * connect lifecycle) and Circle (the Emergency SOS card). Calls is a new
+ * tab backed by the already-real `GET /calls` endpoint.
  */
 export function TabBar() {
   const pathname = usePathname();

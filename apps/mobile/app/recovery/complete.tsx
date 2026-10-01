@@ -31,7 +31,7 @@ export default function RecoveryComplete() {
       });
       await saveSession(session.access_token, session.refresh_token);
       clear();
-      router.replace("/home");
+      router.replace("/messages");
     } catch (err) {
       setError(
         err instanceof ApiError

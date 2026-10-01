@@ -153,7 +153,7 @@ export default function ScheduleMeeting() {
               onPress={() => router.replace("/meet")}
             />
             <View className="h-3" />
-            <Button label="Done" variant="secondary" onPress={() => router.replace("/home")} />
+            <Button label="Done" variant="secondary" onPress={() => router.replace("/messages")} />
           </View>
         </View>
       </Screen>
