@@ -4,6 +4,7 @@ import { Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { Button } from "../components/Button";
 import { CountryCodePicker } from "../components/CountryCodePicker";
+import { Icon } from "../components/Icon";
 import { Screen } from "../components/Screen";
 import { TextField } from "../components/TextField";
 import { ApiError, authApi } from "../lib/api";
@@ -94,17 +95,20 @@ export default function Login() {
 
   return (
     <Screen>
-      <View className="mt-10 mb-2 flex-row items-center gap-3">
-        <View className="h-11 w-11 items-center justify-center rounded-2xl bg-accent">
-          <Text className="text-lg font-extrabold text-white">D</Text>
-        </View>
-        <Text className="text-3xl font-extrabold tracking-tight text-text-primary">Sign in</Text>
-      </View>
-      <Text className="mb-8 text-base leading-6 text-text-secondary">
+      <Pressable
+        testID="login-back-button"
+        onPress={() => router.back()}
+        className="-ml-2 mb-2 mt-4 h-11 w-11 items-center justify-center rounded-full active:bg-surface-raised"
+      >
+        <Icon name="chevron-left" size={24} color={colors.textPrimary} />
+      </Pressable>
+      <Text className="text-4xl font-extrabold tracking-tight text-text-primary">Welcome back</Text>
+      <Text className="mt-1 text-base text-text-secondary">
         {awaitingLiveness
           ? "Confirming it's really you."
-          : "Enter your DITSALA Code to continue. Circle members verified with liveness will confirm a fresh check next."}
+          : "Enter your DITSALA Code to sign in to your circle."}
       </Text>
+      <View className="mb-6" />
 
       {!awaitingLiveness ? (
         <>

@@ -1,9 +1,10 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Platform, Text, View } from "react-native";
+import { Image, Platform, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../components/Button";
-import { Screen } from "../components/Screen";
 import { TextField } from "../components/TextField";
 import { ApiError, authApi } from "../lib/api";
 import { authenticateWithBiometrics, isBiometricAvailable } from "../lib/biometric";
@@ -18,9 +19,27 @@ import {
 } from "../lib/session";
 import { useTheme } from "../lib/theme-context";
 
+// Same hero photo the reference design uses — a real Unsplash direct-
+// image URL, not a bundled asset. Disclosed tradeoff: hotlinking a
+// third-party image is fragile for a shipped app (no local control over
+// availability); worth replacing with a licensed, bundled asset before
+// this is the actual App Store build, not fixed here.
+const HERO_URL =
+  "https://images.unsplash.com/photo-1589483232748-515c025575bc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBkaXZlcnNlJTIwQWZyaWNhbiUyMGZyaWVuZHMlMjBsYXVnaGluZyUyMHBvcnRyYWl0JTIwcHJlbWl1bSUyMHBob3RvZ3JhcGh5fGVufDB8fHx8MTc5MDQzNDg1NHww&ixlib=rb-4.1.0&q=85";
+
+/**
+ * The screen every launch shows first — whether that's a first-time
+ * visitor (Welcome: hero photo, brand, Get Started/Login) or a returning
+ * one (Unlock: same hero backdrop, biometric/PIN instead of marketing
+ * copy). Previously a plain centered-logo card on a flat background;
+ * this is the real full-bleed hero-photo-plus-gradient treatment the
+ * reference design uses, applied to both states so "opening the app"
+ * looks the same regardless of which one a given user actually sees.
+ */
 export default function Welcome() {
   const router = useRouter();
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const [hasSession, setHasSession] = useState<boolean | null>(null);
   const [biometricsAvailable, setBiometricsAvailable] = useState<boolean | null>(null);
   const [pinMode, setPinMode] = useState(false);
@@ -112,89 +131,110 @@ export default function Welcome() {
   }
 
   return (
-    <Screen scroll={false}>
-      <View className="flex-1 items-center justify-center">
-        <View
-          className="mb-8 h-24 w-24 items-center justify-center rounded-3xl bg-accent"
-          style={{
-            shadowColor: colors.accent,
-            shadowOpacity: 0.5,
-            shadowRadius: 24,
-            shadowOffset: { width: 0, height: 12 },
-            elevation: 8,
-          }}
-        >
-          <Text className="text-5xl font-extrabold text-white">D</Text>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Image source={{ uri: HERO_URL }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <LinearGradient
+        colors={["rgba(5,11,32,0.25)", "rgba(5,11,32,0.6)", "rgba(5,11,32,0.97)"]}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "space-between",
+          paddingHorizontal: 24,
+          paddingTop: insets.top + 32,
+          paddingBottom: insets.bottom + 24,
+        }}
+      >
+        <View className="items-center">
+          <View
+            className="h-16 w-16 items-center justify-center rounded-3xl bg-accent"
+            style={{
+              shadowColor: colors.accent,
+              shadowOpacity: 0.5,
+              shadowRadius: 20,
+              shadowOffset: { width: 0, height: 10 },
+              elevation: 8,
+            }}
+          >
+            <Text className="text-3xl font-extrabold text-white">D</Text>
+          </View>
         </View>
-        <Text className="text-4xl font-extrabold tracking-tight text-text-primary">DITSALA</Text>
-        <View className="mt-4 h-1 w-10 rounded-full bg-accent" />
-        <Text className="mt-4 text-lg font-medium text-text-primary">Speak with Confidence.</Text>
-        <Text className="mt-1 text-base text-text-secondary">Your trusted circle.</Text>
+
+        <View>
+          <Text className="text-5xl font-extrabold tracking-tight text-white">DITSALA</Text>
+          <Text className="mt-2 text-lg font-bold italic" style={{ color: colors.gold }}>
+            Your trusted circle.
+          </Text>
+          {!hasSession ? (
+            <Text className="mt-3 text-base leading-6" style={{ color: "rgba(255,255,255,0.85)" }}>
+              Private messaging, group calls, and real end-to-end encrypted conversations —
+              speak with confidence.
+            </Text>
+          ) : null}
+
+          <View className="mt-8">
+            {error ? <Text className="mb-4 text-center text-sm text-danger">{error}</Text> : null}
+            {hasSession ? (
+              pinMode || biometricsAvailable === false ? (
+                <>
+                  <TextField
+                    label="DITSALA Code (PIN)"
+                    icon="lock"
+                    value={pin}
+                    onChangeText={setPin}
+                    secureTextEntry
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    testID="unlock-pin-input"
+                  />
+                  <Button
+                    testID="unlock-with-pin-button"
+                    label="Unlock"
+                    onPress={handlePinUnlock}
+                    loading={unlocking}
+                    disabled={pin.length < 4}
+                  />
+                </>
+              ) : (
+                <>
+                  <Button
+                    testID="unlock-button"
+                    label="Unlock"
+                    icon="lock"
+                    onPress={handleBiometricUnlock}
+                    loading={unlocking}
+                  />
+                  <View className="h-3" />
+                  <Button
+                    testID="use-pin-instead-button"
+                    label="Use PIN instead"
+                    variant="secondary"
+                    onPress={() => setPinMode(true)}
+                  />
+                </>
+              )
+            ) : (
+              <>
+                <Button
+                  testID="get-started-button"
+                  label="Create account"
+                  onPress={() => router.push("/onboarding/signup")}
+                />
+                <View className="h-3" />
+                <Button
+                  testID="already-have-account-button"
+                  label="I already have an account"
+                  variant="secondary"
+                  onPress={() => router.push("/login")}
+                />
+              </>
+            )}
+          </View>
+        </View>
       </View>
-      <View className="mb-8">
-        {error ? <Text className="mb-4 text-center text-sm text-danger">{error}</Text> : null}
-        {hasSession ? (
-          pinMode || biometricsAvailable === false ? (
-            <>
-              <TextField
-                label="DITSALA Code (PIN)"
-                icon="lock"
-                value={pin}
-                onChangeText={setPin}
-                secureTextEntry
-                keyboardType="number-pad"
-                maxLength={6}
-                testID="unlock-pin-input"
-              />
-              <Button
-                testID="unlock-with-pin-button"
-                label="Unlock"
-                onPress={handlePinUnlock}
-                loading={unlocking}
-                disabled={pin.length < 4}
-              />
-            </>
-          ) : (
-            <>
-              <Button
-                testID="unlock-button"
-                label="Unlock"
-                icon="lock"
-                onPress={handleBiometricUnlock}
-                loading={unlocking}
-              />
-              <View className="h-3" />
-              <Button
-                testID="use-pin-instead-button"
-                label="Use PIN instead"
-                variant="secondary"
-                onPress={() => setPinMode(true)}
-              />
-            </>
-          )
-        ) : (
-          <>
-            <Button
-              testID="get-started-button"
-              label="Get Started"
-              onPress={() => router.push("/onboarding/signup")}
-            />
-            <View className="my-4 flex-row items-center gap-3">
-              <View className="h-px flex-1 bg-border" />
-              <Text className="text-xs font-medium uppercase tracking-widest text-text-tertiary">
-                or
-              </Text>
-              <View className="h-px flex-1 bg-border" />
-            </View>
-            <Button
-              testID="already-have-account-button"
-              label="I already have an account"
-              variant="secondary"
-              onPress={() => router.push("/login")}
-            />
-          </>
-        )}
-      </View>
-    </Screen>
+    </View>
   );
 }
